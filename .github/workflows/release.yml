@@ -4,6 +4,9 @@ on:
   push:
     tags:
       - "*"
+  workflow_dispatch:
+  release:
+    types: [published, created]
 
 jobs:
   build:
@@ -25,17 +28,15 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Create release
+      - name: Create Release and Upload Assets
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+        with:
+          files: |
+            main.js
+            styles.css
+            manifest.json
+          draft: true
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          tag="${GITHUB_REF#refs/tags/}"
-          
-          # Delete existing release for this tag if it exists
-          gh release delete "$tag" --yes || true
-          
-          gh release create "$tag" \
-            --title "Release $tag" \
-            --generate-notes \
-            --draft \
-            main.js styles.css manifest.json
