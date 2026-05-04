@@ -26,6 +26,7 @@ No data leaves your machine. No API keys. No cloud. Just your models, your notes
   - [System Prompt Presets](#-system-prompt-presets)
   - [Per-Note Frontmatter Prompts](#-per-note-frontmatter-prompts)
   - [Configurable Export Path](#-configurable-export-path)
+  - [Smart Tagging](#-smart-tagging)
 - [Settings](#-settings)
 - [Release Files](#-release-files)
 - [Author](#-author)
@@ -219,6 +220,19 @@ By default, saved notes and exported conversations go to a `HORME` folder at the
 
 ---
 
+### <span style="color:#6d28d9">&#9655; Smart Tagging</span>
+
+Automatically generate relevant tags for your notes based on your existing vault tags. Use the command `Horme: Suggest frontmatter tags` to:
+
+- Analyze the current note's content.
+- Compare it against your vault's live tag index (or a specific "allowed tags" note).
+- Get a ranked list of suggested tags.
+- Apply them directly to the note's YAML frontmatter.
+
+This ensures your tagging stays consistent and avoids creating "hallucinated" tags that don't exist in your system.
+
+---
+
 ## <span style="color:#7c3aed">&#9881; Settings</span>
 
 | Setting | Default | Description |
@@ -229,6 +243,9 @@ By default, saved notes and exported conversations go to a `HORME` folder at the
 | **Temperature** | `0.6` | Controls response randomness (0 = deterministic, 1 = creative). |
 | **Export folder** | `HORME` | Vault-relative path for saved notes and exports. |
 | **Prompt presets** | *(none)* | Named system prompt profiles, selectable from the chat panel. |
+| **Optional tag list note** | *(none)* | Use a specific note as the allowed-tag list instead of the vault index. |
+| **Max tag candidates** | `250` | How many existing tags to send to the model for consideration. |
+| **Max suggested tags** | `12` | Upper bound for tags suggested for a single note. |
 
 ---
 
