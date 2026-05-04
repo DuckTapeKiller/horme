@@ -30,8 +30,12 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag="${GITHUB_REF#refs/tags/}"
-
+          
+          # Delete existing release for this tag if it exists
+          gh release delete "$tag" --yes || true
+          
           gh release create "$tag" \
             --title "Release $tag" \
+            --generate-notes \
             --draft \
             main.js styles.css manifest.json
