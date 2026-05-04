@@ -1,5 +1,9 @@
 # <span style="color:#7c3aed">&#9653; Horme</span>
 
+*In Greek mythology, Horme (/ˈhɔːrmiː/; Ancient Greek: Ὁρμή) is the Greek spirit personifying energetic activity, impulse or effort (to do a thing), eagerness, setting oneself in motion, and starting an action, and particularly onrush in battle.*
+
+![Illustration](images/illustration_1.png)
+
 **A minimalist, privacy-first AI assistant for Obsidian, powered by local LLMs via Ollama.**
 
 No data leaves your machine. No API keys. No cloud. Just your models, your notes, your rules.
@@ -253,11 +257,11 @@ This ensures your tagging stays consistent and avoids creating "hallucinated" ta
 
 To install Horme, you need exactly three files:
 
-| File | Size | Purpose |
-|---|---|---|
-| `main.js` | ~895 KB | Bundled plugin logic (includes `pdfjs-dist`). |
-| `styles.css` | ~10 KB | Chat panel and modal styling. |
-| `manifest.json` | <1 KB | Plugin metadata for Obsidian. |
+| File | Purpose |
+|---|---|
+| `main.js` | Bundled plugin logic (includes `pdfjs-dist`). |
+| `styles.css` |  Chat panel and modal styling. |
+| `manifest.json` |  Plugin metadata for Obsidian. |
 
 ---
 
