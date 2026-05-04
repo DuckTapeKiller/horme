@@ -5,6 +5,16 @@
   flex-direction: column;
   height: 100%;
   font-family: var(--font-interface);
+  overflow: hidden;
+}
+
+.horme-chat-content {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
 }
 
 /* ── Header ── */
@@ -21,10 +31,21 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: nowrap;
+  min-width: 0;
 }
 
-.horme-model-select {
+.horme-header-selects {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   flex: 1;
+  min-width: 0;
+}
+
+.horme-select {
+  flex: 1 1 0;
+  min-width: 0;
   padding: 4px 8px;
   border-radius: var(--radius-s);
   border: 1px solid var(--background-modifier-border);
@@ -33,6 +54,19 @@
   font-size: 12px;
   font-family: var(--font-interface);
   cursor: pointer;
+}
+
+.horme-select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.horme-model-select {
+  flex: 1;
+}
+
+.horme-preset-select {
+  flex: 1;
 }
 
 .horme-header-btn {
@@ -54,6 +88,28 @@
 .horme-header-btn:hover {
   background: var(--background-modifier-hover);
   color: var(--text-normal);
+}
+
+.horme-header-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.horme-header-row-actions {
+  justify-content: space-between;
+}
+
+.horme-header-actions-left,
+.horme-header-actions-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.horme-header-btn.horme-icon-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
 }
 
 .horme-context-toggle {
@@ -89,6 +145,7 @@
 .horme-messages {
   flex: 1;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   padding: 14px;
   display: flex;
   flex-direction: column;
@@ -107,7 +164,7 @@
 .horme-msg {
   padding: 10px 14px;
   border-radius: var(--radius-s);
-  max-width: 92%;
+  max-width: min(92%, 620px);
   word-wrap: break-word;
   line-height: 1.55;
   font-size: 13px;
@@ -146,6 +203,22 @@
 
 .horme-msg-assistant code {
   font-size: 12px;
+}
+
+.horme-msg-assistant ul,
+.horme-msg-assistant ol {
+  margin: 6px 0;
+  padding-left: 18px;
+}
+
+.horme-msg-assistant li {
+  margin: 2px 0;
+}
+
+.horme-msg-assistant hr {
+  margin: 10px 0;
+  border: none;
+  border-top: 1px solid var(--background-modifier-border);
 }
 
 /* ── Loading ── */
@@ -232,6 +305,11 @@
   flex-shrink: 0;
 }
 
+.horme-send-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
 .horme-send-btn:hover {
   opacity: 0.85;
 }
@@ -280,6 +358,11 @@
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease;
   flex-shrink: 0;
+}
+
+.horme-upload-btn svg {
+  width: 16px;
+  height: 16px;
 }
 
 .horme-upload-btn:hover {
@@ -414,24 +497,36 @@
   padding: 20px;
 }
 
-/* ── Connection Status Dot ── */
+/* ── Connection Status Icon ── */
 
-.horme-connection-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
+.horme-connection-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
   flex-shrink: 0;
-  transition: background 0.3s ease;
+  transition: color 0.2s ease, filter 0.2s ease;
 }
 
-.horme-dot-online {
-  background: #34d399;
-  box-shadow: 0 0 4px #34d39980;
+.horme-connection-icon svg {
+  width: 18px;
+  height: 18px;
 }
 
-.horme-dot-offline {
-  background: #f87171;
-  box-shadow: 0 0 4px #f8717180;
+.horme-connection-icon.horme-online {
+  color: #34d399;
+  filter: drop-shadow(0 0 3px #34d39966);
+}
+
+.theme-light .horme-connection-icon.horme-online {
+  color: #059669;
+  filter: drop-shadow(0 0 2px #05966966);
+}
+
+.horme-connection-icon.horme-offline {
+  color: #f87171;
+  filter: drop-shadow(0 0 3px #f8717166);
 }
 
 /* ── Stop Button State ── */

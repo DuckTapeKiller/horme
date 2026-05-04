@@ -32,6 +32,9 @@ interface HormeSettings {
   temperature: number;
   exportFolder: string;
   promptPresets: Array<{ name: string; prompt: string }>;
+  tagsFilePath: string;
+  maxTagCandidates: number;
+  maxSuggestedTags: number;
 }
 
 const DEFAULT_SETTINGS: HormeSettings = {
@@ -41,6 +44,9 @@ const DEFAULT_SETTINGS: HormeSettings = {
   temperature: 0.6,
   exportFolder: "HORME",
   promptPresets: [],
+  tagsFilePath: "",
+  maxTagCandidates: 250,
+  maxSuggestedTags: 12,
 };
 
 /** Stored conversation for history. */
@@ -193,6 +199,15 @@ export default class HormePlugin extends Plugin {
    *  can reference it even though the chat itself steals focus. */
   lastActiveMarkdownLeaf: WorkspaceLeaf | null = null;
 
+  private settingsChangeListeners = new Set<() => void>();
+
+  private tagsCache: { path: string; mtime: number; tags: string[] } | null = null;
+
+  onSettingsChange(cb: () => void): () => void {
+    this.settingsChangeListeners.add(cb);
+    return () => this.settingsChangeListeners.delete(cb);
+  }
+
   async onload() {
     await this.loadSettings();
 
@@ -247,6 +262,452 @@ export default class HormePlugin extends Plugin {
 
     this.addSettingTab(new HormeSettingTab(this.app, this));
     this.fetchModels();
+
+    this.addCommand({
+      id: "suggest-frontmatter-tags",
+      name: "Suggest frontmatter tags",
+      checkCallback: (checking) => {
+        const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+        const hasFile = Boolean(view?.file);
+        if (checking) return hasFile;
+        if (hasFile) this.suggestTagsForActiveNote();
+        return true;
+      },
+    });
+  }
+
+  /* ── Tagging helpers ── */
+
+  async suggestTagsForActiveNote() {
+    let view = this.app.workspace.getActiveViewOfType(MarkdownView) ?? null;
+    if (!view) {
+      const leaf = this.lastActiveMarkdownLeaf;
+      if (leaf?.view instanceof MarkdownView) {
+        view = leaf.view;
+      }
+    }
+    if (!view) {
+      const leaves = this.app.workspace.getLeavesOfType("markdown");
+      for (const leaf of leaves) {
+        if (leaf.view instanceof MarkdownView) {
+          view = leaf.view;
+          break;
+        }
+      }
+    }
+
+    const file = view?.file;
+    if (!file) {
+      new Notice("Horme: Open a note first.");
+      return;
+    }
+
+    const model = this.settings.defaultModel;
+    if (!model) {
+      new Notice("Horme: No model selected — configure one in settings.");
+      return;
+    }
+
+    const tags = await this.loadAllowedTags();
+    if (!tags.length) {
+      new Notice("Horme: No tags found in vault yet.");
+      return;
+    }
+
+    const raw = await this.app.vault.read(file);
+    const noteBody = this.stripFrontmatter(raw);
+    const candidates = this.rankTagCandidates(`${file.basename}\n\n${noteBody}`, tags).slice(
+      0,
+      Math.max(50, this.settings.maxTagCandidates || 250)
+    );
+
+    const sys = this.buildTaggingSystemPrompt(candidates, this.settings.maxSuggestedTags || 12);
+    new Notice("Horme: Generating tags…");
+    let response = "";
+    try {
+      response = await this.ollamaSync(sys, noteBody, model);
+    } catch (e: any) {
+      this.handleError(e);
+      return;
+    }
+
+    const suggested = this.parseTagListResponse(response);
+    if (!suggested.length) {
+      new Notice("Horme: No tags returned.");
+      return;
+    }
+
+    const allowed = new Set(tags);
+    const normalizeKey = (t: string) =>
+      t
+        .toLowerCase()
+        .replace(/\s+/g, "_")
+        .replace(/_+/g, "_")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "");
+
+    const canonicalByKey = new Map<string, string>();
+    for (const t of tags) {
+      const key = normalizeKey(t);
+      if (!canonicalByKey.has(key)) canonicalByKey.set(key, t);
+    }
+
+    const cleaned: string[] = [];
+    const seen = new Set<string>();
+    for (const rawTag of suggested) {
+      const key = normalizeKey(rawTag);
+      const canonical = canonicalByKey.get(key) ?? (allowed.has(rawTag) ? rawTag : null);
+      if (!canonical) continue;
+      if (seen.has(canonical)) continue;
+      seen.add(canonical);
+      cleaned.push(canonical);
+      if (cleaned.length >= (this.settings.maxSuggestedTags || 12)) break;
+    }
+
+    if (!cleaned.length) {
+      new Notice("Horme: No valid tags matched your allowed list.");
+      return;
+    }
+
+    new ConfirmReplaceModal(
+      this.app,
+      "Suggested tags will be added to YAML frontmatter (existing tags are kept).",
+      cleaned.map((t) => `#${t}`).join("\n"),
+      async () => {
+        await this.applyFrontmatterTags(file, cleaned);
+        new Notice("Horme: Tags updated ✓");
+      }
+    ).open();
+  }
+
+  private async applyFrontmatterTags(file: any, tags: string[]) {
+    const toAdd = Array.from(new Set(tags.map((t) => t.toLowerCase())));
+    const normalizeKey = (t: string) =>
+      t
+        .toLowerCase()
+        .replace(/\s+/g, "_")
+        .replace(/_+/g, "_")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "");
+
+    const uniqueByKey = (items: string[]): string[] => {
+      const out: string[] = [];
+      const seen = new Set<string>();
+      for (const raw of items) {
+        const v = (raw ?? "").trim().replace(/^#/, "");
+        if (!v) continue;
+        const key = normalizeKey(v);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(v);
+      }
+      return out;
+    };
+
+    const toArray = (v: any): string[] => {
+      if (Array.isArray(v)) return v.filter((x) => typeof x === "string");
+      if (typeof v === "string") {
+        const s = v.trim();
+        if (!s) return [];
+        if (s.includes(",")) return s.split(",").map((x) => x.trim()).filter(Boolean);
+        return [s];
+      }
+      return [];
+    };
+
+    const rawBefore = await this.app.vault.read(file);
+    const existingFromRaw = this.extractFrontmatterTagsFromText(rawBefore);
+
+    const fmApi = (this.app as any).fileManager?.processFrontMatter;
+    if (typeof fmApi === "function") {
+      await (this.app as any).fileManager.processFrontMatter(file, (fm: any) => {
+        const existing = uniqueByKey([...toArray(fm.tags), ...existingFromRaw]);
+        const seen = new Set(existing.map(normalizeKey));
+        const merged = [...existing];
+        for (const t of toAdd) {
+          const key = normalizeKey(t);
+          if (seen.has(key)) continue;
+          seen.add(key);
+          merged.push(t);
+        }
+        fm.tags = merged;
+      });
+      return;
+    }
+
+    const updated = this.upsertYamlTags(rawBefore, toAdd);
+    await this.app.vault.modify(file, updated);
+  }
+
+  private extractFrontmatterTagsFromText(text: string): string[] {
+    const fmMatch = text.match(/^---\s*[\r\n]+([\s\S]*?)[\r\n]+---\s*[\r\n]*/);
+    if (!fmMatch) return [];
+    const fm = fmMatch[1] ?? "";
+    const lines = fm.split(/\r?\n/);
+
+    for (let i = 0; i < lines.length; i++) {
+      const m = lines[i].match(/^tags:\s*(.*)\s*$/);
+      if (!m) continue;
+      const inlineValue = (m[1] ?? "").trim();
+      const out: string[] = [];
+
+      const pushClean = (v: string) => {
+        const cleaned = v.trim().replace(/^["']|["']$/g, "").replace(/^#/, "");
+        if (cleaned) out.push(cleaned);
+      };
+
+      if (inlineValue) {
+        const v = inlineValue.replace(/^["']|["']$/g, "");
+        if (v.startsWith("[") && v.endsWith("]")) {
+          const inner = v.slice(1, -1);
+          for (const part of inner.split(",")) pushClean(part);
+        } else if (v.includes(",")) {
+          for (const part of v.split(",")) pushClean(part);
+        } else {
+          pushClean(v);
+        }
+        return out;
+      }
+
+      for (let j = i + 1; j < lines.length; j++) {
+        const li = lines[j];
+        if (/^\S/.test(li)) break; // next top-level key
+        const lm = li.match(/^\s*-\s+(.+)\s*$/);
+        if (lm?.[1]) pushClean(lm[1]);
+      }
+      return out;
+    }
+
+    return [];
+  }
+
+  private upsertYamlTags(text: string, tags: string[]): string {
+    const fmMatch = text.match(/^---\s*[\r\n]+([\s\S]*?)[\r\n]+---\s*[\r\n]*/);
+    if (!fmMatch) {
+      return `---\ntags:\n${tags.map((t) => `  - ${t}`).join("\n")}\n---\n\n${text}`;
+    }
+
+    const fmContent = fmMatch[1] ?? "";
+    const rest = text.slice(fmMatch[0].length);
+    const fmLines = fmContent.split(/\r?\n/);
+    const out: string[] = [];
+    let i = 0;
+    let replaced = false;
+
+    const normalizeKey = (t: string) =>
+      t
+        .toLowerCase()
+        .replace(/\s+/g, "_")
+        .replace(/_+/g, "_")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "");
+
+    const existingTags: string[] = [];
+    while (i < fmLines.length) {
+      const line = fmLines[i];
+      const tagLineMatch = !replaced ? line.match(/^tags:\s*(.*)\s*$/) : null;
+      if (tagLineMatch) {
+        const inlineValue = (tagLineMatch[1] ?? "").trim();
+        out.push("tags:");
+        i++;
+
+        if (inlineValue) {
+          const v = inlineValue.replace(/^["']|["']$/g, "");
+          if (v.startsWith("[") && v.endsWith("]")) {
+            const inner = v.slice(1, -1);
+            for (const part of inner.split(",")) {
+              const cleaned = part.trim().replace(/^["']|["']$/g, "");
+              if (cleaned) existingTags.push(cleaned);
+            }
+          } else if (v.includes(",")) {
+            for (const part of v.split(",")) {
+              const cleaned = part.trim();
+              if (cleaned) existingTags.push(cleaned);
+            }
+          } else {
+            existingTags.push(v);
+          }
+        } else {
+          while (i < fmLines.length && /^\s+-\s+/.test(fmLines[i])) {
+            const m = fmLines[i].match(/^\s+-\s+(.+)\s*$/);
+            if (m?.[1]) existingTags.push(m[1].trim());
+            i++;
+          }
+        }
+
+        const uniqueExisting: string[] = [];
+        const seen = new Set<string>();
+        for (const t of existingTags) {
+          const key = normalizeKey(t);
+          if (seen.has(key)) continue;
+          seen.add(key);
+          uniqueExisting.push(t);
+        }
+
+        const merged = [...uniqueExisting];
+        for (const t of tags) {
+          const key = normalizeKey(t);
+          if (seen.has(key)) continue;
+          seen.add(key);
+          merged.push(t);
+        }
+
+        for (const t of merged) out.push(`  - ${t}`);
+        replaced = true;
+        continue;
+      }
+      out.push(line);
+      i++;
+    }
+    if (!replaced) {
+      out.unshift("tags:", ...tags.map((t) => `  - ${t}`));
+    }
+    return `---\n${out.join("\n")}\n---\n` + rest.replace(/^\n+/, "\n");
+  }
+
+  private stripFrontmatter(text: string): string {
+    if (!text.startsWith("---")) return text;
+    const match = text.match(/^---\s*[\r\n]+[\s\S]*?[\r\n]+---\s*[\r\n]+/);
+    if (!match) return text;
+    return text.slice(match[0].length);
+  }
+
+  private buildTaggingSystemPrompt(candidates: string[], maxTags: number): string {
+    return [
+      "You are a strict tagging assistant for an Obsidian vault.",
+      "Rules:",
+      "- Output only a newline-separated list of tags (no bullets, no commentary).",
+      "- Every tag must be lowercase.",
+      "- Tags must not contain spaces; use underscores instead.",
+      `- Return at most ${maxTags} tags.`,
+      "- Only use tags from the allowed list below (exact match). Do NOT invent new tags.",
+      "",
+      "Allowed tags:",
+      ...candidates.map((t) => `- ${t}`),
+    ].join("\n");
+  }
+
+  private parseTagListResponse(text: string): string[] {
+    const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
+    const out: string[] = [];
+
+    for (const line of lines) {
+      if (/^```/.test(line)) continue;
+      if (/^tags:\s*$/i.test(line)) continue;
+      if (/^here is|^recommended|^suggested|^people|^topics|^themes/i.test(line)) continue;
+
+      const m = line.match(/^(?:[-*]\s+)?(.+?)\s*$/);
+      if (!m) continue;
+      let raw = (m[1] ?? "").trim();
+      if (!raw) continue;
+
+      raw = raw.replace(/^#+/, ""); // allow #tag forms
+      raw = raw.replace(/^["']|["']$/g, "");
+      raw = raw.replace(/^[^a-zA-Z0-9áéíóúüñçàèìòùäëïöüÁÉÍÓÚÜÑÇÀÈÌÒÙÄËÏÖÜ/]+/, "");
+
+      // accept YAML list items like "- foo/bar"
+      const yamlItem = raw.match(/^-\s+(.+)$/);
+      if (yamlItem) raw = (yamlItem[1] ?? "").trim();
+
+      raw = raw.toLowerCase();
+      raw = raw.replace(/\s+/g, "_"); // enforce underscore instead of spaces
+      raw = raw.replace(/_+/g, "_");
+      raw = raw.replace(/^_+|_+$/g, "");
+
+      if (!raw) continue;
+      if (raw === "tags") continue;
+      if (!/^[\p{Ll}\p{Lo}\p{Mn}0-9/_-]+$/u.test(raw)) continue;
+      if (raw.includes("__")) raw = raw.replace(/__+/g, "_");
+
+      out.push(raw);
+    }
+
+    return out;
+  }
+
+  private rankTagCandidates(noteText: string, tags: string[]): string[] {
+    const norm = (s: string) =>
+      s
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "");
+
+    const text = noteText.toLowerCase();
+    const textNorm = norm(noteText);
+    const tokens = new Set(
+      norm(noteText)
+        .replace(/[`~!@%^&*()=+[{\]}\\|;:'\",.<>/?]/g, " ")
+        .split(/\s+/)
+        .map((t) => t.trim())
+        .filter((t) => t.length >= 3)
+    );
+
+    const scored: Array<{ tag: string; score: number }> = [];
+    for (const tag of tags) {
+      const leaf = tag.includes("/") ? tag.split("/").pop() || tag : tag;
+      const leafNorm = norm(leaf);
+      const tagNorm = norm(tag);
+      const leafWordsNorm = leafNorm.replace(/_/g, " ");
+      let score = 0;
+      if (tokens.has(leafNorm)) score += 8;
+      if (textNorm.includes(tagNorm)) score += 6;
+      if (textNorm.includes(leafWordsNorm)) score += 3;
+      const parts = leafWordsNorm.split(/\s+/).filter((p) => p.length >= 3);
+      if (parts.length && parts.every((p) => tokens.has(p))) score += 6;
+      if (score > 0) scored.push({ tag, score });
+    }
+
+    scored.sort((a, b) => b.score - a.score || a.tag.localeCompare(b.tag));
+
+    const roots = tags.filter((t) => !t.includes("/"));
+    const top = scored.map((s) => s.tag);
+    const merged: string[] = [];
+    const seen = new Set<string>();
+    for (const t of [...roots, ...top]) {
+      if (seen.has(t)) continue;
+      seen.add(t);
+      merged.push(t);
+    }
+    return merged;
+  }
+
+  async loadAllowedTags(): Promise<string[]> {
+    const path = (this.settings.tagsFilePath || "").trim();
+    if (!path) {
+      const tagMap = (this.app.metadataCache as any).getTags?.() as
+        | Record<string, number>
+        | undefined;
+      const keys = tagMap ? Object.keys(tagMap) : [];
+      const tags = keys
+        .map((t) => t.trim())
+        .filter(Boolean)
+        .map((t) => t.replace(/^#/, ""))
+        .map((t) => t.toLowerCase());
+      return Array.from(new Set(tags)).sort((a, b) => a.localeCompare(b));
+    }
+
+    const af = this.app.vault.getAbstractFileByPath(path);
+    if (!af || (af as any).path == null) return [];
+    const file: any = af;
+    const mtime = file.stat?.mtime ?? 0;
+    if (this.tagsCache && this.tagsCache.path === path && this.tagsCache.mtime === mtime) {
+      return this.tagsCache.tags;
+    }
+
+    const raw = await this.app.vault.read(file);
+    const tags = raw
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.startsWith("#"))
+      .filter((l) => !l.startsWith("##"))
+      .map((l) => l.replace(/^#+/, "").trim())
+      .filter(Boolean)
+      .map((t) => t.toLowerCase())
+      .filter((t) => t !== "all tags");
+
+    const unique = Array.from(new Set(tags)).sort((a, b) => a.localeCompare(b));
+    this.tagsCache = { path, mtime, tags: unique };
+    return unique;
   }
 
   /* ── Chat activation ── */
@@ -469,6 +930,13 @@ export default class HormePlugin extends Plugin {
 
   async saveSettings() {
     await this.saveData(this.settings);
+    for (const cb of this.settingsChangeListeners) {
+      try {
+        cb();
+      } catch {
+        /* ignore listener errors */
+      }
+    }
   }
 
   /* ── Chat history storage ── */
@@ -529,6 +997,8 @@ class HormeChatView extends ItemView {
   private presetSelect!: HTMLSelectElement;
   private isGenerating = false;
   private showingHistory = false;
+  private unregisterSettingsListener: (() => void) | null = null;
+  private sessionSystemPromptOverride: string | null = null;
 
   /** Active stream reader — stored so we can cancel it. */
   private activeReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
@@ -573,53 +1043,66 @@ class HormeChatView extends ItemView {
     root.empty();
     root.addClass("horme-chat-container");
 
+    this.sessionSystemPromptOverride = null;
+
+    const content = root.createDiv("horme-chat-content");
+
     /* ── Header ── */
-    const header = root.createDiv("horme-header");
+    const header = content.createDiv("horme-header");
 
     const row0 = header.createDiv("horme-header-row");
-    this.connectionDot = row0.createDiv("horme-connection-dot");
-    this.modelSelect = row0.createEl("select", { cls: "horme-model-select" });
+    this.connectionDot = row0.createDiv("horme-connection-icon");
+    setIcon(this.connectionDot, "cone");
+    const selectsWrap = row0.createDiv("horme-header-selects");
+
+    this.modelSelect = selectsWrap.createEl("select", { cls: "horme-select horme-model-select" });
     this.modelSelect.addEventListener("change", () => {
       this.plugin.settings.defaultModel = this.modelSelect.value;
       this.plugin.saveSettings();
     });
 
+    /* Preset selector (always visible) */
+    this.presetSelect = selectsWrap.createEl("select", { cls: "horme-select horme-preset-select" });
+    this.presetSelect.addEventListener("change", () => {
+      this.sessionSystemPromptOverride = this.presetSelect.value || null;
+    });
+    this.refreshPresets();
+
+    const refreshBtn = row0.createEl("button", { cls: "horme-header-btn" });
+    refreshBtn.classList.add("horme-icon-btn");
+    setIcon(refreshBtn, "refresh-cw");
+    refreshBtn.title = "Refresh models";
+    refreshBtn.addEventListener("click", () => this.refreshModels());
+
     const row1 = header.createDiv("horme-header-row");
-    const clearBtn = row1.createEl("button", {
+    row1.classList.add("horme-header-row-actions");
+    const row1Left = row1.createDiv("horme-header-actions-left");
+    const row1Right = row1.createDiv("horme-header-actions-right");
+
+    const clearBtn = row1Left.createEl("button", {
       cls: "horme-header-btn",
       text: "Clear",
     });
     clearBtn.addEventListener("click", () => this.clearChat());
 
-    const historyBtn = row1.createEl("button", { cls: "horme-header-btn" });
+    const tagBtn = row1Left.createEl("button", {
+      cls: "horme-header-btn",
+      text: "Tags",
+    });
+    tagBtn.title = "Suggest frontmatter tags for active note";
+    tagBtn.addEventListener("click", () => this.plugin.suggestTagsForActiveNote());
+
+    const historyBtn = row1Right.createEl("button", { cls: "horme-header-btn" });
+    historyBtn.classList.add("horme-icon-btn");
     setIcon(historyBtn, "history");
     historyBtn.title = "Chat history";
     historyBtn.addEventListener("click", () => this.toggleHistoryPanel());
 
-    const exportBtn = row1.createEl("button", { cls: "horme-header-btn" });
+    const exportBtn = row1Right.createEl("button", { cls: "horme-header-btn" });
+    exportBtn.classList.add("horme-icon-btn");
     setIcon(exportBtn, "download");
     exportBtn.title = "Export conversation";
     exportBtn.addEventListener("click", () => this.exportConversation());
-
-    const refreshBtn = row1.createEl("button", { cls: "horme-header-btn" });
-    setIcon(refreshBtn, "refresh-cw");
-    refreshBtn.title = "Refresh models";
-    refreshBtn.addEventListener("click", () => this.refreshModels());
-
-    /* Preset selector */
-    const presets = this.plugin.settings.promptPresets;
-    if (presets.length > 0) {
-      const row1b = header.createDiv("horme-header-row");
-      this.presetSelect = row1b.createEl("select", { cls: "horme-model-select" });
-      this.presetSelect.createEl("option", { text: "Default prompt", value: "" });
-      for (const p of presets) {
-        this.presetSelect.createEl("option", { text: p.name, value: p.prompt });
-      }
-      this.presetSelect.addEventListener("change", () => {
-        /* Temporarily override the system prompt for this session */
-        this.plugin.settings.systemPrompt = this.presetSelect.value || "";
-      });
-    }
 
     const row2 = header.createDiv("horme-header-row");
     const label = row2.createEl("label", { cls: "horme-context-toggle" });
@@ -638,11 +1121,11 @@ class HormeChatView extends ItemView {
     this.registerEvent(this.leafChangeRef);
 
     /* ── Messages ── */
-    this.messagesEl = root.createDiv("horme-messages");
+    this.messagesEl = content.createDiv("horme-messages");
     this.renderEmpty();
 
     /* ── Input ── */
-    const inputArea = root.createDiv("horme-input-area");
+    const inputArea = content.createDiv("horme-input-area");
 
     /* Paperclip / upload button */
     const uploadBtn = inputArea.createEl("button", { cls: "horme-upload-btn" });
@@ -672,11 +1155,17 @@ class HormeChatView extends ItemView {
       }
     });
 
+    this.unregisterSettingsListener = this.plugin.onSettingsChange(() => {
+      if (this.presetSelect) this.refreshPresets();
+    });
+
     await this.refreshModels();
     this.updateConnectionStatus();
   }
 
   async onClose() {
+    this.unregisterSettingsListener?.();
+    this.unregisterSettingsListener = null;
     this.contentEl.empty();
   }
 
@@ -708,6 +1197,7 @@ class HormeChatView extends ItemView {
         text: "No models found",
         value: "",
       });
+      this.updateConnectionStatus();
       return;
     }
     for (const m of models) {
@@ -717,11 +1207,34 @@ class HormeChatView extends ItemView {
     this.updateConnectionStatus();
   }
 
+  private refreshPresets() {
+    const current = this.presetSelect.value;
+    this.presetSelect.empty();
+
+    this.presetSelect.createEl("option", { text: "Default prompt", value: "" });
+
+    const presets = this.plugin.settings.promptPresets || [];
+    for (let i = 0; i < presets.length; i++) {
+      const p = presets[i];
+      const name = (p?.name || "").trim() || `Preset ${i + 1}`;
+      const prompt = p?.prompt || "";
+      this.presetSelect.createEl("option", { text: name, value: prompt });
+    }
+
+    this.presetSelect.disabled = presets.length === 0;
+
+    const hasCurrent = Array.from(this.presetSelect.options).some(
+      (o) => o.value === current
+    );
+    this.presetSelect.value = hasCurrent ? current : "";
+    this.sessionSystemPromptOverride = this.presetSelect.value || null;
+  }
+
   private async updateConnectionStatus() {
     const ok = await this.plugin.checkConnection();
     this.connectionDot.className = ok
-      ? "horme-connection-dot horme-dot-online"
-      : "horme-connection-dot horme-dot-offline";
+      ? "horme-connection-icon horme-online"
+      : "horme-connection-icon horme-offline";
     this.connectionDot.title = ok ? "Ollama connected" : "Ollama unreachable";
   }
 
@@ -840,7 +1353,8 @@ class HormeChatView extends ItemView {
 
       /* Single merged system prompt (respects frontmatter override) */
       const systemParts: string[] = [];
-      const effectivePrompt = this.plugin.getEffectiveSystemPrompt();
+      const effectivePrompt =
+        this.sessionSystemPromptOverride ?? this.plugin.getEffectiveSystemPrompt();
 
       if (effectivePrompt) {
         systemParts.push(effectivePrompt);
@@ -1101,60 +1615,58 @@ class HormeChatView extends ItemView {
   /* ── History panel ── */
 
   private async toggleHistoryPanel() {
+    this.showingHistory = !this.showingHistory;
     if (this.showingHistory) {
-      /* Return to chat */
-      this.showingHistory = false;
-      this.messagesEl.empty();
-      if (this.history.length) {
-        for (const m of this.history) {
-          if (m.role === "user" || m.role === "assistant") {
-            const bubble = this.addMessageBubble(m.role, "");
-            if (m.role === "assistant") {
-              await MarkdownRenderer.render(this.app, m.content, bubble, "", this);
-            } else {
-              bubble.textContent = m.content;
-            }
-          }
-        }
-      } else {
-        this.renderEmpty();
-      }
+      await this.renderHistoryView();
+    } else {
+      await this.renderChatView();
+    }
+  }
+
+  private async renderChatView() {
+    this.messagesEl.empty();
+
+    if (!this.history.length) {
+      this.renderEmpty();
       return;
     }
 
-    /* Show history */
-    this.showingHistory = true;
-    this.messagesEl.empty();
-    const panel = this.messagesEl.createDiv("horme-history-panel");
+    for (const m of this.history) {
+      if (m.role === "user" || m.role === "assistant") {
+        const bubble = this.addMessageBubble(m.role, "");
+        if (m.role === "assistant") {
+          await MarkdownRenderer.render(this.app, m.content, bubble, "", this);
+          this.addAssistantActions(bubble, m.content);
+        } else {
+          bubble.textContent = m.content;
+        }
+      }
+    }
 
+    this.scrollToBottom();
+  }
+
+  private async renderHistoryView() {
+    this.messagesEl.empty();
+
+    const panel = this.messagesEl.createDiv("horme-history-panel");
     const header = panel.createDiv("horme-history-header");
     header.createEl("h4", { text: "Chat History" });
 
     const actions = header.createDiv("horme-history-actions");
-    const backBtn = actions.createEl("button", {
-      cls: "horme-header-btn",
-      text: "Back",
-    });
-    backBtn.addEventListener("click", () => this.toggleHistoryPanel());
 
-    const deleteAllBtn = actions.createEl("button", {
-      cls: "horme-header-btn",
-      text: "Delete history",
+    const backBtn = actions.createEl("button", { cls: "horme-header-btn", text: "Back" });
+    backBtn.addEventListener("click", async () => {
+      this.showingHistory = false;
+      await this.renderChatView();
     });
+
+    const deleteAllBtn = actions.createEl("button", { cls: "horme-header-btn", text: "Delete history" });
     deleteAllBtn.style.color = "var(--text-error)";
     deleteAllBtn.addEventListener("click", async () => {
       await this.plugin.deleteAllChatHistory();
-      this.toggleHistoryPanel(); /* re-render as empty */
-      this.showingHistory = true; /* stay in history view */
-      this.messagesEl.empty();
-      const p2 = this.messagesEl.createDiv("horme-history-panel");
-      const h2 = p2.createDiv("horme-history-header");
-      h2.createEl("h4", { text: "Chat History" });
-      const a2 = h2.createDiv("horme-history-actions");
-      const bb = a2.createEl("button", { cls: "horme-header-btn", text: "Back" });
-      bb.addEventListener("click", () => this.toggleHistoryPanel());
-      p2.createDiv({ cls: "horme-history-empty", text: "No saved conversations" });
       new Notice("Chat history deleted");
+      await this.renderHistoryView();
     });
 
     const list = panel.createDiv("horme-history-list");
@@ -1187,20 +1699,7 @@ class HormeChatView extends ItemView {
       role: m.role as "user" | "assistant" | "system",
       content: m.content,
     }));
-    this.messagesEl.empty();
-
-    for (const m of this.history) {
-      if (m.role === "user" || m.role === "assistant") {
-        const bubble = this.addMessageBubble(m.role, "");
-        if (m.role === "assistant") {
-          await MarkdownRenderer.render(this.app, m.content, bubble, "", this);
-          this.addAssistantActions(bubble, m.content);
-        } else {
-          bubble.textContent = m.content;
-        }
-      }
-    }
-    this.scrollToBottom();
+    await this.renderChatView();
   }
 
   private scrollToBottom() {
@@ -1223,6 +1722,15 @@ class HormeSettingTab extends PluginSettingTab {
   constructor(app: App, plugin: HormePlugin) {
     super(app, plugin);
     this.plugin = plugin;
+  }
+
+  private async displayPreserveScroll() {
+    const scroller = this.containerEl.closest(".vertical-tab-content") as HTMLElement | null;
+    const scrollTop = scroller?.scrollTop ?? 0;
+    await this.display();
+    requestAnimationFrame(() => {
+      if (scroller) scroller.scrollTop = scrollTop;
+    });
   }
 
   async display() {
@@ -1289,7 +1797,7 @@ class HormeSettingTab extends PluginSettingTab {
           .onChange(async (v) => {
             this.plugin.settings.temperature = v;
             await this.plugin.saveSettings();
-            this.display(); // refresh description
+            this.displayPreserveScroll(); // refresh description without jumping
           })
       );
 
@@ -1303,6 +1811,50 @@ class HormeSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.exportFolder)
           .onChange(async (v) => {
             this.plugin.settings.exportFolder = v.trim() || DEFAULT_SETTINGS.exportFolder;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    /* ── Tagging ── */
+    containerEl.createEl("h3", { text: "Tagging" });
+
+    new Setting(containerEl)
+      .setName("Optional tag list note")
+      .setDesc("If set, Horme uses this note as the allowed-tag list; otherwise it uses your vault’s live tag index.")
+      .addText((text) =>
+        text
+          .setPlaceholder("Cartapacio/All Tags.md")
+          .setValue(this.plugin.settings.tagsFilePath)
+          .onChange(async (v) => {
+            this.plugin.settings.tagsFilePath = v.trim();
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Max tag candidates")
+      .setDesc("How many tags to send to the model (higher = slower + more tokens).")
+      .addSlider((sl) =>
+        sl
+          .setLimits(50, 600, 25)
+          .setValue(this.plugin.settings.maxTagCandidates)
+          .setDynamicTooltip()
+          .onChange(async (v) => {
+            this.plugin.settings.maxTagCandidates = v;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Max suggested tags")
+      .setDesc("Upper bound for tags suggested for a note.")
+      .addSlider((sl) =>
+        sl
+          .setLimits(1, 25, 1)
+          .setValue(this.plugin.settings.maxSuggestedTags)
+          .setDynamicTooltip()
+          .onChange(async (v) => {
+            this.plugin.settings.maxSuggestedTags = v;
             await this.plugin.saveSettings();
           })
       );
@@ -1336,7 +1888,7 @@ class HormeSettingTab extends PluginSettingTab {
           btn.setButtonText("Delete").onClick(async () => {
             presets.splice(i, 1);
             await this.plugin.saveSettings();
-            this.display();
+            this.displayPreserveScroll();
           })
         );
     }
@@ -1345,7 +1897,7 @@ class HormeSettingTab extends PluginSettingTab {
       btn.setButtonText("Add preset").setCta().onClick(async () => {
         presets.push({ name: "", prompt: "" });
         await this.plugin.saveSettings();
-        this.display();
+        this.displayPreserveScroll();
       })
     );
   }
