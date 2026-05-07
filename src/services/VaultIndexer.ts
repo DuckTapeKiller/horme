@@ -153,6 +153,11 @@ export class VaultIndexer {
           }
         }
         updatedCount++;
+
+        // Auto-save checkpoint every 50 files to prevent progress loss
+        if (updatedCount % 50 === 0) {
+          await this.saveIndex();
+        }
       } catch (e) {
         console.error(`Horme: Failed to index ${file.path}`, e);
         errorCount++;
