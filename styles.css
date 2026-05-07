@@ -1,5 +1,3 @@
-/* ── Horme Chat Panel ── */
-
 .horme-chat-container {
   display: flex;
   flex-direction: column;
@@ -15,6 +13,7 @@
   width: 100%;
   max-width: 760px;
   margin: 0 auto;
+  overflow: hidden;
 }
 
 /* ── Header ── */
@@ -25,6 +24,12 @@
   gap: 8px;
   padding: 12px 14px;
   border-bottom: 1px solid var(--background-modifier-border);
+  background: var(--background-primary-alt);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  position: sticky;
+  top: 0;
+  z-index: 10;
 }
 
 .horme-header-row {
@@ -150,6 +155,8 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
+  /* Critical: lets the messages area shrink when keyboard pushes up */
+  min-height: 0;
 }
 
 .horme-messages::-webkit-scrollbar {
@@ -168,8 +175,15 @@
   word-wrap: break-word;
   line-height: 1.55;
   font-size: 13px;
+  font-family: var(--font-text);
   user-select: text;
   -webkit-user-select: text;
+  animation: horme-msg-in 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes horme-msg-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .horme-msg p {
@@ -188,8 +202,9 @@
 
 .horme-msg-assistant {
   align-self: flex-start;
-  background: var(--background-secondary);
+  background: linear-gradient(135deg, var(--background-secondary) 0%, var(--background-primary-alt) 100%);
   color: var(--text-normal);
+  border: 1px solid var(--background-modifier-border);
 }
 
 .horme-msg-assistant pre {
@@ -219,6 +234,52 @@
   margin: 10px 0;
   border: none;
   border-top: 1px solid var(--background-modifier-border);
+}
+
+/* ── Reasoning Content ── */
+.horme-reasoning-details {
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  margin-bottom: 12px;
+  overflow: hidden;
+  transition: all 0.2s ease;
+}
+
+.horme-reasoning-summary {
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+  background: var(--background-secondary-alt);
+  border-bottom: 1px solid transparent;
+}
+
+.horme-reasoning-summary::-webkit-details-marker {
+  display: none;
+}
+
+.horme-reasoning-details[open] .horme-reasoning-summary {
+  border-bottom-color: var(--background-modifier-border);
+}
+
+.horme-reasoning-body {
+  padding: 10px 14px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+  font-family: var(--font-monospace);
+  white-space: pre-wrap;
+  max-height: 250px;
+  overflow-y: auto;
+  background: var(--background-primary);
+}
+
+.horme-content-area {
+  width: 100%;
 }
 
 /* ── Loading ── */
@@ -262,32 +323,59 @@
 /* ── Input Area ── */
 
 .horme-input-area {
-  display: flex;
-  gap: 8px;
-  padding: 12px 14px;
+  padding: 12px;
+  background: var(--background-primary-alt);
   border-top: 1px solid var(--background-modifier-border);
-  align-items: flex-end;
+  flex-shrink: 0;
+}
+
+.horme-input-container {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-l);
+  overflow: hidden;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.horme-input-container:focus-within {
+  border-color: var(--text-normal);
+  box-shadow: 0 0 0 1px var(--text-normal);
 }
 
 .horme-input {
-  flex: 1;
+  width: 100%;
   resize: none;
-  min-height: 36px;
-  max-height: 140px;
-  padding: 8px 12px;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: var(--radius-s);
-  background: var(--background-primary);
+  min-height: 44px;
+  max-height: 200px;
+  padding: 12px 14px 48px 14px;
+  border: none;
+  background: transparent;
   color: var(--text-normal);
-  font-size: 13px;
-  font-family: var(--font-interface);
-  line-height: 1.4;
+  font-size: 14px;
+  font-family: var(--font-text);
+  line-height: 1.5;
   outline: none;
-  transition: border-color 0.15s ease;
 }
 
-.horme-input:focus {
-  border-color: var(--interactive-accent);
+.horme-input-actions {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  pointer-events: none;
+}
+
+.horme-input-actions button {
+  pointer-events: auto;
+}
+
+.horme-input-spacer {
+  flex: 1;
 }
 
 .horme-send-btn {
@@ -296,13 +384,50 @@
   justify-content: center;
   width: 36px;
   height: 36px;
-  border-radius: var(--radius-s);
-  border: none;
-  background: var(--interactive-accent);
-  color: var(--text-on-accent);
+  border-radius: var(--radius-m);
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: var(--interactive-accent);
   cursor: pointer;
-  transition: opacity 0.15s ease;
+  transition: opacity 0.15s ease, transform 0.1s ease;
   flex-shrink: 0;
+}
+
+.horme-send-btn:active {
+  transform: scale(0.9);
+  background: transparent !important;
+}
+
+.horme-image-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-m);
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s ease, transform 0.1s ease;
+  flex-shrink: 0;
+}
+
+.horme-image-btn:hover {
+  color: var(--text-normal);
+  background: transparent !important;
+}
+
+.horme-image-btn:active {
+  transform: scale(0.9);
+  background: transparent !important;
+}
+
+.horme-image-btn svg {
+  width: 18px;
+  height: 18px;
 }
 
 .horme-send-btn svg {
@@ -343,6 +468,72 @@
   line-height: 1.5;
 }
 
+body.is-mobile .workspace-drawer.horme-keyboard-open .horme-empty {
+  display: none;
+}
+
+.horme-image-preview-container {
+  position: relative;
+  display: inline-block;
+  margin: 12px 0;
+  max-width: 85%;
+  border-radius: var(--radius-m);
+  overflow: hidden;
+  border: 1px solid var(--background-modifier-border);
+  box-shadow: var(--shadow-s);
+}
+
+.horme-image-preview {
+  display: block;
+  max-width: 240px;
+  max-height: 240px;
+  object-fit: contain;
+  background-color: var(--background-secondary);
+}
+
+.horme-image-preview-remove {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: var(--background-modifier-error);
+  color: white;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0.8;
+  transition: opacity 0.15s ease, transform 0.1s ease;
+  z-index: 5;
+}
+
+.horme-image-preview-remove:hover {
+  opacity: 1;
+  transform: scale(1.1);
+}
+
+.horme-image-preview-remove svg {
+  width: 14px;
+  height: 14px;
+}
+
+.horme-msg-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.horme-msg-image {
+  max-width: 100%;
+  max-height: 200px;
+  border-radius: var(--radius-s);
+  object-fit: cover;
+  border: 1px solid var(--background-modifier-border);
+}
+
 /* ── Upload Button ── */
 
 .horme-upload-btn {
@@ -351,13 +542,24 @@
   justify-content: center;
   width: 36px;
   height: 36px;
-  border-radius: var(--radius-s);
-  border: 1px solid var(--background-modifier-border);
-  background: var(--background-primary);
+  border-radius: var(--radius-m);
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
   color: var(--text-muted);
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: color 0.15s ease, transform 0.1s ease;
   flex-shrink: 0;
+}
+
+.horme-upload-btn:hover {
+  color: var(--text-normal);
+  background: transparent !important;
+}
+
+.horme-upload-btn:active {
+  transform: scale(0.9);
+  background: transparent !important;
 }
 
 .horme-upload-btn svg {
@@ -368,6 +570,26 @@
 .horme-upload-btn:hover {
   background: var(--background-modifier-hover);
   color: var(--text-normal);
+}
+
+/* Mobile-specific input overrides */
+@media (max-width: 480px) {
+  .horme-input {
+    font-size: 16px; /* prevents iOS auto-zoom on focus */
+    min-height: 48px;
+    border-radius: var(--radius-m);
+  }
+
+  .horme-send-btn,
+  .horme-upload-btn {
+    width: 40px;
+    height: 40px;
+  }
+
+  .horme-input-area {
+    padding: 8px 10px;
+    gap: 6px;
+  }
 }
 
 /* ── Document Notice ── */
@@ -384,12 +606,20 @@
 
 /* ── Save as Note ── */
 
+/* ── Save as Note ── */
+
 .horme-save-wrapper {
   align-self: flex-start;
   padding-left: 4px;
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+/* ── Mobile Keyboard Fix ── */
+body.is-mobile .workspace-drawer.horme-keyboard-open .workspace-drawer-header,
+body.is-mobile .workspace-drawer.horme-keyboard-open .workspace-drawer-tab-options {
+  display: none !important;
 }
 
 .horme-save-btn {
@@ -517,6 +747,12 @@
 .horme-connection-icon.horme-online {
   color: #34d399;
   filter: drop-shadow(0 0 3px #34d39966);
+  animation: horme-pulse-online 2s ease-in-out infinite;
+}
+
+@keyframes horme-pulse-online {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(0.92); }
 }
 
 .theme-light .horme-connection-icon.horme-online {
@@ -556,9 +792,11 @@
   font-size: 11px;
   font-weight: 600;
   margin-bottom: 6px;
-  padding: 2px 8px;
+  margin-bottom: 8px;
+  padding: 4px 8px;
   border-radius: var(--radius-s);
-  display: inline-block;
+  display: block;
+  width: fit-content;
 }
 
 .horme-diff-label-old {
@@ -574,14 +812,33 @@
 .horme-diff-text {
   background: var(--background-secondary);
   border-radius: var(--radius-s);
-  padding: 10px;
+  padding: 12px;
   font-size: 12px;
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
-  max-height: 300px;
+  height: 320px;
+  max-height: 320px;
   overflow-y: auto;
   border: 1px solid var(--background-modifier-border);
+  width: 100%;
+  display: block;
+  margin: 0;
+  font-family: var(--font-monospace);
+  box-sizing: border-box;
+}
+
+textarea.horme-diff-textarea {
+  resize: none;
+  outline: none;
+  color: var(--text-normal);
+  font-family: var(--font-monospace);
+  border-color: var(--background-modifier-border);
+  vertical-align: top;
+}
+
+textarea.horme-diff-textarea:focus {
+  border-color: var(--interactive-accent);
 }
 
 .horme-diff-buttons {
@@ -596,4 +853,198 @@
   border-radius: var(--radius-s);
   font-size: 12px;
   cursor: pointer;
+}
+
+/* ── PDF Conversion Modal ── */
+
+.horme-pdf-modal {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  margin: 0 auto;
+}
+
+.horme-pdf-filename {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 20px;
+  word-break: break-all;
+  width: 100%;
+}
+
+.horme-progress-container {
+  width: 100%;
+  height: 8px;
+  background: var(--background-secondary);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 12px;
+  border: 1px solid var(--background-modifier-border);
+}
+
+.horme-progress-bar {
+  height: 100%;
+  background: var(--interactive-accent);
+  width: 0%;
+  transition: width 0.3s ease;
+}
+
+.horme-progress-status {
+  font-size: 12px;
+  color: var(--text-normal);
+  margin-bottom: 20px;
+}
+
+.horme-modal-buttons {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+}
+
+.horme-modal-buttons button {
+  padding: 6px 16px;
+  border-radius: var(--radius-s);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.horme-modal-config {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 24px;
+  width: 100%;
+}
+
+.horme-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-normal);
+}
+
+.horme-select {
+  width: 100%;
+  max-width: 200px;
+}
+
+.horme-progress-section {
+  margin-top: 10px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* ── Settings Header ── */
+.horme-settings-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 0 20px 0;
+  text-align: center;
+}
+
+.horme-settings-header-icon {
+  color: var(--interactive-accent);
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  filter: drop-shadow(0 0 8px var(--interactive-accent-hover));
+}
+
+.horme-settings-header-icon svg {
+  width: 64px;
+  height: 64px;
+}
+
+.horme-settings-title {
+  margin: 0 !important;
+  font-size: 28px !important;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  color: var(--text-normal);
+}
+
+/* ── Settings Sections ── */
+
+.horme-settings-section {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  padding: 0;
+  margin-bottom: 20px;
+  overflow: hidden;
+  background: var(--background-secondary-alt);
+}
+
+.horme-settings-section summary {
+  padding: 12px 16px;
+  background: var(--background-secondary);
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid transparent;
+  transition: background 0.2s ease;
+  user-select: none;
+}
+
+.horme-settings-section summary::-webkit-details-marker {
+  display: none;
+}
+
+.horme-settings-section[open] summary {
+  border-bottom-color: var(--background-modifier-border);
+  background: var(--background-primary-alt);
+}
+
+.horme-settings-section summary:hover {
+  background: var(--background-modifier-hover);
+}
+
+.horme-settings-section .setting-item {
+  padding: 12px 16px;
+  border-top: none;
+}
+
+.horme-settings-section .setting-item:last-child {
+  padding-bottom: 16px;
+}
+
+.horme-settings-section textarea {
+  width: 100%;
+  min-height: 100px;
+  resize: vertical;
+  font-family: var(--font-interface);
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 8px 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-primary);
+  color: var(--text-normal);
+}
+
+.horme-settings-section textarea:focus {
+  border-color: var(--interactive-accent);
+  outline: none;
+}
+
+.horme-nested-settings {
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.horme-nested-settings .horme-settings-section {
+  margin-bottom: 0;
+  border-color: var(--text-normal);
+  color: var(--text-normal);
 }

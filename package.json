@@ -1,6 +1,6 @@
 {
   "name": "horme",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Obsidian plugin for local LLM integration via Ollama",
   "main": "main.js",
   "scripts": {
@@ -17,6 +17,9 @@
     "typescript": "4.9.5"
   },
   "dependencies": {
+    "docx": "^9.6.1",
+    "html2pdf.js": "^0.10.1",
+    "jspdf": "^2.5.1",
     "pdfjs-dist": "^3.11.174"
   }
 }

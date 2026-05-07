@@ -1,7 +1,7 @@
 {
   "id": "horme",
   "name": "Horme",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "minAppVersion": "1.0.0",
   "description": "Integrate local LLMs via Ollama — right-click text actions, chat panel, and more.",
   "author": "DuckTapeKiller",
