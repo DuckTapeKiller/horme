@@ -71,12 +71,14 @@ export class EmbeddingService {
         }
       } catch (e) {}
 
-      // Fallback for this micro-batch
+    // Fallback for this micro-batch
       for (const input of batch) {
         results.push(await this.getOllamaEmbedding(input));
       }
     }
-    return results;
+    
+    // Precision Compression: Round to 4 decimals to save massive space/memory
+    return results.map(arr => arr.map(n => Math.round(n * 10000) / 10000));
   }
 
   private async getOllamaEmbedding(text: string): Promise<number[]> {
@@ -174,8 +176,11 @@ export class EmbeddingService {
           }
           try {
             const parsed = JSON.parse(responseBody);
-            if (parsed.embeddings?.length > 0) resolve(parsed.embeddings[0]);
-            else if (parsed.embedding) resolve(parsed.embedding);
+            let embedding: number[] = [];
+            if (parsed.embeddings?.length > 0) embedding = parsed.embeddings[0];
+            else if (parsed.embedding) embedding = parsed.embedding;
+            
+            if (embedding.length > 0) resolve(embedding.map(n => Math.round(n * 10000) / 10000));
             else reject(new Error("No embedding in response"));
           } catch (e) { reject(e); }
         });

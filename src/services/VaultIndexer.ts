@@ -140,11 +140,12 @@ export class VaultIndexer {
           );
           for (let j = 0; j < validChunks.length; j++) {
             if (embeddings[j] && embeddings[j].length > 0) {
+              const rounded = embeddings[j].map(n => Math.round(n * 10000) / 10000);
               this.index.push({
                 path: file.path,
                 chunkStart: validChunks[j].start,
                 chunkEnd: validChunks[j].end,
-                embedding: embeddings[j],
+                embedding: rounded,
                 mtime: file.stat.mtime,
                 model: this.plugin.settings.ragEmbeddingModel
               });

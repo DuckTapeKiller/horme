@@ -79,7 +79,8 @@ export class TagIndexer {
         const embeddings = await this.plugin.embeddingService.getEmbeddings(batch);
         for (let j = 0; j < batch.length; j++) {
           if (embeddings[j]) {
-            newIndex.push({ tag: batch[j], embedding: embeddings[j] });
+            const rounded = embeddings[j].map(n => Math.round(n * 10000) / 10000);
+            newIndex.push({ tag: batch[j], embedding: rounded });
           }
         }
       } catch (e) {
