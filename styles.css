@@ -109,8 +109,10 @@
 }
 
 .horme-header-btn svg {
-  width: 16px !important;
-  height: 16px !important;
+  --icon-size: 18px;
+  width: var(--icon-size) !important;
+  height: var(--icon-size) !important;
+  stroke-width: 2.5px !important;
 }
 
 .horme-header-row-actions {
@@ -133,9 +135,11 @@
 }
 
 .horme-header-btn.horme-icon-btn svg {
-  width: 20px !important;
-  height: 20px !important;
-  color: var(--text-normal);
+  --icon-size: 22px;
+  width: var(--icon-size) !important;
+  height: var(--icon-size) !important;
+  stroke-width: 2.5px !important;
+  color: var(--text-normal) !important;
 }
 
 .horme-context-toggle {
