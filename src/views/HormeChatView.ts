@@ -34,6 +34,7 @@ export class HormeChatView extends ItemView {
   private selectedContextNotes: TFile[] = [];
   private contextNotesLabel!: HTMLElement;
   private vaultBrainToggle!: HTMLInputElement;
+  private vaultBrainLabel!: HTMLElement;
  
   private async pickImage() {
     const fileInput = document.createElement("input");
@@ -161,15 +162,13 @@ export class HormeChatView extends ItemView {
     this.contextToggle = label.createEl("input", { type: "checkbox" });
     label.createSpan({ text: "Use current note as context" });
 
-    const canUseVaultBrain = this.plugin.settings.vaultBrainEnabled
-      && (this.plugin.isLocalProviderActive() || this.plugin.settings.allowCloudRAG);
-    if (canUseVaultBrain) {
-      const vbLabel = row2.createEl("label", { cls: "horme-context-toggle" });
-      vbLabel.style.marginLeft = "12px";
-      this.vaultBrainToggle = vbLabel.createEl("input", { type: "checkbox" });
-      this.vaultBrainToggle.checked = true;
-      vbLabel.createSpan({ text: "Use Vault Brain" });
-    }
+    const vbLabel = row2.createEl("label", { cls: "horme-context-toggle" });
+    vbLabel.style.marginLeft = "12px";
+    this.vaultBrainToggle = vbLabel.createEl("input", { type: "checkbox" });
+    this.vaultBrainToggle.checked = true;
+    vbLabel.createSpan({ text: "Use Vault Brain" });
+    this.vaultBrainLabel = vbLabel;
+    this.updateVaultBrainToggle();
 
     this.contextNoteLabel = header.createDiv("horme-context-note-label");
 
@@ -322,6 +321,13 @@ export class HormeChatView extends ItemView {
     }
   }
 
+  private updateVaultBrainToggle() {
+    const canUse = this.plugin.settings.vaultBrainEnabled
+      && (this.plugin.isLocalProviderActive() || this.plugin.settings.allowCloudRAG);
+    this.vaultBrainLabel.style.display = canUse ? "" : "none";
+    if (!canUse) this.vaultBrainToggle.checked = false;
+  }
+
   private updateContextNotesLabel() {
     this.contextNotesLabel.empty();
     if (this.selectedContextNotes.length === 0) {
@@ -376,6 +382,7 @@ export class HormeChatView extends ItemView {
       if (m === this.getCurrentProviderModel()) opt.selected = true;
     });
     this.updateConnectionStatus();
+    this.updateVaultBrainToggle();
   }
 
   private refreshPresets() {
