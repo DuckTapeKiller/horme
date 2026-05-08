@@ -595,14 +595,21 @@ body.is-mobile .workspace-drawer.horme-keyboard-open .horme-empty {
   }
 
   .horme-send-btn,
-  .horme-upload-btn {
-    width: 40px;
-    height: 40px;
+  .horme-upload-btn,
+  .horme-image-btn {
+    width: 36px;
+    height: 36px;
+  }
+
+  .horme-header-btn {
+    padding: 3px 8px;
+    font-size: 10px;
+    min-height: 24px;
   }
 
   .horme-input-area {
-    padding: 8px 10px;
-    gap: 6px;
+    padding: 6px 8px;
+    gap: 4px;
   }
 }
 
@@ -729,6 +736,28 @@ body.is-mobile .workspace-drawer.horme-keyboard-open .workspace-drawer-tab-optio
 .horme-history-item-date {
   font-size: 10px;
   color: var(--text-faint);
+}
+
+.horme-history-item-delete {
+  padding: 4px;
+  border-radius: var(--radius-s);
+  color: var(--text-faint);
+  opacity: 0;
+  transition: all 0.15s ease;
+}
+
+.horme-history-item:hover .horme-history-item-delete {
+  opacity: 1;
+}
+
+.horme-history-item-delete:hover {
+  color: var(--text-error);
+  background: var(--background-modifier-error-hover);
+}
+
+.horme-history-item-delete svg {
+  width: 14px;
+  height: 14px;
 }
 
 .horme-history-empty {

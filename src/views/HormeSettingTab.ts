@@ -148,16 +148,25 @@ export class HormeSettingTab extends PluginSettingTab {
     generalSection.createEl("summary", { text: "◈ General & Tagging" });
 
     new Setting(generalSection).setName("Custom system prompt").addTextArea(ta => ta.setValue(this.plugin.settings.systemPrompt).onChange(async v => {
-        this.plugin.settings.systemPrompt = v; await this.plugin.saveSettings();
+      this.plugin.settings.systemPrompt = v; await this.plugin.saveSettings();
     }));
 
-    new Setting(generalSection).setName("Temperature").addSlider(sl => sl.setLimits(0, 1, 0.1).setValue(this.plugin.settings.temperature).setDynamicTooltip().onChange(async v => {
-        this.plugin.settings.temperature = v; await this.plugin.saveSettings();
-        this.displayPreserveScroll();
-    }));
+    const tempSetting = new Setting(generalSection)
+      .setName("Temperature")
+      .setDesc(`Higher values make output more random, lower values more deterministic. (Default: 0.7) Current: ${this.plugin.settings.temperature}`);
+    
+    tempSetting.addSlider(sl => sl
+      .setLimits(0, 1, 0.1)
+      .setValue(this.plugin.settings.temperature)
+      .setDynamicTooltip()
+      .onChange(async v => {
+        this.plugin.settings.temperature = v;
+        tempSetting.setDesc(`Higher values make output more random, lower values more deterministic. (Default: 0.7) Current: ${v}`);
+        await this.plugin.saveSettings();
+      }));
 
     new Setting(generalSection).setName("Export folder").addText(t => t.setValue(this.plugin.settings.exportFolder).onChange(async v => {
-        this.plugin.settings.exportFolder = v.trim() || "HORME"; await this.plugin.saveSettings();
+      this.plugin.settings.exportFolder = v.trim() || "HORME"; await this.plugin.saveSettings();
     }));
 
     // PRESETS

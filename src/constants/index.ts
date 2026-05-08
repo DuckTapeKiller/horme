@@ -27,7 +27,7 @@ export const DEFAULT_SETTINGS: HormeSettings = {
   openRouterApiKey: "",
   openRouterModel: "mistralai/mistral-7b-instruct:free",
   systemPrompt: "",
-  temperature: 0.6,
+  temperature: 0.3,
   exportFolder: "HORME",
   promptPresets: [],
   tagsFilePath: "",

@@ -65,6 +65,19 @@ export class HistoryManager {
     }
   }
 
+  async delete(id: string): Promise<void> {
+    try {
+      let conversations = await this.load();
+      conversations = conversations.filter(c => c.id !== id);
+      await this.app.vault.adapter.write(
+        this.historyPath,
+        JSON.stringify(conversations)
+      );
+    } catch (e) {
+      console.error("Horme: Failed to delete chat history", e);
+    }
+  }
+
   async load(): Promise<SavedConversation[]> {
     try {
       const exists = await this.app.vault.adapter.exists(this.historyPath);

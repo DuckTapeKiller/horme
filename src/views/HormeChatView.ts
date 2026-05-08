@@ -251,16 +251,14 @@ export class HormeChatView extends ItemView {
     const uploadBtn = actionRow.createEl("button", { cls: "horme-upload-btn" });
     setIcon(uploadBtn, "paperclip");
     uploadBtn.title = "Upload document";
-    uploadBtn.addEventListener("pointerdown", (e) => {
-      e.preventDefault();
+    uploadBtn.addEventListener("click", (e) => {
       this.pickDocument();
     });
 
     const imageBtn = actionRow.createEl("button", { cls: "horme-image-btn" });
     setIcon(imageBtn, "image");
     imageBtn.title = "Upload image";
-    imageBtn.addEventListener("pointerdown", (e) => {
-      e.preventDefault();
+    imageBtn.addEventListener("click", (e) => {
       this.pickImage();
     });
 
@@ -831,8 +829,8 @@ export class HormeChatView extends ItemView {
       }
     }
 
+    const contentArea = el.createDiv("horme-content-area");
     if (content) {
-      const contentArea = el.createDiv("horme-content-area");
       contentArea.textContent = content;
     }
 
@@ -911,7 +909,18 @@ export class HormeChatView extends ItemView {
       const info = item.createDiv("horme-history-item-info");
       info.createDiv({ cls: "horme-history-item-title", text: c.title });
       info.createDiv({ cls: "horme-history-item-date", text: new Date(c.timestamp).toLocaleString() });
-      item.addEventListener("click", () => this.loadConversation(c));
+      info.addEventListener("click", () => this.loadConversation(c));
+
+      const delBtn = item.createDiv("horme-history-item-delete");
+      setIcon(delBtn, "trash-2");
+      delBtn.title = "Delete conversation";
+      delBtn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        if (confirm("Delete this conversation?")) {
+          await this.plugin.historyManager.delete(c.id);
+          await this.renderHistoryView();
+        }
+      });
     }
   }
 
