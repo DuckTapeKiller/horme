@@ -8,7 +8,7 @@
 
 *In Greek mythology, Horme (/ˈhɔːrmiː/; Ancient Greek: Ὁρμή) is the Greek spirit personifying energetic activity, impulse or effort (to do a thing), eagerness, setting oneself in motion, and starting an action, and particularly onrush in battle.*
 
-![Illustration](images/illustration_1.png)
+![Illustration](images/illustration.png)
 
 ---
 > [!IMPORTANT]
