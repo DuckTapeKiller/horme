@@ -602,9 +602,9 @@ body.is-mobile .workspace-drawer.horme-keyboard-open .horme-empty {
   }
 
   .horme-header-btn {
-    padding: 3px 8px;
+    padding: 2px 12px;
     font-size: 10px;
-    min-height: 24px;
+    min-height: 22px;
   }
 
   .horme-input-area {
