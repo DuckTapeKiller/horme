@@ -15,6 +15,67 @@
 No data leaves your machine. No API keys. No cloud. Just your models, your notes, your rules.
 
 ---
+# Quick start
+
+## TLDR — For Non-Technical Users
+
+To use this plugin's full capabilities, you need two local models:
+1.  **An Indexing Model:** This model allows the plugin to interact with and index your notes.
+2.  **An Interaction Model:** This is the model you will actually chat or "speak" with.
+
+---
+
+### Prerequisites: Setting up Ollama
+
+We recommend using **Ollama** to manage your local models. You can download it here: [Download Ollama](https://ollama.com/download).
+
+**1. Download the Indexing Model:**
+This model is *only* for indexing your vault in a compressed format; you cannot chat with it.
+*   **Recommended Model:** `mxbai-embed-large:latest`
+*   **Command (in your terminal):**
+    ```bash
+    ollama pull mxbai-embed-large:latest
+    ```
+
+**2. Download the Interaction Model:**
+This is the model you will use for asking questions.
+*   **Strong Recommendation:** `gemma4:e4b`
+*   **Command (in your terminal):**
+    ```bash
+    ollama pull gemma4:e4b
+    ```
+
+---
+
+### Manual Installation Steps
+
+Once both models are downloaded, follow these steps to install Horme:
+
+1.  **Create Plugin Folder:**
+    *   Navigate to your hidden Obsidian folder: `.obsidian/plugins`
+    *   Create a new folder named `horme`.
+
+2.  **Download Plugin Files:**
+    *   Go to the repository releases page: [Horme Releases](https://github.com/DuckTapeKiller/horme/releases).
+    *   Download the three files from the most recent release:
+        *   `main.js`
+        *   `manifest.json`
+        *   `styles.css`
+
+3.  **Activate in Obsidian:**
+    *   Go to **Horme Settings** in Obsidian.
+    *   Scroll down and toggle on **"Enable Local Vault Memory"**.
+    *   Select the indexing model you just downloaded: **`mxbai-embed-large:latest`**.
+    *   Wait for the count in the status bar to finish processing.
+
+### Ready to Use
+
+Once the indexing is complete, go to the **Horme chat box** and ask any question about your notes.
+
+**Example Query:**
+> "I want to write an essay on modern art, help me find which of my notes can help me."
+
+---
 
 ## <span style="color:#7c3aed">&#9776; Table of Contents</span>
 
