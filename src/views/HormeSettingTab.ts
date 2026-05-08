@@ -153,7 +153,7 @@ export class HormeSettingTab extends PluginSettingTab {
 
     const tempSetting = new Setting(generalSection)
       .setName("Temperature")
-      .setDesc(`Higher values make output more random, lower values more deterministic. (Default: 0.7) Current: ${this.plugin.settings.temperature}`);
+      .setDesc(`Higher values make output more random, lower values more deterministic. (Default: 0.3) Current: ${this.plugin.settings.temperature}`);
     
     tempSetting.addSlider(sl => sl
       .setLimits(0, 1, 0.1)
@@ -161,7 +161,7 @@ export class HormeSettingTab extends PluginSettingTab {
       .setDynamicTooltip()
       .onChange(async v => {
         this.plugin.settings.temperature = v;
-        tempSetting.setDesc(`Higher values make output more random, lower values more deterministic. (Default: 0.7) Current: ${v}`);
+        tempSetting.setDesc(`Higher values make output more random, lower values more deterministic. (Default: 0.3) Current: ${v}`);
         await this.plugin.saveSettings();
       }));
 
