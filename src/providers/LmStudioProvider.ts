@@ -29,6 +29,21 @@ export class LmStudioProvider implements AiProvider {
     return res.json?.choices?.[0]?.message?.content || "";
   }
 
+  async generateChat(msgs: Array<{ role: string; content: string }>, model: string): Promise<string> {
+    const res = await requestUrl({
+      url: `${this.baseUrl}/v1/chat/completions`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model,
+        messages: msgs,
+        temperature: this.temperature,
+        max_tokens: 2048,
+        stream: false
+      })
+    });
+    return res.json?.choices?.[0]?.message?.content || "";
+  }
   async stream(msgs: Array<{ role: string; content: string }>, model: string, signal?: AbortSignal): Promise<ReadableStreamDefaultReader<Uint8Array>> {
     // LM Studio often supports OpenAI-style streaming. 
     // Since requestUrl doesn't support streaming well, we use fetch for local streaming if CORS allows.

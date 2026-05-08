@@ -1,3 +1,4 @@
+import HormePlugin from "../../main";
 import { HormeSettings } from "../types";
 import { AiProvider } from "./AiProvider";
 import { OllamaProvider } from "./OllamaProvider";
@@ -7,47 +8,78 @@ import { GeminiProvider } from "./GeminiProvider";
 import { OpenAIProvider } from "./OpenAIProvider";
 import { GroqProvider } from "./GroqProvider";
 import { OpenRouterProvider } from "./OpenRouterProvider";
-
 export class AiGateway {
-  private settings: HormeSettings;
+  private plugin: HormePlugin;
 
-  constructor(settings: HormeSettings) {
-    this.settings = settings;
+  constructor(plugin: HormePlugin) {
+    this.plugin = plugin;
   }
 
   private getProvider(): AiProvider {
-    const provider = this.settings.aiProvider;
+    const settings = this.plugin.settings;
+    const provider = settings.aiProvider;
     switch (provider) {
-      case "claude": return new ClaudeProvider(this.settings.claudeApiKey, this.settings.temperature);
-      case "gemini": return new GeminiProvider(this.settings.geminiApiKey, this.settings.temperature);
-      case "openai": return new OpenAIProvider(this.settings.openaiApiKey, this.settings.temperature);
-      case "groq": return new GroqProvider(this.settings.groqApiKey, this.settings.temperature);
-      case "openrouter": return new OpenRouterProvider(this.settings.openRouterApiKey, this.settings.temperature);
-      case "lmstudio": return new LmStudioProvider(this.settings.lmStudioUrl, this.settings.temperature);
-      default: return new OllamaProvider(this.settings.ollamaBaseUrl, this.settings.temperature);
+      case "claude": return new ClaudeProvider(settings.claudeApiKey, settings.temperature);
+      case "gemini": return new GeminiProvider(settings.geminiApiKey, settings.temperature);
+      case "openai": return new OpenAIProvider(settings.openaiApiKey, settings.temperature);
+      case "groq": return new GroqProvider(settings.groqApiKey, settings.temperature);
+      case "openrouter": return new OpenRouterProvider(settings.openRouterApiKey, settings.temperature);
+      case "lmstudio": return new LmStudioProvider(settings.lmStudioUrl, settings.temperature);
+      default: return new OllamaProvider(settings.ollamaBaseUrl, settings.temperature);
     }
   }
 
-  async generate(prompt: string, system: string, modelOverride?: string): Promise<string> {
-    const provider = this.getProvider();
-    const model = modelOverride || this.getCurrentModel();
-    return await provider.generate(prompt, system, model);
+  private getSystemPromptWithSkills(baseSystem: string, suppressVaultSkill = false): string {
+    const skillInstructions = this.plugin.skillManager.getSkillInstructions(suppressVaultSkill);
+    return `${baseSystem}\n\n${skillInstructions}`;
   }
 
-  async stream(msgs: Array<{ role: string; content: string }>, modelOverride?: string, signal?: AbortSignal): Promise<ReadableStreamDefaultReader<Uint8Array>> {
+  async generate(prompt: string | Array<{role: string, content: string}>, system: string, modelOverride?: string): Promise<string> {
     const provider = this.getProvider();
     const model = modelOverride || this.getCurrentModel();
-    return await provider.stream(msgs, model, signal);
+    const enhancedSystem = this.getSystemPromptWithSkills(system);
+    
+    if (Array.isArray(prompt)) {
+      // Use the messages array directly if provided
+      const msgs = [
+        { role: "system", content: enhancedSystem },
+        ...prompt
+      ];
+      // We'll use a new non-streaming chat helper to ensure compatibility
+      return await provider.generateChat(msgs, model);
+    }
+
+    return await provider.generate(prompt, enhancedSystem, model);
+  }
+
+  async stream(msgs: Array<{ role: string; content: string }>, modelOverride?: string, signal?: AbortSignal, suppressVaultSkill = false): Promise<ReadableStreamDefaultReader<Uint8Array>> {
+    const provider = this.getProvider();
+    const model = modelOverride || this.getCurrentModel();
+    
+    // Inject skills into the first system message or add a new one
+    const enhancedMsgs = [...msgs];
+    const systemIdx = enhancedMsgs.findIndex(m => m.role === "system");
+    if (systemIdx !== -1) {
+      enhancedMsgs[systemIdx] = { 
+        ...enhancedMsgs[systemIdx], 
+        content: this.getSystemPromptWithSkills(enhancedMsgs[systemIdx].content, suppressVaultSkill) 
+      };
+    } else {
+      enhancedMsgs.unshift({ role: "system", content: this.getSystemPromptWithSkills("", suppressVaultSkill) });
+    }
+
+    return await provider.stream(enhancedMsgs, model, signal);
   }
 
   private getCurrentModel(): string {
-    const p = this.settings.aiProvider;
-    if (p === "claude") return this.settings.claudeModel;
-    if (p === "gemini") return this.settings.geminiModel;
-    if (p === "openai") return this.settings.openaiModel;
-    if (p === "groq") return this.settings.groqModel;
-    if (p === "openrouter") return this.settings.openRouterModel;
-    if (p === "lmstudio") return this.settings.lmStudioModel;
-    return this.settings.defaultModel;
+    const p = this.plugin.settings.aiProvider;
+    const settings = this.plugin.settings;
+    if (p === "claude") return settings.claudeModel;
+    if (p === "gemini") return settings.geminiModel;
+    if (p === "openai") return settings.openaiModel;
+    if (p === "groq") return settings.groqModel;
+    if (p === "openrouter") return settings.openRouterModel;
+    if (p === "lmstudio") return settings.lmStudioModel;
+    return settings.defaultModel;
   }
 }

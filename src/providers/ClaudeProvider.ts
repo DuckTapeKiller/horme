@@ -31,6 +31,29 @@ export class ClaudeProvider implements AiProvider {
     return res.json?.content?.[0]?.text || "";
   }
 
+  async generateChat(msgs: Array<{ role: string; content: string }>, model: string): Promise<string> {
+    if (!this.apiKey) throw new Error("No Claude API Key");
+    const system = msgs.find(m => m.role === "system")?.content || "";
+    const history = msgs.filter(m => m.role !== "system");
+    const res = await requestUrl({
+      url: "https://api.anthropic.com/v1/messages",
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": this.apiKey,
+        "anthropic-version": "2023-06-01"
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 4096,
+        temperature: this.temperature,
+        system,
+        messages: history
+      })
+    });
+    return res.json?.content?.[0]?.text || "";
+  }
+
   async stream(msgs: Array<{ role: string; content: string }>, model: string, signal?: AbortSignal): Promise<ReadableStreamDefaultReader<Uint8Array>> {
     if (!this.apiKey) throw new Error("No Claude API Key");
     

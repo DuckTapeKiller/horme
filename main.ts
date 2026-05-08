@@ -17,8 +17,10 @@ import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf";
 
 // Modals
 import { TranslateModal } from "./src/modals/TranslateModal";
+import { RewriteModal } from "./src/modals/RewriteModal";
 import { ConfirmReplaceModal } from "./src/modals/ConfirmReplaceModal";
 import { ConversionModal } from "./src/modals/ConversionModal";
+import { HormeErrorModal } from "./src/modals/HormeErrorModal";
 
 // Services
 import { PdfService } from "./src/services/PdfService";
@@ -28,6 +30,8 @@ import { TagService } from "./src/services/TagService";
 import { EmbeddingService } from "./src/services/EmbeddingService";
 import { VaultIndexer } from "./src/services/VaultIndexer";
 import { TagIndexer } from "./src/services/TagIndexer";
+import { SkillManager } from "./src/services/SkillManager";
+import { GrammarIndexer } from "./src/services/GrammarIndexer";
 
 // Providers
 import { AiGateway } from "./src/providers/AiGateway";
@@ -58,6 +62,8 @@ export default class HormePlugin extends Plugin {
   vaultIndexer: VaultIndexer;
   tagIndexer: TagIndexer;
   aiGateway: AiGateway;
+  skillManager: SkillManager;
+  grammarIndexer: GrammarIndexer;
 
   private statusBarItem: HTMLElement | null = null;
   private settingsChangeListeners = new Set<() => void>();
@@ -100,9 +106,11 @@ export default class HormePlugin extends Plugin {
     this.historyManager = new HistoryManager(this.app);
     this.tagService = new TagService(this.app);
     this.embeddingService = new EmbeddingService(this);
+    this.grammarIndexer = new GrammarIndexer(this);
     this.vaultIndexer = new VaultIndexer(this);
     this.tagIndexer = new TagIndexer(this);
-    this.aiGateway = new AiGateway(this.settings);
+    this.skillManager = new SkillManager(this);
+    this.aiGateway = new AiGateway(this);
 
     this.registerView(VIEW_TYPE, (leaf) => new HormeChatView(leaf, this));
 
@@ -125,10 +133,31 @@ export default class HormePlugin extends Plugin {
             new Notice("Horme: Select some text first.");
             return;
           }
-          this.runAction(editor, sel, a.prompt);
+          this.runAction(editor, sel, a.prompt, a.id);
         },
       });
     }
+
+    // Rewrite (with tone picker)
+    this.addCommand({
+      id: "rewrite",
+      name: "Rewrite",
+      editorCallback: (editor: Editor) => {
+        const sel = editor.getSelection();
+        if (!sel) { new Notice("Horme: Select some text first."); return; }
+        new RewriteModal(this.app, (tone) => {
+          const prompt = `Rewrite the following text in a ${tone} tone. Preserve the original meaning. Return only the rewritten text.`;
+          this.runAction(editor, sel, prompt, "rewrite");
+        }).open();
+      },
+    });
+
+    // Generate frontmatter summary
+    this.addCommand({
+      id: "generate-summary",
+      name: "Generate frontmatter summary",
+      callback: () => this.generateFrontmatterSummary(),
+    });
 
     this.registerEvent(
       this.app.workspace.on("editor-menu", (menu, editor) => {
@@ -168,6 +197,10 @@ export default class HormePlugin extends Plugin {
     );
 
     this.addSettingTab(new HormeSettingTab(this.app, this));
+    
+    // Load indexes
+    await this.grammarIndexer.loadIndex();
+    
     this.statusBarItem = this.addStatusBarItem();
     this.statusBarItem.style.display = "none";
 
@@ -228,10 +261,20 @@ export default class HormePlugin extends Plugin {
         }
       })
     );
+
+    // LIVE NOTE TRACKING: Ensure Horme always knows which note is active for Tagging/Context
+    this.registerEvent(
+      this.app.workspace.on("active-leaf-change", (leaf) => {
+        if (leaf?.view instanceof MarkdownView) {
+          this.lastActiveMarkdownLeaf = leaf;
+        }
+      })
+    );
   }
 
   onunload() {
     URL.revokeObjectURL(this.workerUrl);
+    this.vaultIndexer?.flush();
   }
 
   /* ── Conversion Handlers ── */
@@ -359,7 +402,8 @@ Your Goal: Reconstruct the document into clean, professional Markdown.
     const tags = await this.loadAllowedTags();
     if (!tags.length) { new Notice("Horme: No tags found in vault."); return; }
 
-    const raw = view.getViewData();
+    // Use editor.getValue() to support Editing/Live Preview unsaved content
+    const raw = view.editor ? view.editor.getValue() : view.getViewData();
     const body = this.tagService.stripFrontmatter(raw);
     const context = `${file.basename}\n\n${body}`;
 
@@ -416,28 +460,173 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
 
   /* ── Actions ── */
 
-  private async runAction(editor: Editor, sel: string, sysPrompt: string) {
-    new Notice("Horme: Processing…");
+  private async runAction(editor: Editor, sel: string, sysPrompt: string, actionId?: string) {
+    new Notice("Horme: Thinking…");
     try {
-      const result = await this.aiGateway.generate(sel, sysPrompt);
-      new ConfirmReplaceModal(this.app, sel, result, (edited) => {
-        editor.replaceSelection(edited);
-        new Notice("Horme: Done ✓");
-      }).open();
+      let messages = [
+        { role: "user", content: sel }
+      ];
+
+      // Skill Bypass: These actions should never use skills and should be fast.
+      const skipSkills = actionId === "summarize" || actionId === "beautify" || actionId === "translate";
+
+      if (skipSkills) {
+        // Robust prompt for translate to ensure clean results
+        const finalPrompt = actionId === "translate" ? 
+          `${sysPrompt} Return ONLY the translated text with no preamble or explanation.` : 
+          sysPrompt;
+          
+        const response = await this.aiGateway.generate(messages, finalPrompt);
+        new ConfirmReplaceModal(this.app, sel, response, (edited) => {
+          editor.replaceSelection(edited);
+          new Notice("Horme: Done ✓");
+        }).open();
+        return;
+      }
+
+      // Language-aware grammar injection: tell the model when to use grammar manuals
+      let effectivePrompt = sysPrompt;
+      if ((actionId === "proofread" || actionId === "rewrite") && this.grammarIndexer.chunks.length > 0) {
+        const lang = this.settings.grammarLanguage || "Español";
+        effectivePrompt += `\n\nCRITICAL: You have access to the user's ${lang} grammar manuals via the "spanish_scholar" skill. `
+          + `If the text below is written in ${lang}, you MUST call the spanish_scholar skill with any non-obvious constructions, `
+          + `false cognates, or orthotypographic details before making corrections. `
+          + `If the text is written in a different language, do NOT use the grammar skill — rely on your general knowledge.`;
+      }
+
+      // Fact-check injection: force Wikipedia verification for every claim
+      if (actionId === "fact-check") {
+        effectivePrompt += `\n\nCRITICAL INSTRUCTIONS FOR FACT-CHECKING:`
+          + `\n1. Extract EACH verifiable factual claim from the text (dates, names, events, statistics, scientific facts).`
+          + `\n2. For EACH claim, you MUST call the wikipedia skill to verify it. Do NOT rely on your training data alone.`
+          + `\n3. If the text is in Spanish, use {"language": "es"} for better coverage. Use "en" for English text.`
+          + `\n4. You may call the wikipedia skill MULTIPLE TIMES — once per claim or group of related claims.`
+          + `\n5. Format your final response as:`
+          + `\n\n**Claim:** [the exact claim from the text]`
+          + `\n**Verdict:** ✅ Accurate / ❌ Inaccurate / ⚠️ Unverifiable`
+          + `\n**Source:** [relevant Wikipedia excerpt]`
+          + `\n**Note:** [brief explanation of match or discrepancy]`
+          + `\n\nRepeat for each claim. End with an overall assessment.`;
+      }
+
+      while (true) {
+        // Use non-streaming generation for context-menu actions
+        // PASS THE ENTIRE HISTORY so the model doesn't lose context after a skill call
+        const response = await this.aiGateway.generate(
+          messages, 
+          effectivePrompt
+        );
+
+        const skillCalls = this.skillManager.parseSkillCalls(response);
+        if (skillCalls.length === 0) {
+          // Final result
+          new ConfirmReplaceModal(this.app, sel, response, (edited) => {
+            editor.replaceSelection(edited);
+            new Notice("Horme: Done ✓");
+          }).open();
+          break;
+        }
+
+        // Execute skills
+        messages.push({ role: "assistant", content: response });
+        for (const call of skillCalls) {
+          new Notice(`Horme Skill: ${call.skillId}...`);
+          const result = await this.skillManager.executeSkill(call);
+          messages.push({ 
+            role: "system", 
+            content: `RESULT FROM SKILL "${call.skillId}":\n\n${result}\n\nBased on this, finish your task.` 
+          });
+        }
+        
+        // Loop continues to feed the result back to the model
+        new Notice("Horme: Processing skill results...");
+      }
     } catch (e) {
       this.handleError(e);
+    }
+  }
+
+  async generateFrontmatterSummary() {
+    const file = this.app.workspace.getActiveFile();
+    if (!file || !file.path.endsWith(".md")) {
+      new Notice("Horme: Open a markdown note first.");
+      return;
+    }
+
+    const field = this.settings.summaryField || "summary";
+    const lang = this.settings.summaryLanguage || "Español";
+
+    new Notice("Horme: Generating summary...");
+
+    try {
+      const fullContent = await this.app.vault.read(file);
+
+      // Strip frontmatter for the AI prompt
+      const bodyContent = fullContent.replace(/^---\n[\s\S]*?\n---\n?/, "").trim();
+      if (bodyContent.length < 50) {
+        new Notice("Horme: Note is too short to summarise.");
+        return;
+      }
+
+      const prompt = `Summarise the following note in ${lang}. Write a concise 1-2 sentence summary that captures the core topic and key points. Return ONLY the summary text — no quotes, no formatting, no explanation.`;
+      const summary = (await this.aiGateway.generate(bodyContent.slice(0, 6000), prompt)).trim();
+
+      if (!summary) {
+        new Notice("Horme: AI returned an empty summary.");
+        return;
+      }
+
+      // Parse existing frontmatter
+      const fmMatch = fullContent.match(/^---\n([\s\S]*?)\n---\n?/);
+      let newContent: string;
+
+      if (fmMatch) {
+        const fmBlock = fmMatch[1];
+        // Check if field already exists
+        const fieldRegex = new RegExp(`^${field}:.*$`, "m");
+        const existingMatch = fmBlock.match(fieldRegex);
+
+        if (existingMatch) {
+          const oldSummary = existingMatch[0].replace(`${field}:`, "").trim().replace(/^["']|["']$/g, "");
+          if (!confirm(`Overwrite existing ${field}?\n\nOld: ${oldSummary}\n\nNew: ${summary}`)) {
+            return;
+          }
+          const updatedFm = fmBlock.replace(fieldRegex, `${field}: "${summary.replace(/"/g, '\\"')}"`);
+          newContent = fullContent.replace(fmMatch[0], `---\n${updatedFm}\n---\n`);
+        } else {
+          const updatedFm = fmBlock + `\n${field}: "${summary.replace(/"/g, '\\"')}"`;
+          newContent = fullContent.replace(fmMatch[0], `---\n${updatedFm}\n---\n`);
+        }
+      } else {
+        // No frontmatter — create it
+        newContent = `---\n${field}: "${summary.replace(/"/g, '\\"')}"\n---\n${fullContent}`;
+      }
+
+      await this.app.vault.modify(file, newContent);
+      new Notice(`Horme: Summary added to "${field}" field.`);
+    } catch (e) {
+      console.error("Horme: Summary generation error", e);
+      new Notice("Horme: Failed to generate summary.");
     }
   }
 
   private buildSubmenu(menu: Menu, editor: Editor, sel: string) {
     for (const a of ACTIONS) {
       menu.addItem(item => {
-        item.setTitle(a.title).onClick(() => this.runAction(editor, sel, a.prompt));
+        item.setTitle(a.title).onClick(() => this.runAction(editor, sel, a.prompt, a.id));
       });
     }
     menu.addItem(item => {
+      item.setTitle("Rewrite").onClick(() => {
+        new RewriteModal(this.app, (tone) => {
+          const prompt = `Rewrite the following text in a ${tone} tone. Preserve the original meaning. Return only the rewritten text.`;
+          this.runAction(editor, sel, prompt, "rewrite");
+        }).open();
+      });
+    });
+    menu.addItem(item => {
       item.setTitle("Translate").onClick(() => {
-        new TranslateModal(this.app, (lang) => this.runAction(editor, sel, `Translate to ${lang}:`)).open();
+        new TranslateModal(this.app, (lang) => this.runAction(editor, sel, `Translate to ${lang}:`, "translate")).open();
       });
     });
   }
@@ -472,19 +661,18 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
   async fetchModels(): Promise<string[]> {
     const provider = this.settings.aiProvider;
     try {
-      if (provider === "ollama") {
-        const res = await fetch(`${this.settings.ollamaBaseUrl}/api/tags`);
-        const data = await res.json();
-        if (!data.response && data.error) throw new Error(`Ollama: ${data.error}`);
-        return data.models?.map((m: any) => m.name) || [];
-      } else if (provider === "lmstudio") {
-        const res = await requestUrl({ url: `${this.settings.lmStudioUrl}/v1/models` });
-        return res.json?.data?.map((m: any) => m.id) || [];
-      }
-      return PROVIDER_MODELS[provider] || [];
+      const fetchedModels = provider === "ollama" ? 
+        (await (await fetch(`${this.settings.ollamaBaseUrl}/api/tags`)).json()).models?.map((m: any) => m.name) || [] :
+        provider === "lmstudio" ?
+        (await requestUrl({ url: `${this.settings.lmStudioUrl}/v1/models` })).json?.data?.map((m: any) => m.id) || [] :
+        PROVIDER_MODELS[provider] || [];
+      
+      this.models = fetchedModels;
+      return fetchedModels;
     } catch (e) {
       console.error("Horme: Failed to fetch models", e);
-      return [];
+      this.models = PROVIDER_MODELS[provider] || [];
+      return this.models;
     }
   }
 
@@ -545,9 +733,11 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
     } catch { return false; }
   }
 
-  handleError(e: any) {
+  handleError(e: any, context?: string) {
     console.error("Horme Error:", e);
-    new Notice(`Horme: ${e.message || "Unknown error"}`);
+    const title = context || "Something went wrong";
+    const message = e.message || "An unknown error occurred.";
+    new HormeErrorModal(this.app, title, message).open();
   }
 
   getEffectiveSystemPrompt() {

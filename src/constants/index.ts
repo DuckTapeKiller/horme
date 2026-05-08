@@ -37,9 +37,14 @@ export const DEFAULT_SETTINGS: HormeSettings = {
   mobileProvider: "gemini",
   mobileModel: "gemini-2.5-flash",
   vaultBrainEnabled: false,
-  ragEmbeddingModel: "all-minilm",
+  ragEmbeddingModel: "nomic-embed-text",
   indexStatus: "Ready",
   contextCloudWarningShown: false,
+  grammarFolderPath: "Gramática",
+  grammarLanguage: "Español",
+  summaryField: "summary",
+  summaryLanguage: "Español",
+  allowCloudRAG: false,
 };
 
 export const PROVIDER_MODELS: Record<string, string[]> = {
@@ -55,11 +60,6 @@ export const ACTIONS: Array<{ id: string; title: string; prompt: string }> = [
     id: "proofread",
     title: "Proofread",
     prompt: "Proofread the following text. Fix grammar, spelling, and punctuation errors. Return only the corrected text with no explanation.",
-  },
-  {
-    id: "rewrite",
-    title: "Rewrite",
-    prompt: "Rewrite the following text to improve clarity and readability. Preserve the original meaning. Return only the rewritten text.",
   },
   {
     id: "expand",

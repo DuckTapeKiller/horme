@@ -20,23 +20,22 @@ export class EmbeddingService {
    * Generates embeddings for multiple text chunks in a single batch request.
    */
   async getEmbeddings(texts: string[]): Promise<number[][]> {
-    if (!this.plugin.isLocalProviderActive()) {
-      throw new Error("Privacy Guard: Vault access blocked.");
-    }
+    const chatProvider = this.plugin.settings.aiProvider;
+    // For cloud providers, we MUST use a local provider for embeddings (default to Ollama)
+    const embedProvider = (chatProvider === "ollama" || chatProvider === "lmstudio") 
+      ? chatProvider 
+      : "ollama";
 
-    const provider = this.plugin.settings.aiProvider;
-    // Limit batch size to prevent hitting Ollama/LM Studio payload limits
     const BATCH_SIZE = 32;
     const allEmbeddings: number[][] = [];
 
     for (let i = 0; i < texts.length; i += BATCH_SIZE) {
-      const batch = texts.slice(i, i + BATCH_SIZE).map(t => t.replace(/\0/g, "").trim().slice(0, 2000));
+      const batch = texts.slice(i, i + BATCH_SIZE).map(t => t.replace(/\0/g, "").trim());
       
-      if (provider === "ollama") {
+      if (embedProvider === "ollama") {
         const result = await this.getOllamaEmbeddingsBatch(batch);
         allEmbeddings.push(...result);
-      } else {
-        // LM Studio batching
+      } else if (embedProvider === "lmstudio") {
         for (const text of batch) {
           allEmbeddings.push(await this.getLMStudioEmbedding(text));
         }
@@ -46,44 +45,61 @@ export class EmbeddingService {
   }
 
   private async getOllamaEmbeddingsBatch(inputs: string[]): Promise<number[][]> {
-    const results: number[][] = [];
-    const MICRO_BATCH_SIZE = 8;
-
-    for (let i = 0; i < inputs.length; i += MICRO_BATCH_SIZE) {
-      const batch = inputs.slice(i, i + MICRO_BATCH_SIZE);
+    // Try true batch request first (Ollama supports array `input`)
+    try {
       const data = JSON.stringify({
-        model: this.plugin.settings.ragEmbeddingModel || "all-minilm",
-        input: batch
+        model: this.plugin.settings.ragEmbeddingModel || "nomic-embed-text",
+        input: inputs
       });
 
+      const res = await requestUrl({
+        url: `${this.plugin.settings.ollamaBaseUrl}/api/embed`,
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: data,
+        throw: false
+      });
+
+      if (res.status === 200 && res.json.embeddings?.length === inputs.length) {
+        return res.json.embeddings;
+      }
+    } catch (e) {
+      console.warn("Horme: Batch embed failed, falling back to sequential.", e);
+    }
+
+    // Fallback: sequential one-at-a-time
+    const results: number[][] = [];
+    for (let i = 0; i < inputs.length; i++) {
       try {
-        const res = await requestUrl({
-          url: `${this.plugin.settings.ollamaBaseUrl}/api/embed`,
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: data,
-          throw: false
-        });
-
-        if (res.status === 200 && res.json.embeddings) {
-          results.push(...res.json.embeddings);
-          continue;
-        }
-      } catch (e) {}
-
-    // Fallback for this micro-batch
-      for (const input of batch) {
-        results.push(await this.getOllamaEmbedding(input));
+        const embedding = await this.getOllamaEmbeddingSafe(inputs[i]);
+        results.push(embedding);
+      } catch (e) {
+        results.push(new Array(1024).fill(0)); // zero vector = excluded by MIN_SIMILARITY
       }
     }
-    
-    // Precision Compression: Round to 4 decimals to save massive space/memory
-    return results.map(arr => arr.map(n => Math.round(n * 10000) / 10000));
+    return results;
+  }
+
+  private async getOllamaEmbeddingSafe(text: string, attempt = 0): Promise<number[]> {
+    // On retry, truncate progressively: full → 800 → 400 → 200
+    const limits = [text.length, 800, 400, 200];
+    const truncated = text.slice(0, limits[attempt] ?? 200);
+
+    try {
+      return await this.getOllamaEmbedding(truncated);
+    } catch (e: any) {
+      const isContextError = e.message?.includes("context length") || e.message?.includes("400");
+      if (isContextError && attempt < 3) {
+        console.warn(`Horme: Chunk too long (attempt ${attempt + 1}), retrying at ${limits[attempt + 1]} chars...`);
+        return await this.getOllamaEmbeddingSafe(text, attempt + 1);
+      }
+      throw e;
+    }
   }
 
   private async getOllamaEmbedding(text: string): Promise<number[]> {
     const data = JSON.stringify({
-      model: this.plugin.settings.ragEmbeddingModel || "all-minilm",
+      model: this.plugin.settings.ragEmbeddingModel || "nomic-embed-text",
       input: text
     });
 
@@ -224,7 +240,7 @@ export class EmbeddingService {
    * Splits long text into overlapping chunks for better semantic retrieval.
    * Smart boundaries: respects sentence and word boundaries.
    */
-  chunkText(text: string, chunkSize = 500, overlap = 100): string[] {
+  chunkText(text: string, chunkSize = 450, overlap = 80): string[] {
     const chunks: string[] = [];
     let start = 0;
 
@@ -260,6 +276,8 @@ export class EmbeddingService {
       const chunk = text.slice(start, end).trim();
       if (chunk.length > 0) chunks.push(chunk);
 
+      if (end >= text.length) break;
+
       // Always advance forward — never go backward
       start = Math.max(start + 1, end - overlap);
     }
@@ -272,8 +290,8 @@ export class EmbeddingService {
    */
   chunkTextWithOffsets(
     text: string,
-    chunkSize = 500,
-    overlap = 100
+    chunkSize = 1000,
+    overlap = 150
   ): { text: string; start: number; end: number }[] {
     const chunks: { text: string; start: number; end: number }[] = [];
     let start = 0;
@@ -307,6 +325,9 @@ export class EmbeddingService {
 
       const chunkText = text.slice(start, end).trim();
       if (chunkText.length > 0) chunks.push({ text: chunkText, start, end });
+      if (end >= text.length) break;
+
+      // Always advance forward — never go backward
       start = Math.max(start + 1, end - overlap);
     }
 

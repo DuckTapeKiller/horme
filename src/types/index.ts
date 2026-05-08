@@ -34,6 +34,11 @@ export interface HormeSettings {
   vaultBrainEnabled: boolean;
   ragEmbeddingModel: string;
   indexStatus: string;
+  grammarFolderPath: string;
+  grammarLanguage: string;
+  summaryField: string;
+  summaryLanguage: string;
+  allowCloudRAG: boolean;
 }
 
 export interface SavedConversation {

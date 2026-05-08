@@ -1,4 +1,4 @@
-import { App, PluginSettingTab, Setting, Notice, setIcon } from "obsidian";
+import { App, PluginSettingTab, Setting, Notice, setIcon, requestUrl } from "obsidian";
 import HormePlugin from "../../main";
 import { DEFAULT_SETTINGS, PROVIDER_MODELS } from "../constants";
 import { AiProvider } from "../types";
@@ -160,10 +160,6 @@ export class HormeSettingTab extends PluginSettingTab {
         this.plugin.settings.exportFolder = v.trim() || "HORME"; await this.plugin.saveSettings();
     }));
 
-    new Setting(generalSection).setName("Optional tag list note").addText(t => t.setValue(this.plugin.settings.tagsFilePath).onChange(async v => {
-        this.plugin.settings.tagsFilePath = v.trim(); await this.plugin.saveSettings();
-    }));
-
     // PRESETS
     const presetSection = containerEl.createEl("details", { cls: "horme-settings-section" });
     presetSection.open = true;
@@ -244,16 +240,93 @@ export class HormeSettingTab extends PluginSettingTab {
         });
     }
 
+    // --- Grammar Scholar Index ---
+    containerEl.createEl("h3", { text: "Grammar Scholar Index" });
+    const grammarSection = containerEl.createDiv("horme-settings-section");
+    grammarSection.style.display = "block";
+
+    new Setting(grammarSection)
+      .setName("Grammar Manual Folder")
+      .setDesc("The folder in your vault containing grammar rules for your primary language.")
+      .addText(t => t.setValue(this.plugin.settings.grammarFolderPath).onChange(async v => {
+        this.plugin.settings.grammarFolderPath = v.trim() || "Gramática";
+        await this.plugin.saveSettings();
+      }));
+
+    new Setting(grammarSection)
+      .setName("Grammar Language")
+      .setDesc("The language your grammar manuals cover. Proofreading will only consult grammar manuals when the text is in this language.")
+      .addText(t => t.setValue(this.plugin.settings.grammarLanguage).onChange(async v => {
+        this.plugin.settings.grammarLanguage = v.trim() || "Español";
+        await this.plugin.saveSettings();
+      }));
+
+    new Setting(grammarSection)
+      .setName("Rebuild Grammar Index")
+      .setDesc("Synchronise the skill with the latest content in your grammar manuals folder.")
+      .addButton(btn => {
+        btn.setButtonText("Rebuild Now")
+           .onClick(async () => {
+             await this.plugin.grammarIndexer.rebuildIndex();
+             new Notice("✅ Grammar Index Rebuilt");
+           });
+      });
+
+    // --- Frontmatter Summary ---
+    containerEl.createEl("h3", { text: "Frontmatter Summary" });
+    const summarySection = containerEl.createDiv("horme-settings-section");
+    summarySection.style.display = "block";
+
+    new Setting(summarySection)
+      .setName("Summary Field")
+      .setDesc("The frontmatter key where generated summaries are stored (e.g. 'summary', 'resumen', 'abstract').")
+      .addText(t => t.setValue(this.plugin.settings.summaryField).onChange(async v => {
+        this.plugin.settings.summaryField = v.trim() || "summary";
+        await this.plugin.saveSettings();
+      }));
+
+    new Setting(summarySection)
+      .setName("Summary Language")
+      .setDesc("The language summaries should be written in.")
+      .addText(t => t.setValue(this.plugin.settings.summaryLanguage).onChange(async v => {
+        this.plugin.settings.summaryLanguage = v.trim() || "Español";
+        await this.plugin.saveSettings();
+      }));
+
+    // --- Tag Taxonomy Index ---
+    containerEl.createEl("h3", { text: "Tag Taxonomy Index" });
+    const tagSection = containerEl.createDiv("horme-settings-section");
+    tagSection.style.display = "block";
+
+    new Setting(tagSection)
+      .setName("Tag List Note")
+      .setDesc("Optional: A note containing a list of allowed tags (one per line).")
+      .addText(t => t.setValue(this.plugin.settings.tagsFilePath).onChange(async v => {
+        this.plugin.settings.tagsFilePath = v.trim();
+        await this.plugin.saveSettings();
+      }));
+
+    new Setting(tagSection)
+      .setName("Rebuild Tag Index")
+      .setDesc("Index your vault's tag structure for semantic suggestions. (Global access enabled)")
+      .addButton(btn => {
+        btn.setButtonText("Rebuild Now")
+           .onClick(async () => {
+             await this.plugin.tagIndexer.rebuildTagIndex();
+             new Notice("✅ Tag Index Ready");
+           });
+      });
+
     // --- Vault Brain (Local RAG) ---
-    containerEl.createEl("h3", { text: "Vault Brain (Local RAG)" });
+    containerEl.createEl("h3", { text: "Vault Brain" });
     const ragSection = containerEl.createDiv("horme-settings-section");
-    ragSection.style.display = "block"; // Always open
+    ragSection.style.display = "block";
     
     const isLocal = this.plugin.settings.aiProvider === "ollama" || this.plugin.settings.aiProvider === "lmstudio";
 
-    if (!isLocal) {
+    if (!isLocal && !this.plugin.settings.allowCloudRAG) {
       const warning = ragSection.createDiv("horme-settings-warning");
-      warning.textContent = "⚠️ Vault Brain is disabled because you are using a cloud provider. For total privacy, switch to Ollama or LM Studio.";
+      warning.textContent = "⚠️ Vault Brain is disabled for cloud providers to protect your privacy.";
       warning.style.color = "var(--text-error)";
       warning.style.padding = "10px";
       warning.style.marginBottom = "10px";
@@ -263,10 +336,11 @@ export class HormeSettingTab extends PluginSettingTab {
 
     new Setting(ragSection)
       .setName("Enable Local Vault Memory")
-      .setDesc("Let Horme remember everything in your vault using local embeddings. (Ollama required for indexing)")
+      .setDesc("Let Horme remember everything in your vault.")
       .addToggle(t => {
-        t.setValue(this.plugin.settings.vaultBrainEnabled && isLocal)
-         .setDisabled(!isLocal)
+        const canEnable = isLocal || this.plugin.settings.allowCloudRAG;
+        t.setValue(this.plugin.settings.vaultBrainEnabled && canEnable)
+         .setDisabled(!canEnable)
          .onChange(async v => {
            this.plugin.settings.vaultBrainEnabled = v;
            await this.plugin.saveSettings();
@@ -274,17 +348,34 @@ export class HormeSettingTab extends PluginSettingTab {
          });
       });
 
-    if (this.plugin.settings.vaultBrainEnabled && isLocal) {
+    new Setting(ragSection)
+      .setName("Allow Cloud Provider Access")
+      .setDesc("WARNING: If enabled, snippets from your notes will be sent to cloud servers. This reduces privacy.")
+      .addToggle(t => {
+        t.setValue(this.plugin.settings.allowCloudRAG)
+         .onChange(async v => {
+           if (v) {
+             if (!confirm("Are you sure? This sends your note snippets to third-party cloud servers.")) {
+               t.setValue(false); return;
+             }
+           }
+           this.plugin.settings.allowCloudRAG = v;
+           await this.plugin.saveSettings();
+           this.displayPreserveScroll();
+         });
+      });
+
+    if (this.plugin.settings.vaultBrainEnabled && (isLocal || this.plugin.settings.allowCloudRAG)) {
       const modelSetting = new Setting(ragSection)
         .setName("Embedding Model")
-        .setDesc("CRITICAL: This MUST be a specialized embedding model (like all-minilm or nomic-embed-text). Using a chat model (like llama3 or gemma) will fail.")
+        .setDesc("Must be a specialized embedding model (e.g. nomic-embed-text).")
         .addDropdown(async dd => {
           try {
             const res = await fetch(`${this.plugin.settings.ollamaBaseUrl}/api/tags`);
             const data = await res.json();
             data.models?.forEach((m: any) => dd.addOption(m.name, m.name));
           } catch {
-            dd.addOption("all-minilm", "all-minilm (default)");
+            dd.addOption("nomic-embed-text", "nomic-embed-text (default)");
           }
           dd.setValue(this.plugin.settings.ragEmbeddingModel);
           dd.onChange(async v => {
@@ -292,42 +383,6 @@ export class HormeSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
             this.displayPreserveScroll();
           });
-        });
-
-      // Validation logic
-      const currentModel = this.plugin.settings.ragEmbeddingModel || "";
-      const isLikelyWrong = currentModel.toLowerCase().includes("gemma") || 
-                           currentModel.toLowerCase().includes("llama") || 
-                           currentModel.toLowerCase().includes("mistral") ||
-                           currentModel.toLowerCase().includes("claude") ||
-                           currentModel.toLowerCase().includes("gpt");
-      
-      if (isLikelyWrong) {
-          modelSetting.setDesc("⚠️ WARNING: Your selected model looks like a Chat model, not an Embedding model. Indexing will likely fail.");
-          modelSetting.controlEl.style.border = "1px solid var(--text-error)";
-      }
-
-      new Setting(ragSection)
-        .setName("Test Model Connection")
-        .setDesc("Click to verify if the selected model supports embeddings.")
-        .addButton(btn => {
-          btn.setButtonText("Test Now")
-             .onClick(async () => {
-               btn.setDisabled(true);
-               btn.setButtonText("Testing...");
-               try {
-                 const test = await this.plugin.embeddingService.getEmbedding("Test sentence.");
-                 if (test && test.length > 0) {
-                   new Notice(`✅ Success! Model supports embeddings (Dim: ${test.length})`);
-                 }
-               } catch (e) {
-                 console.error(e);
-                 new Notice(`❌ Failed: ${e.message}`);
-               } finally {
-                 btn.setDisabled(false);
-                 btn.setButtonText("Test Now");
-               }
-             });
         });
 
       new Setting(ragSection)
@@ -338,16 +393,6 @@ export class HormeSettingTab extends PluginSettingTab {
              .onClick(async () => {
                new Notice("Vault indexing started...");
                await this.plugin.vaultIndexer.rebuildIndex();
-               this.displayPreserveScroll();
-             });
-        })
-        .addButton(btn => {
-          btn.setButtonText("Rebuild Tag Index")
-             .setTooltip("Indexes your 3,000+ tags for smart semantic suggestions.")
-             .onClick(async () => {
-               new Notice("Tag indexing started...");
-               await this.plugin.tagIndexer.rebuildTagIndex();
-               new Notice("✅ Tag Index Ready");
                this.displayPreserveScroll();
              });
         });

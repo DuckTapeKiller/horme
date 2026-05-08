@@ -86,8 +86,20 @@
   font-size: 11px;
   font-family: var(--font-interface);
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: all 0.15s ease;
   white-space: nowrap;
+}
+
+.horme-header-btn.mod-cta {
+  background-color: var(--interactive-accent) !important;
+  color: var(--text-on-accent) !important;
+  border: none !important;
+  font-weight: 600;
+}
+
+.horme-header-btn.mod-cta:hover {
+  background-color: var(--interactive-accent-hover) !important;
+  color: var(--text-on-accent) !important;
 }
 
 .horme-header-btn:hover {
@@ -115,6 +127,8 @@
   width: 28px;
   height: 28px;
   padding: 0;
+  background: var(--background-primary);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
 }
 
 .horme-context-toggle {
@@ -801,12 +815,12 @@ body.is-mobile .workspace-drawer.horme-keyboard-open .workspace-drawer-tab-optio
 
 .horme-diff-label-old {
   background: #f871711a;
-  color: #f87171;
+  color: var(--text-normal);
 }
 
 .horme-diff-label-new {
   background: #34d3991a;
-  color: #34d399;
+  color: var(--text-normal);
 }
 
 .horme-diff-text {
@@ -1047,4 +1061,45 @@ textarea.horme-diff-textarea:focus {
   margin-bottom: 0;
   border-color: var(--text-normal);
   color: var(--text-normal);
+}
+
+/* ── Error Modal ── */
+
+.horme-error-modal-title {
+  color: var(--text-error);
+  margin-bottom: 0.75rem;
+}
+
+.horme-error-modal-message {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-normal);
+  margin-bottom: 1rem;
+}
+
+.horme-error-modal-details {
+  margin-bottom: 1rem;
+}
+
+.horme-error-modal-details summary {
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+  margin-bottom: 0.4rem;
+}
+
+.horme-error-modal-details code {
+  display: block;
+  font-size: 11px;
+  background: var(--background-secondary);
+  padding: 0.5rem;
+  border-radius: var(--radius-s);
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.horme-error-modal-btn-row {
+  display: flex;
+  justify-content: flex-end;
 }

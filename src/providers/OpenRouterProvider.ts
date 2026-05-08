@@ -34,6 +34,26 @@ export class OpenRouterProvider implements AiProvider {
     return res.json?.choices?.[0]?.message?.content || "";
   }
 
+  async generateChat(msgs: Array<{ role: string; content: string }>, model: string): Promise<string> {
+    if (!this.apiKey) throw new Error("No OpenRouter API Key");
+    const res = await requestUrl({
+      url: "https://openrouter.ai/api/v1/chat/completions",
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${this.apiKey}`,
+        "HTTP-Referer": "https://github.com/DuckTapeKiller/horme",
+        "X-Title": "Horme"
+      },
+      body: JSON.stringify({
+        model,
+        messages: msgs,
+        temperature: this.temperature,
+        max_tokens: 2048
+      })
+    });
+    return res.json?.choices?.[0]?.message?.content || "";
+  }
   async stream(msgs: Array<{ role: string; content: string }>, model: string, signal?: AbortSignal): Promise<ReadableStreamDefaultReader<Uint8Array>> {
     if (!this.apiKey) throw new Error("No OpenRouter API Key");
     

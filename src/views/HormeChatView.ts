@@ -1,7 +1,8 @@
-import { ItemView, WorkspaceLeaf, MarkdownRenderer, MarkdownView, setIcon, Notice } from "obsidian";
+import { ItemView, WorkspaceLeaf, MarkdownRenderer, MarkdownView, setIcon, Notice, TFile } from "obsidian";
 import HormePlugin from "../../main";
 import { VIEW_TYPE } from "../constants";
 import { ChatMessage, SavedConversation } from "../types";
+import { NotePickerModal } from "../modals/NotePickerModal";
 
 export class HormeChatView extends ItemView {
   plugin: HormePlugin;
@@ -29,6 +30,10 @@ export class HormeChatView extends ItemView {
   private uploadedImages: string[] = [];
   private uploadedAudio: string | null = null;
   private leafChangeRef: any | null = null;
+  private rollingRAGContext: string[] = [];
+  private selectedContextNotes: TFile[] = [];
+  private contextNotesLabel!: HTMLElement;
+  private vaultBrainToggle!: HTMLInputElement;
  
   private async pickImage() {
     const fileInput = document.createElement("input");
@@ -134,11 +139,14 @@ export class HormeChatView extends ItemView {
     const row1Left = row1.createDiv("horme-header-actions-left");
     const row1Right = row1.createDiv("horme-header-actions-right");
 
-    const clearBtn = row1Left.createEl("button", { cls: "horme-header-btn", text: "Clear" });
+    const clearBtn = row1Left.createEl("button", { cls: "horme-header-btn mod-cta", text: "Clear" });
     clearBtn.addEventListener("click", () => this.clearChat());
 
-    const tagBtn = row1Left.createEl("button", { cls: "horme-header-btn", text: "Tags" });
+    const tagBtn = row1Left.createEl("button", { cls: "horme-header-btn mod-cta", text: "Tags" });
     tagBtn.addEventListener("click", () => this.plugin.suggestTagsForActiveNote());
+
+    const summaryBtn = row1Left.createEl("button", { cls: "horme-header-btn mod-cta", text: "Summary" });
+    summaryBtn.addEventListener("click", () => this.plugin.generateFrontmatterSummary());
 
     const historyBtn = row1Right.createEl("button", { cls: "horme-header-btn horme-icon-btn" });
     setIcon(historyBtn, "history");
@@ -153,7 +161,45 @@ export class HormeChatView extends ItemView {
     this.contextToggle = label.createEl("input", { type: "checkbox" });
     label.createSpan({ text: "Use current note as context" });
 
+    const canUseVaultBrain = this.plugin.settings.vaultBrainEnabled
+      && (this.plugin.isLocalProviderActive() || this.plugin.settings.allowCloudRAG);
+    if (canUseVaultBrain) {
+      const vbLabel = row2.createEl("label", { cls: "horme-context-toggle" });
+      vbLabel.style.marginLeft = "12px";
+      this.vaultBrainToggle = vbLabel.createEl("input", { type: "checkbox" });
+      this.vaultBrainToggle.checked = true;
+      vbLabel.createSpan({ text: "Use Vault Brain" });
+    }
+
     this.contextNoteLabel = header.createDiv("horme-context-note-label");
+
+    // Multi-note context
+    const row3 = header.createDiv("horme-header-row");
+    const addNotesBtn = row3.createEl("button", { cls: "horme-header-btn", text: "+ Add notes" });
+    addNotesBtn.addEventListener("click", () => {
+      if (this.selectedContextNotes.length >= 5) {
+        new Notice("Horme: Maximum 5 context notes.");
+        return;
+      }
+      new NotePickerModal(this.app, (file) => {
+        if (this.selectedContextNotes.some(f => f.path === file.path)) {
+          new Notice(`Already added: ${file.basename}`);
+          return;
+        }
+        if (this.selectedContextNotes.length >= 5) {
+          new Notice("Horme: Maximum 5 context notes.");
+          return;
+        }
+        this.selectedContextNotes.push(file);
+        this.updateContextNotesLabel();
+      }).open();
+    });
+    const clearNotesBtn = row3.createEl("button", { cls: "horme-header-btn", text: "Clear" });
+    clearNotesBtn.addEventListener("click", () => {
+      this.selectedContextNotes = [];
+      this.updateContextNotesLabel();
+    });
+    this.contextNotesLabel = header.createDiv("horme-context-note-label");
     this.contextToggle.addEventListener("change", async () => {
       if (
         this.contextToggle.checked &&
@@ -270,9 +316,39 @@ export class HormeChatView extends ItemView {
     const mdLeaf = this.plugin.lastActiveMarkdownLeaf;
     const mdView = mdLeaf?.view instanceof MarkdownView ? mdLeaf.view : null;
     if (mdView && mdView.file) {
-      this.contextNoteLabel.textContent = `📄 ${mdView.file.basename}`;
+      this.contextNoteLabel.textContent = `${mdView.file.basename}`;
     } else {
       this.contextNoteLabel.textContent = "No note open";
+    }
+  }
+
+  private updateContextNotesLabel() {
+    this.contextNotesLabel.empty();
+    if (this.selectedContextNotes.length === 0) {
+      this.contextNotesLabel.style.display = "none";
+      return;
+    }
+    this.contextNotesLabel.style.display = "block";
+    this.contextNotesLabel.style.fontSize = "11px";
+    this.contextNotesLabel.style.lineHeight = "1.6";
+    this.contextNotesLabel.style.opacity = "0.8";
+
+    for (const file of this.selectedContextNotes) {
+      const row = this.contextNotesLabel.createDiv();
+      row.style.display = "flex";
+      row.style.alignItems = "center";
+      row.style.gap = "4px";
+
+      const removeBtn = row.createEl("span", { text: "\u00d7" });
+      removeBtn.style.cursor = "pointer";
+      removeBtn.style.opacity = "0.6";
+      removeBtn.style.fontWeight = "bold";
+      removeBtn.addEventListener("click", () => {
+        this.selectedContextNotes = this.selectedContextNotes.filter(f => f.path !== file.path);
+        this.updateContextNotesLabel();
+      });
+
+      row.createEl("span", { text: file.basename });
     }
   }
 
@@ -381,6 +457,7 @@ export class HormeChatView extends ItemView {
 
     let msgs: Array<{ role: string; content: string }>;
     let model: string;
+    let ragWasInjected = false;
     
     // Capture context at start to prevent desync
     const mdLeaf = this.plugin.lastActiveMarkdownLeaf;
@@ -423,12 +500,53 @@ export class HormeChatView extends ItemView {
         }
       }
 
-      // --- Vault Brain (Local RAG) Injection ---
-      if (this.plugin.settings.vaultBrainEnabled && this.plugin.isLocalProviderActive()) {
+      // --- Multi-Note Context Injection ---
+      if (this.selectedContextNotes.length > 0) {
+        const noteParts: string[] = [];
+        for (const file of this.selectedContextNotes) {
+          try {
+            const content = await this.app.vault.read(file);
+            noteParts.push(`--- Note: ${file.basename} ---\n${content.slice(0, 4000)}`);
+          } catch {
+            noteParts.push(`--- Note: ${file.basename} ---\n[Error reading file]`);
+          }
+        }
+        systemParts.push(
+          `The user has provided the following notes as additional context:\n\n`
+          + noteParts.join("\n\n")
+        );
+      }
+
+      // --- Vault Brain (RAG) Injection ---
+      const canUseRAG = this.plugin.isLocalProviderActive() || this.plugin.settings.allowCloudRAG;
+      const sessionRAGEnabled = this.vaultBrainToggle ? this.vaultBrainToggle.checked : true;
+
+      if (this.plugin.settings.vaultBrainEnabled && canUseRAG && sessionRAGEnabled) {
         const relevantChunks = await this.plugin.vaultIndexer.search(text);
         if (relevantChunks.length > 0) {
-          new Notice(`● Vault Brain: Found ${relevantChunks.length} relevant notes.`);
-          systemParts.push(`LOCAL VAULT CONTEXT (These are relevant notes from the user's vault):\n\n${relevantChunks.join("\n\n---\n\n")}`);
+          // Add new chunks to rolling context, avoiding duplicates
+          for (const chunk of relevantChunks) {
+            if (!this.rollingRAGContext.includes(chunk)) {
+              this.rollingRAGContext.push(chunk);
+            }
+          }
+          // Limit buffer size to 12 chunks (keep context manageable but useful)
+          if (this.rollingRAGContext.length > 12) {
+            this.rollingRAGContext = this.rollingRAGContext.slice(-12);
+          }
+        }
+
+        if (this.rollingRAGContext.length > 0) {
+          ragWasInjected = true;
+          if (relevantChunks.length > 0) {
+            new Notice(`● Vault Brain: Found ${relevantChunks.length} relevant notes.`);
+          }
+          systemParts.push(
+            `LOCAL VAULT CONTEXT — Relevant notes from your vault are provided below.\n` +
+            `Answer the user's question directly using this context.\n` +
+            `Do NOT call vault_links or any other vault search skill — the search has already been done.\n\n` +
+            this.rollingRAGContext.join("\n\n---\n\n")
+          );
         }
       }
 
@@ -476,7 +594,12 @@ export class HormeChatView extends ItemView {
     setIcon(this.sendBtn, "square");
     this.sendBtn.classList.add("horme-stop-btn");
     const loadingEl = this.showLoading();
+    this.handleStreamingResponse(msgs, model, loadingEl, initialSourcePath, ragWasInjected, 0);
+  }
 
+  private static readonly MAX_SKILL_DEPTH = 5;
+
+  private async handleStreamingResponse(msgs: any[], model: string, loadingEl: HTMLElement, initialSourcePath: string, suppressVaultSkill = false, skillDepth = 0) {
     let bubbleEl: HTMLElement | null = null;
     let fullContent = "";
     let fullReasoning = "";
@@ -485,7 +608,7 @@ export class HormeChatView extends ItemView {
     this.activeAbortController = new AbortController();
 
     try {
-      const reader = await this.plugin.aiGateway.stream(msgs, model, this.activeAbortController.signal);
+      const reader = await this.plugin.aiGateway.stream(msgs, model, this.activeAbortController.signal, suppressVaultSkill);
       this.activeReader = reader;
       const decoder = new TextDecoder();
       let buffer = "";
@@ -578,6 +701,50 @@ export class HormeChatView extends ItemView {
       const finalMsg = fullReasoning ? `> [!thought]\n> ${fullReasoning.replace(/\n/g, "\n> ")}\n\n${fullContent}` : fullContent;
       if (fullContent || fullReasoning) {
           this.history.push({ role: "assistant", content: finalMsg });
+          
+          // --- Skill Execution Agent Loop ---
+          const skillCalls = this.plugin.skillManager.parseSkillCalls(fullContent);
+          if (skillCalls.length > 0) {
+            for (const call of skillCalls) {
+              const skillName = call.skillId;
+              const skillLoading = this.showLoading(`Skill: ${skillName}...`);
+              const result = await this.plugin.skillManager.executeSkill(call);
+              skillLoading.remove();
+
+              // Add the result to history
+              this.history.push({ 
+                role: "system", 
+                content: `RESULT FROM SKILL "${skillName}":\n\n${result}\n\nBased on this result, please continue your response to the user.` 
+              });
+
+              // Re-render the "system" message for the user to see what happened (as a technical detail)
+              const resultBubble = this.messagesEl.createDiv("horme-msg horme-msg-assistant");
+              const details = resultBubble.createEl("details", { cls: "horme-reasoning-details" });
+              details.createEl("summary", { text: `Used Skill: ${skillName}`, cls: "horme-reasoning-summary" });
+              const body = details.createDiv("horme-reasoning-body");
+              body.textContent = result;
+              this.scrollToBottom();
+            }
+
+            // Prepare the next turn in the loop
+            const nextMsgs: any[] = [];
+            const effectivePrompt = this.sessionSystemPromptOverride ?? this.plugin.getEffectiveSystemPrompt();
+            if (effectivePrompt) nextMsgs.push({ role: "system", content: effectivePrompt });
+            
+            for (const m of this.history) {
+              nextMsgs.push({ role: m.role, content: m.content });
+            }
+
+            // Recurse with depth guard
+            if (skillDepth >= HormeChatView.MAX_SKILL_DEPTH) {
+              new Notice("Horme: Maximum skill depth reached. Stopping skill loop.");
+            } else {
+              const nextLoading = this.showLoading();
+              await this.handleStreamingResponse(nextMsgs, model, nextLoading, initialSourcePath, false, skillDepth + 1);
+            }
+            return;
+          }
+
           await this.plugin.historyManager.append({
             id: this.conversationId,
             title: this.history.find(m => m.role === "user")?.content.slice(0, 60) || "Untitled chat",
@@ -666,9 +833,9 @@ export class HormeChatView extends ItemView {
     return el;
   }
 
-  private showLoading(): HTMLElement {
+  private showLoading(label: string = "Thinking"): HTMLElement {
     const el = this.messagesEl.createDiv("horme-loading");
-    el.createSpan({ text: "Thinking" });
+    el.createSpan({ text: label });
     const dots = el.createSpan({ cls: "horme-dot-pulse" });
     dots.createEl("span"); dots.createEl("span"); dots.createEl("span");
     this.scrollToBottom();
@@ -691,6 +858,7 @@ export class HormeChatView extends ItemView {
   this.uploadedDocName = null;
   this.lastMsgs = null;
   this.lastModel = null;
+  this.rollingRAGContext = [];
   this.messagesEl.empty();
   this.renderEmpty();
 }

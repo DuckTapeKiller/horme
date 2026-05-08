@@ -1,20 +1,22 @@
-import { App, normalizePath, TFile } from "obsidian";
+import { Notice, normalizePath } from "obsidian";
 import HormePlugin from "../../main";
+import { compressEmbedding, decompressEmbedding, cosineSimilarity } from "../utils/VectorUtils";
 
 interface TagEntry {
   tag: string;
-  embedding: number[];
+  embedding: number[] | string; // number[] in memory, string (base64 int8) on disk
 }
 
 export class TagIndexer {
   private plugin: HormePlugin;
   private index: TagEntry[] = [];
   private indexPath: string;
+  private indexedModel: string = "";
 
   constructor(plugin: HormePlugin) {
     this.plugin = plugin;
     const configDir = this.plugin.app.vault.configDir;
-    this.indexPath = normalizePath(`${configDir}/plugins/${this.plugin.manifest.id}/tag-index.json`);
+    this.indexPath = normalizePath(`${configDir}/plugins/${this.plugin.manifest.id}/Tags Index/tag-index.json`);
     this.loadIndex();
   }
 
@@ -24,7 +26,24 @@ export class TagIndexer {
       if (exists) {
         const data = await this.plugin.app.vault.adapter.read(this.indexPath);
         const parsed = JSON.parse(data);
-        this.index = parsed.entries || [];
+
+        // Check model compatibility
+        this.indexedModel = parsed.model || "";
+        const currentModel = this.plugin.settings.ragEmbeddingModel;
+        if (this.indexedModel && this.indexedModel !== currentModel) {
+          console.log(`Horme Tags: Model changed (${this.indexedModel} → ${currentModel}). Index cleared.`);
+          this.index = [];
+          this.indexedModel = currentModel;
+          return;
+        }
+
+        const entries = parsed.entries || [];
+        
+        // Decompress on load
+        this.index = entries.map((e: any) => ({
+          tag: e.tag,
+          embedding: typeof e.embedding === "string" ? decompressEmbedding(e.embedding) : e.embedding
+        }));
       }
     } catch (e) {
       console.error("Horme: Failed to load tag index", e);
@@ -33,8 +52,20 @@ export class TagIndexer {
 
   async saveIndex() {
     try {
-      const data = JSON.stringify({ entries: this.index });
-      await this.plugin.app.vault.adapter.write(this.indexPath, data);
+      const adapter = this.plugin.app.vault.adapter;
+      const configDir = this.plugin.app.vault.configDir;
+      const folderPath = normalizePath(`${configDir}/plugins/${this.plugin.manifest.id}/Tags Index`);
+      if (!(await adapter.exists(folderPath))) await adapter.mkdir(folderPath);
+
+      const serializedEntries = this.index.map(e => ({
+        tag: e.tag,
+        embedding: typeof e.embedding === "string" ? e.embedding : compressEmbedding(e.embedding as number[])
+      }));
+      const data = JSON.stringify({
+        model: this.plugin.settings.ragEmbeddingModel,
+        entries: serializedEntries
+      });
+      await adapter.write(this.indexPath, data);
     } catch (e) {
       console.error("Horme: Failed to save tag index", e);
     }
@@ -68,29 +99,33 @@ export class TagIndexer {
     console.log(`Horme: Indexing ${tagList.length} unique tags...`);
     
     const newIndex: TagEntry[] = [];
+
     
     // Process in batches for speed
     const BATCH_SIZE = 50;
     for (let i = 0; i < tagList.length; i += BATCH_SIZE) {
       const batch = tagList.slice(i, i + BATCH_SIZE);
-      this.plugin.setIndexingStatus(`Indexing Tags (${i}/${tagList.length})`);
+      this.plugin.setIndexingStatus(`Tags: ${i}/${tagList.length}`);
       
       try {
-        const embeddings = await this.plugin.embeddingService.getEmbeddings(batch);
+        // No prefix: tag suggestion is symmetric (tag text ↔ note content)
+        const humanizedBatch = batch.map(t => t.replace(/[/_]/g, " "));
+        const embeddings = await this.plugin.embeddingService.getEmbeddings(humanizedBatch);
         for (let j = 0; j < batch.length; j++) {
-          if (embeddings[j]) {
-            const rounded = embeddings[j].map(n => Math.round(n * 10000) / 10000);
-            newIndex.push({ tag: batch[j], embedding: rounded });
+          if (embeddings[j] && embeddings[j].length > 0) {
+            newIndex.push({ tag: batch[j], embedding: compressEmbedding(embeddings[j]) });
           }
         }
       } catch (e) {
-        console.error(`Horme: Failed to index tag batch starting at ${i}`, e);
+        console.error("Horme Tag Indexer Error:", e);
       }
     }
 
     this.index = newIndex;
+    this.indexedModel = this.plugin.settings.ragEmbeddingModel;
     await this.saveIndex();
     this.plugin.setIndexingStatus(null);
+    new Notice(`✅ Tag Index Ready (${this.index.length} tags)`);
     console.log("Horme: Tag index rebuilt successfully.");
   }
 
@@ -101,13 +136,20 @@ export class TagIndexer {
     if (this.index.length === 0) return [];
 
     try {
-      // Use 1,500 characters for a better semantic overview
-      const queryEmbedding = await this.plugin.embeddingService.getEmbedding(text.slice(0, 1500));
+      // No prefix: symmetric comparison — tag embeddings were indexed without prefix
+      const queryEmbedding = await this.plugin.embeddingService.getEmbedding(
+        text.slice(0, 1500)
+      );
       
-      const scored = this.index.map(entry => ({
-        tag: entry.tag,
-        score: this.cosineSimilarity(queryEmbedding, entry.embedding)
-      }));
+      const scored = this.index.map(entry => {
+        const emb = typeof entry.embedding === "string" 
+          ? decompressEmbedding(entry.embedding) 
+          : entry.embedding;
+        return {
+          tag: entry.tag,
+          score: cosineSimilarity(queryEmbedding, emb as number[])
+        };
+      });
 
       scored.sort((a, b) => b.score - a.score);
       return scored.slice(0, topN).map(s => s.tag);
@@ -115,18 +157,5 @@ export class TagIndexer {
       console.error("Horme: Semantic tag search failed", e);
       return [];
     }
-  }
-
-  private cosineSimilarity(a: number[], b: number[]): number {
-    const len = Math.min(a.length, b.length);
-    if (len === 0) return 0;
-    let dot = 0, normA = 0, normB = 0;
-    for (let i = 0; i < len; i++) {
-      dot += a[i] * b[i];
-      normA += a[i] * a[i];
-      normB += b[i] * b[i];
-    }
-    const denom = Math.sqrt(normA) * Math.sqrt(normB);
-    return denom === 0 ? 0 : dot / denom;
   }
 }

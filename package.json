@@ -1,6 +1,6 @@
 {
   "name": "horme",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Obsidian plugin for local LLM integration via Ollama",
   "main": "main.js",
   "scripts": {
