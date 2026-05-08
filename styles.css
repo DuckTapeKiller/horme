@@ -109,8 +109,8 @@
 }
 
 .horme-header-btn svg {
-  width: 14px;
-  height: 14px;
+  width: 16px !important;
+  height: 16px !important;
 }
 
 .horme-header-row-actions {
@@ -133,8 +133,8 @@
 }
 
 .horme-header-btn.horme-icon-btn svg {
-  width: 18px;
-  height: 18px;
+  width: 20px !important;
+  height: 20px !important;
   color: var(--text-normal);
 }
 
