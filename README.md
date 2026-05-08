@@ -1,3 +1,9 @@
+[![GitHub Repo stars](https://img.shields.io/github/stars/DuckTapeKiller/horme?style=flat&logo=obsidian&color=%2327ae60)](https://github.com/DuckTapeKiller/horme/stargazers)
+[![GitHub issues](https://img.shields.io/github/issues/DuckTapeKiller/horme?logo=obsidian&color=%2327ae60)](https://github.com/DuckTapeKiller/horme/issues)
+[![GitHub closed issues](https://img.shields.io/github/issues-closed/DuckTapeKiller/horme?logo=obsidian&color=%2327ae60)](https://github.com/DuckTapeKiller/horme/issues?q=is%3Aissue+is%3Aclosed)
+[![GitHub manifest version](https://img.shields.io/github/manifest-json/v/DuckTapeKiller/horme?logo=obsidian&color=%2327ae60)](https://github.com/DuckTapeKiller/horme/blob/main/manifest.json)
+[![Downloads](https://img.shields.io/github/downloads/DuckTapeKiller/horme/total?logo=obsidian&color=%2327ae60)](https://github.com/DuckTapeKiller/horme/releases)
+
 # <span style="color:#7c3aed">&#9653; Horme</span>
 
 *In Greek mythology, Horme (/ˈhɔːrmiː/; Ancient Greek: Ὁρμή) is the Greek spirit personifying energetic activity, impulse or effort (to do a thing), eagerness, setting oneself in motion, and starting an action, and particularly onrush in battle.*
