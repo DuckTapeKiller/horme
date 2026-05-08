@@ -10,10 +10,6 @@
 
 ![Illustration](images/illustration_1.png)
 
-**A professional, privacy-first AI assistant for Obsidian, powered by local LLMs via Ollama and an optimized RAG engine.**
-
-No data leaves your machine. No API keys. No cloud. Just your models, your notes, your rules.
-
 ---
 > [!IMPORTANT]
 > # Quick start
@@ -73,6 +69,8 @@ No data leaves your machine. No API keys. No cloud. Just your models, your notes
 > 
 > **Example Query:**
 > > “I want to write an essay on modern art, help me find which of my notes can help me.”
+>
+> No data leaves your machine. No API keys. No cloud. Just your models, your notes, your rules. But if you still want to use cloud models, they are available in settings. 
 
 
 ---
