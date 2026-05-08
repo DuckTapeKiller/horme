@@ -28,14 +28,14 @@
 > 
 > **1. Download the Indexing Model:**
 > This model is *only* for indexing your vault in a compressed format; you cannot chat with it.
-> *   **Recommended Model:** `nomic-embed-text:latest`
+> *   **Recommended Model:** `nomic-embed-text:latest` (274 MB)
 > *   **Command (in your terminal):**
 >     ```bash
 >     ollama pull nomic-embed-text:latest
 >     ```
 > **2. Download the Interaction Model:**
 > This is the model you will use for asking questions.
-> *   **Strong Recommendation:** `gemma4:e4b`
+> *   **Strong Recommendation:** `gemma4:e4b` (9.6 GB)
 > *   **Command (in your terminal):**
 >     ```bash
 >     ollama pull gemma4:e4b
