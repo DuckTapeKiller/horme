@@ -1,4 +1,4 @@
-import { requestUrl } from "obsidian";
+import { requestUrl, Platform } from "obsidian";
 import HormePlugin from "../../main";
 
 export class EmbeddingService {
@@ -145,6 +145,12 @@ export class EmbeddingService {
       try { url = new URL(this.plugin.settings.ollamaBaseUrl); } catch (e) { url = new URL("http://127.0.0.1:11434"); }
 
       const isHttps = url.protocol === "https:";
+      
+      if (Platform.isMobile) {
+        reject(new Error("Ollama local fallback is not available on mobile devices. Use a desktop for local embeddings."));
+        return;
+      }
+
       const http = isHttps ? require("https") : require("http");
       
       const options = {
