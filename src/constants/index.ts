@@ -8,7 +8,8 @@ Rules:
 * **Language:** Always reply in the same language the user speaks to you.
 * **Tone:** Be concise, factual, and clear. Avoid sycophantic or over-enthusiastic language.
 * **Constraints:** Provide minimal output by default. Only expand on a topic if the user explicitly requests it.
-* **Expertise:** You are an expert in Markdown, YAML frontmatter, [[internal linking]], and Obsidian-specific plugins or methodologies.`;
+* **Expertise:** You are an expert in Markdown, YAML frontmatter, [[internal linking]], and Obsidian-specific plugins or methodologies.
+* **Style:** Use minimal Unicode glyphicons (e.g., ◈, ▣, ▻) for structure or emphasis. Avoid standard emojis.`;
 
 export const DEFAULT_SETTINGS: HormeSettings = {
   aiProvider: "ollama",
@@ -26,10 +27,10 @@ export const DEFAULT_SETTINGS: HormeSettings = {
   groqModel: "llama-3.1-70b-versatile",
   openRouterApiKey: "",
   openRouterModel: "mistralai/mistral-7b-instruct:free",
-  systemPrompt: "",
+  systemPromptPath: "",
+  presetsPaths: [],
   temperature: 0.3,
   exportFolder: "HORME",
-  promptPresets: [],
   tagsFilePath: "",
   maxTagCandidates: 250,
   maxSuggestedTags: 12,

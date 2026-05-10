@@ -58,7 +58,7 @@ export class WiktionarySkill implements Skill {
       return `## Wiktionary: "${word}" (${lang})\n\n${trimmed}\n\n**Source:** ${wiktBase}/wiki/${encodeURIComponent(word)}`;
     } catch (e) {
       console.error("Horme Wiktionary Skill Error:", e);
-      return `Error looking up "${params.word}" in Wiktionary: ${e.message}`;
+      throw e;
     }
   }
 

@@ -18,10 +18,10 @@ export interface HormeSettings {
   groqModel: string;
   openRouterApiKey: string;
   openRouterModel: string;
-  systemPrompt: string;
+  systemPromptPath: string;
+  presetsPaths: string[];
   temperature: number;
   exportFolder: string;
-  promptPresets: Array<{ name: string; prompt: string }>;
   tagsFilePath: string;
   maxTagCandidates: number;
   maxSuggestedTags: number;

@@ -10,6 +10,7 @@ import {
   WorkspaceLeaf,
   TFile,
   TAbstractFile,
+  TFolder,
   requestUrl,
   Platform,
 } from "obsidian";
@@ -21,6 +22,7 @@ import { RewriteModal } from "./src/modals/RewriteModal";
 import { ConfirmReplaceModal } from "./src/modals/ConfirmReplaceModal";
 import { ConversionModal } from "./src/modals/ConversionModal";
 import { HormeErrorModal } from "./src/modals/HormeErrorModal";
+import { GenericConfirmModal } from "./src/modals/GenericConfirmModal";
 
 // Services
 import { PdfService } from "./src/services/PdfService";
@@ -32,6 +34,7 @@ import { VaultIndexer } from "./src/services/VaultIndexer";
 import { TagIndexer } from "./src/services/TagIndexer";
 import { SkillManager } from "./src/services/SkillManager";
 import { GrammarIndexer } from "./src/services/GrammarIndexer";
+import { DiagnosticService } from "./src/services/DiagnosticService";
 
 // Providers
 import { AiGateway } from "./src/providers/AiGateway";
@@ -64,6 +67,7 @@ export default class HormePlugin extends Plugin {
   aiGateway: AiGateway;
   skillManager: SkillManager;
   grammarIndexer: GrammarIndexer;
+  diagnosticService: DiagnosticService;
 
   private statusBarItem: HTMLElement | null = null;
   private settingsChangeListeners = new Set<() => void>();
@@ -101,9 +105,10 @@ export default class HormePlugin extends Plugin {
     (pdfjsLib as any).GlobalWorkerOptions.workerSrc = this.workerUrl;
 
     // Initialize Services
+    this.diagnosticService = new DiagnosticService(this);
     this.pdfService = new PdfService(this.app);
     this.docxService = new DocxService();
-    this.historyManager = new HistoryManager(this.app);
+    this.historyManager = new HistoryManager(this);
     this.tagService = new TagService(this.app);
     this.embeddingService = new EmbeddingService(this);
     this.grammarIndexer = new GrammarIndexer(this);
@@ -275,6 +280,7 @@ export default class HormePlugin extends Plugin {
   onunload() {
     URL.revokeObjectURL(this.workerUrl);
     this.vaultIndexer?.flush();
+    this.historyManager?.flush();
   }
 
   /* ── Conversion Handlers ── */
@@ -509,7 +515,14 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
           + `\n\nRepeat for each claim. End with an overall assessment.`;
       }
 
+      let skillIterations = 0;
+      const MAX_SKILL_ITERATIONS = 5;
       while (true) {
+        if (skillIterations++ >= MAX_SKILL_ITERATIONS) {
+          new Notice("Horme: Maximum skill iterations reached.");
+          break;
+        }
+
         // Use non-streaming generation for context-menu actions
         // PASS THE ENTIRE HISTORY so the model doesn't lose context after a skill call
         const response = await this.aiGateway.generate(
@@ -561,8 +574,10 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
     try {
       const fullContent = await this.app.vault.read(file);
 
-      // Strip frontmatter for the AI prompt
-      const bodyContent = fullContent.replace(/^---\n[\s\S]*?\n---\n?/, "").trim();
+      // Strip frontmatter for the AI prompt.
+      // \r?\n matches both LF and CRLF so the YAML block is always removed before
+      // the text is sent to the AI, even on Windows or with CRLF-synced vaults.
+      const bodyContent = fullContent.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").trim();
       if (bodyContent.length < 50) {
         new Notice("Horme: Note is too short to summarise.");
         return;
@@ -576,36 +591,51 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
         return;
       }
 
-      // Parse existing frontmatter
-      const fmMatch = fullContent.match(/^---\n([\s\S]*?)\n---\n?/);
+      // Parse existing frontmatter.
+      // \r?\n handles both LF (Mac/Linux) and CRLF (Windows / some sync tools).
+      const fmMatch = fullContent.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
+
+      // The literal field value we will write (e.g. `Resumen: "..."`)
+      const fieldValue = `${field}: "${summary.replace(/"/g, '\\"')}"`;
+
       let newContent: string;
 
       if (fmMatch) {
         const fmBlock = fmMatch[1];
-        // Check if field already exists
-        const fieldRegex = new RegExp(`^${field}:.*$`, "m");
+        // Escape regex special chars in the user-chosen field name (e.g. "my.field")
+        const escapedField = field.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const fieldRegex = new RegExp(`^${escapedField}:.*$`, "m");
         const existingMatch = fmBlock.match(fieldRegex);
 
+        // Use slice instead of String.replace() for the outer substitution to avoid
+        // $& / $1 / $` interpolation corrupting content that contains a "$".
+        const fmEndIndex = fmMatch[0].length;
+        const afterFm = fullContent.slice(fmEndIndex);
+
         if (existingMatch) {
-          const oldSummary = existingMatch[0].replace(`${field}:`, "").trim().replace(/^["']|["']$/g, "");
-          if (!confirm(`Overwrite existing ${field}?\n\nOld: ${oldSummary}\n\nNew: ${summary}`)) {
-            return;
-          }
-          const updatedFm = fmBlock.replace(fieldRegex, `${field}: "${summary.replace(/"/g, '\\"')}"`);
-          newContent = fullContent.replace(fmMatch[0], `---\n${updatedFm}\n---\n`);
+          const oldSummary = existingMatch[0].replace(`${field}:`, "").trim().replace(/^["'']|["'']$/g, "");
+          new GenericConfirmModal(this.app, `Overwrite existing ${field}?\n\nOld: ${oldSummary}\n\nNew: ${summary}`, async () => {
+            const updatedFm = fmBlock.replace(fieldRegex, () => fieldValue);
+            const finalContent = `---\n${updatedFm}\n---\n${afterFm}`;
+            await this.app.vault.modify(file, finalContent);
+            new Notice(`Horme: Summary updated in "${field}" field.`);
+          }).open();
+          return;
         } else {
-          const updatedFm = fmBlock + `\n${field}: "${summary.replace(/"/g, '\\"')}"`;
-          newContent = fullContent.replace(fmMatch[0], `---\n${updatedFm}\n---\n`);
+          // Field doesn't exist yet — append it to the existing frontmatter block
+          const updatedFm = fmBlock + `\n${fieldValue}`;
+          newContent = `---\n${updatedFm}\n---\n${afterFm}`;
         }
       } else {
-        // No frontmatter — create it
-        newContent = `---\n${field}: "${summary.replace(/"/g, '\\"')}"\n---\n${fullContent}`;
+        // No frontmatter at all — create one with the user's chosen field name
+        newContent = `---\n${fieldValue}\n---\n${fullContent}`;
       }
 
       await this.app.vault.modify(file, newContent);
       new Notice(`Horme: Summary added to "${field}" field.`);
     } catch (e) {
       console.error("Horme: Summary generation error", e);
+      this.diagnosticService.report("Summary", `Generation failed: ${e.message}`);
       new Notice("Horme: Failed to generate summary.");
     }
   }
@@ -671,6 +701,7 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
       return fetchedModels;
     } catch (e) {
       console.error("Horme: Failed to fetch models", e);
+      this.diagnosticService.report("Provider", `Failed to fetch models: ${e.message}`, "warning");
       this.models = PROVIDER_MODELS[provider] || [];
       return this.models;
     }
@@ -706,7 +737,7 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
             "Content-Type": "application/json"
           },
           body: JSON.stringify({ 
-            model: "claude-3-5-sonnet-20240620",
+            model: this.settings.claudeModel,
             max_tokens: 1, 
             messages: [{ role: "user", content: "hi" }] 
           })
@@ -740,8 +771,57 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
     new HormeErrorModal(this.app, title, message).open();
   }
 
-  getEffectiveSystemPrompt() {
-    return this.settings.systemPrompt.trim() || DEFAULT_SYSTEM_PROMPT;
+  async getEffectiveSystemPrompt(): Promise<string> {
+    const path = this.settings.systemPromptPath.trim();
+    if (path) {
+      const file = this.app.vault.getAbstractFileByPath(path);
+      if (file instanceof TFile) {
+        try {
+          const content = await this.app.vault.read(file);
+          if (content.trim()) return content;
+        } catch (e) {
+          console.error("Horme: Failed to read system prompt note", e);
+        }
+      }
+    }
+    return DEFAULT_SYSTEM_PROMPT;
+  }
+
+  async getChatPresets(): Promise<Array<{ name: string; prompt: string }>> {
+    const paths = this.settings.presetsPaths || [];
+    const presets: Array<{ name: string; prompt: string }> = [];
+    const seenPaths = new Set<string>();
+
+    for (const path of paths) {
+      if (!path.trim()) continue;
+      const abstractFile = this.app.vault.getAbstractFileByPath(path.trim());
+      if (!abstractFile) continue;
+
+      if (abstractFile instanceof TFile && abstractFile.extension === "md") {
+        await this.addPresetFromFile(abstractFile, presets, seenPaths);
+      } else if (abstractFile instanceof TFolder) {
+        for (const child of abstractFile.children) {
+          if (child instanceof TFile && child.extension === "md") {
+            await this.addPresetFromFile(child, presets, seenPaths);
+          }
+        }
+      }
+    }
+    return presets;
+  }
+
+  private async addPresetFromFile(file: TFile, presets: Array<{ name: string; prompt: string }>, seenPaths: Set<string>) {
+    if (seenPaths.has(file.path)) return;
+    try {
+      const content = await this.app.vault.read(file);
+      presets.push({
+        name: file.basename,
+        prompt: content.trim()
+      });
+      seenPaths.add(file.path);
+    } catch (e) {
+      console.error(`Horme: Failed to read preset note ${file.path}`, e);
+    }
   }
 
   setIndexingStatus(text: string | null) {

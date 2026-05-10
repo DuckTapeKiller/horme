@@ -1,6 +1,6 @@
 import { TFile, Notice, TFolder, normalizePath } from "obsidian";
 import HormePlugin from "../../main";
-import { compressEmbedding, decompressEmbedding, cosineSimilarity } from "../utils/VectorUtils";
+import { compressEmbedding, decompressEmbedding, cosineSimilarity, getModelPrefixes } from "../utils/VectorUtils";
 
 export interface GrammarChunk {
   path: string;
@@ -8,15 +8,6 @@ export interface GrammarChunk {
   embedding: number[] | string; // number[] in memory, string (base64 int8) on disk
 }
 
-/**
- * Returns the correct query/document prefix for the active embedding model.
- */
-function getModelPrefixes(model: string): { query: string; document: string } {
-  const m = model.toLowerCase();
-  if (m.includes("nomic")) return { query: "search_query: ", document: "search_document: " };
-  if (m.includes("mxbai")) return { query: "Represent this sentence for searching relevant passages: ", document: "" };
-  return { query: "", document: "" };
-}
 
 export class GrammarIndexer {
   private plugin: HormePlugin;
@@ -61,10 +52,10 @@ export class GrammarIndexer {
         
         console.log(`Horme: Loaded ${this.chunks.length} grammar vectors.`);
       } else {
-        await this.rebuildIndex();
+        console.log("Horme Grammar: No index found. Use 'Rebuild Grammar Index' in settings.");
       }
     } catch (e) {
-      console.error("Horme: Failed to load grammar index", e);
+      this.plugin.diagnosticService.report("Grammar", `Failed to load index: ${e.message}`);
     }
   }
 
@@ -115,7 +106,7 @@ export class GrammarIndexer {
             }
           } catch (e) {
             errorCount += validChunks.length;
-            console.error(`Horme Grammar Error: Failed to embed chunks in ${file.path}`, e);
+            this.plugin.diagnosticService.report("Grammar", `Failed to index ${file.path}: ${e.message}`, "warning");
           }
         }
       }
@@ -154,7 +145,7 @@ export class GrammarIndexer {
       
       console.log(`Horme Grammar: SUCCESS. Index saved to: ${this.indexPath}`);
     } catch (e) {
-      console.error("Horme: Failed to save grammar index", e);
+      this.plugin.diagnosticService.report("Grammar", `Failed to save index: ${e.message}`);
     }
   }
 

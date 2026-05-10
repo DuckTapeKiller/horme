@@ -1,20 +1,19 @@
-import { App, normalizePath } from "obsidian";
+import { normalizePath } from "obsidian";
 import { SavedConversation } from "../types";
+import HormePlugin from "../../main";
 
 const MAX_CONVERSATIONS = 200;
 const WRITE_DEBOUNCE_MS = 2000;
 
 export class HistoryManager {
-  private app: App;
   private historyPath: string;
   private pendingConvo: SavedConversation | null = null;
   private writeTimeout: number | null = null;
 
-  constructor(app: App) {
-    this.app = app;
-    const configDir = this.app.vault.configDir;
+  constructor(private plugin: HormePlugin) {
+    const configDir = plugin.app.vault.configDir;
     this.historyPath = normalizePath(
-      `${configDir}/plugins/horme/chat-history.json`
+      `${configDir}/plugins/${plugin.manifest.id}/chat-history.json`
     );
   }
 
@@ -56,12 +55,12 @@ export class HistoryManager {
         conversations = conversations.slice(0, MAX_CONVERSATIONS);
       }
 
-      await this.app.vault.adapter.write(
+      await this.plugin.app.vault.adapter.write(
         this.historyPath,
         JSON.stringify(conversations)
       );
     } catch (e) {
-      console.error("Horme: Failed to write chat history", e);
+      this.plugin.diagnosticService.report("History", `Failed to write history: ${e.message}`);
     }
   }
 
@@ -69,20 +68,28 @@ export class HistoryManager {
     try {
       let conversations = await this.load();
       conversations = conversations.filter(c => c.id !== id);
-      await this.app.vault.adapter.write(
+      await this.plugin.app.vault.adapter.write(
         this.historyPath,
         JSON.stringify(conversations)
       );
     } catch (e) {
-      console.error("Horme: Failed to delete chat history", e);
+      this.plugin.diagnosticService.report("History", `Failed to delete history: ${e.message}`);
+    }
+  }
+
+  async deleteAll(): Promise<void> {
+    try {
+      await this.plugin.app.vault.adapter.write(this.historyPath, JSON.stringify([]));
+    } catch (e) {
+      this.plugin.diagnosticService.report("History", `Failed to clear history: ${e.message}`);
     }
   }
 
   async load(): Promise<SavedConversation[]> {
     try {
-      const exists = await this.app.vault.adapter.exists(this.historyPath);
+      const exists = await this.plugin.app.vault.adapter.exists(this.historyPath);
       if (!exists) return [];
-      const data = await this.app.vault.adapter.read(this.historyPath);
+      const data = await this.plugin.app.vault.adapter.read(this.historyPath);
       return JSON.parse(data);
     } catch {
       return [];

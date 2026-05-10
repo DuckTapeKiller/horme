@@ -74,10 +74,24 @@ export class SkillManager {
   async executeSkill(call: SkillCall): Promise<string> {
     const skill = this.skills.get(call.skillId);
     if (!skill) {
-      return `Error: Skill "${call.skillId}" not found.`;
+      const msg = `Skill "${call.skillId}" not found.`;
+      this.plugin.diagnosticService.report("Skill Manager", msg, "warning");
+      return `Error: ${msg}`;
     }
 
-    console.log(`Horme: Executing skill "${skill.name}" with params:`, call.parameters);
-    return await skill.execute(call.parameters);
+    try {
+      console.log(`Horme: Executing skill "${skill.name}" with params:`, call.parameters);
+      return await skill.execute(call.parameters);
+    } catch (e) {
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      // Log to Intelligence Dashboard with the skill name explicitly in the message
+      this.plugin.diagnosticService.report(
+        "Skill Engine",
+        `Skill: ${skill.name} / Execution failed: ${errorMessage}`,
+        "error"
+      );
+      console.error(`Horme Skill Error [${skill.name}]:`, e);
+      return `Error: ${skill.name} failed. ${errorMessage}`;
+    }
   }
 }

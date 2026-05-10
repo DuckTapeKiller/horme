@@ -53,7 +53,7 @@ export class DateCalculatorSkill implements Skill {
       }
     } catch (e) {
       console.error("Horme Date Calculator Error:", e);
-      return `Error in date calculation: ${e.message}`;
+      throw e;
     }
   }
 

@@ -81,7 +81,7 @@ export class DuckDuckGoSkill implements Skill {
       return output;
     } catch (e) {
       console.error("Horme DuckDuckGo Skill Error:", e);
-      return `Error searching DuckDuckGo: ${e.message}`;
+      throw e;
     }
   }
 }

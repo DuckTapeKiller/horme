@@ -24,9 +24,7 @@
   gap: 8px;
   padding: 12px 14px;
   border-bottom: 1px solid var(--background-modifier-border);
-  background: var(--background-primary-alt);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: var(--background-primary);
   position: sticky;
   top: 0;
   z-index: 10;
@@ -66,10 +64,7 @@
   cursor: not-allowed;
 }
 
-.horme-model-select {
-  flex: 1;
-}
-
+.horme-model-select,
 .horme-preset-select {
   flex: 1;
 }
@@ -91,6 +86,11 @@
   white-space: nowrap;
 }
 
+.horme-header-btn:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
 .horme-header-btn.mod-cta {
   background-color: var(--interactive-accent) !important;
   color: var(--text-on-accent) !important;
@@ -101,11 +101,6 @@
 .horme-header-btn.mod-cta:hover {
   background-color: var(--interactive-accent-hover) !important;
   color: var(--text-on-accent) !important;
-}
-
-.horme-header-btn:hover {
-  background: var(--background-modifier-hover);
-  color: var(--text-normal);
 }
 
 .horme-header-btn svg {
@@ -131,7 +126,7 @@
   height: 28px;
   padding: 0 !important;
   background: var(--background-primary);
-  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
 }
 
 .horme-header-btn.horme-icon-btn svg {
@@ -180,7 +175,6 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
-  /* Critical: lets the messages area shrink when keyboard pushes up */
   min-height: 0;
 }
 
@@ -207,8 +201,15 @@
 }
 
 @keyframes horme-msg-in {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .horme-msg p {
@@ -341,8 +342,18 @@
 }
 
 @keyframes horme-pulse {
-  0%, 80%, 100% { opacity: 0.15; transform: scale(0.8); }
-  40% { opacity: 1; transform: scale(1); }
+
+  0%,
+  80%,
+  100% {
+    opacity: 0.15;
+    transform: scale(0.8);
+  }
+
+  40% {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 /* ── Input Area ── */
@@ -403,7 +414,9 @@
   flex: 1;
 }
 
-.horme-send-btn {
+.horme-send-btn,
+.horme-image-btn,
+.horme-upload-btn {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -413,10 +426,17 @@
   border: none !important;
   background: transparent !important;
   box-shadow: none !important;
-  color: var(--interactive-accent);
   cursor: pointer;
-  transition: opacity 0.15s ease, transform 0.1s ease;
   flex-shrink: 0;
+}
+
+.horme-send-btn {
+  color: var(--interactive-accent);
+  transition: opacity 0.15s ease, transform 0.1s ease;
+}
+
+.horme-send-btn:hover {
+  opacity: 0.85;
 }
 
 .horme-send-btn:active {
@@ -424,49 +444,42 @@
   background: transparent !important;
 }
 
-.horme-image-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  border-radius: var(--radius-m);
-  border: none !important;
-  background: transparent !important;
-  box-shadow: none !important;
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: color 0.15s ease, transform 0.1s ease;
-  flex-shrink: 0;
+.horme-send-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
-.horme-image-btn:hover {
+.horme-send-btn.horme-stop-btn {
+  background: var(--text-error);
+}
+
+.horme-image-btn,
+.horme-upload-btn {
+  color: var(--text-muted);
+  transition: color 0.15s ease, transform 0.1s ease;
+}
+
+.horme-image-btn:hover,
+.horme-upload-btn:hover {
   color: var(--text-normal);
   background: transparent !important;
 }
 
-.horme-image-btn:active {
+.horme-image-btn:active,
+.horme-upload-btn:active {
   transform: scale(0.9);
   background: transparent !important;
+}
+
+.horme-send-btn svg,
+.horme-upload-btn svg {
+  width: 16px;
+  height: 16px;
 }
 
 .horme-image-btn svg {
   width: 18px;
   height: 18px;
-}
-
-.horme-send-btn svg {
-  width: 16px;
-  height: 16px;
-}
-
-.horme-send-btn:hover {
-  opacity: 0.85;
-}
-
-.horme-send-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
 }
 
 /* ── Empty State ── */
@@ -559,48 +572,11 @@ body.is-mobile .workspace-drawer.horme-keyboard-open .horme-empty {
   border: 1px solid var(--background-modifier-border);
 }
 
-/* ── Upload Button ── */
-
-.horme-upload-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  border-radius: var(--radius-m);
-  border: none !important;
-  background: transparent !important;
-  box-shadow: none !important;
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: color 0.15s ease, transform 0.1s ease;
-  flex-shrink: 0;
-}
-
-.horme-upload-btn:hover {
-  color: var(--text-normal);
-  background: transparent !important;
-}
-
-.horme-upload-btn:active {
-  transform: scale(0.9);
-  background: transparent !important;
-}
-
-.horme-upload-btn svg {
-  width: 16px;
-  height: 16px;
-}
-
-.horme-upload-btn:hover {
-  background: var(--background-modifier-hover);
-  color: var(--text-normal);
-}
-
 /* Mobile-specific input overrides */
 @media (max-width: 480px) {
   .horme-input {
-    font-size: 16px; /* prevents iOS auto-zoom on focus */
+    font-size: 16px;
+    /* prevents iOS auto-zoom on focus */
     min-height: 48px;
     border-radius: var(--radius-m);
   }
@@ -629,8 +605,6 @@ body.is-mobile .workspace-drawer.horme-keyboard-open .horme-empty {
   font-size: 11px;
   text-align: center;
 }
-
-/* ── Save as Note ── */
 
 /* ── Save as Note ── */
 
@@ -757,8 +731,8 @@ body.is-mobile .workspace-drawer.horme-keyboard-open .workspace-drawer-tab-optio
 }
 
 .horme-history-item-delete:hover {
-  color: var(--text-error);
-  background: var(--background-modifier-error-hover);
+  color: #000000 !important;
+  background-color: var(--text-error);
 }
 
 .horme-history-item-delete svg {
@@ -800,8 +774,17 @@ body.is-mobile .workspace-drawer.horme-keyboard-open .workspace-drawer-tab-optio
 }
 
 @keyframes horme-pulse-online {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.6; transform: scale(0.92); }
+
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 0.6;
+    transform: scale(0.92);
+  }
 }
 
 .theme-light .horme-connection-icon.horme-online {
@@ -812,12 +795,6 @@ body.is-mobile .workspace-drawer.horme-keyboard-open .workspace-drawer-tab-optio
 .horme-connection-icon.horme-offline {
   color: #f87171;
   filter: drop-shadow(0 0 3px #f8717166);
-}
-
-/* ── Stop Button State ── */
-
-.horme-send-btn.horme-stop-btn {
-  background: var(--text-error);
 }
 
 /* ── Confirm Replace / Diff Modal ── */
@@ -840,7 +817,6 @@ body.is-mobile .workspace-drawer.horme-keyboard-open .workspace-drawer-tab-optio
 .horme-diff-label {
   font-size: 11px;
   font-weight: 600;
-  margin-bottom: 6px;
   margin-bottom: 8px;
   padding: 4px 8px;
   border-radius: var(--radius-s);
@@ -849,13 +825,13 @@ body.is-mobile .workspace-drawer.horme-keyboard-open .workspace-drawer-tab-optio
 }
 
 .horme-diff-label-old {
-  background: #f871711a;
-  color: var(--text-normal);
+  background: var(--background-modifier-error);
+  color: var(--text-on-accent);
 }
 
 .horme-diff-label-new {
-  background: #34d3991a;
-  color: var(--text-normal);
+  background: var(--background-modifier-success);
+  color: var(--text-on-accent);
 }
 
 .horme-diff-text {
@@ -972,11 +948,6 @@ textarea.horme-diff-textarea:focus {
   font-size: 13px;
   font-weight: 500;
   color: var(--text-normal);
-}
-
-.horme-select {
-  width: 100%;
-  max-width: 200px;
 }
 
 .horme-progress-section {
@@ -1157,4 +1128,286 @@ body.is-mobile .horme-select {
   min-height: 25px !important;
   height: 25px !important;
   padding: 0 8px !important;
+}
+
+/* ── Sources UI ── */
+
+.horme-sources-container {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--background-modifier-border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.horme-sources-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-faint);
+}
+
+.horme-sources-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.horme-source-pill {
+  font-size: 10px;
+  padding: 2px 8px;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.horme-source-pill:hover {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-color: transparent;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+/* ── Intelligence Dashboard ── */
+.horme-diag-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+  min-height: 110px;
+}
+
+.horme-diag-card {
+  background: var(--background-secondary-alt);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.2s ease, border-color 0.2s ease;
+}
+
+.horme-diag-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--text-accent);
+  border-radius: var(--radius-s);
+}
+
+.horme-diag-card-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: bold;
+  font-size: 13px;
+}
+
+.horme-diag-status-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: var(--radius-s);
+  text-transform: uppercase;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+}
+
+.horme-diag-status-healthy {
+  background: rgba(52, 211, 153, 0.15);
+  color: var(--text-normal);
+}
+
+.horme-diag-status-stale {
+  background: rgba(251, 191, 36, 0.15);
+  color: var(--text-normal);
+}
+
+.horme-diag-status-missing {
+  background: rgba(156, 163, 175, 0.15);
+  color: var(--text-normal);
+}
+
+.horme-diag-status-error {
+  background: rgba(248, 113, 113, 0.15);
+  color: var(--text-normal);
+}
+
+.horme-diag-stat {
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.horme-diag-footer {
+  margin-top: auto;
+  font-size: 10px;
+  opacity: 0.5;
+}
+
+.horme-diag-card::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 4px;
+  height: 100%;
+}
+
+.horme-diag-card.is-healthy::after {
+  background: #34d399;
+  box-shadow: 0 0 10px #34d399;
+}
+
+.horme-diag-card.is-stale::after {
+  background: #fbbf24;
+  box-shadow: 0 0 10px #fbbf24;
+}
+
+.horme-diag-card.is-missing::after {
+  background: #9ca3af;
+}
+
+.horme-diag-card.is-error::after {
+  background: #f87171;
+  box-shadow: 0 0 10px #f87171;
+}
+
+/* Logs Container */
+.horme-diag-logs-wrapper {
+  background: #121212;
+  border-radius: var(--radius-s);
+  margin-top: 16px;
+  border: 1px solid var(--background-modifier-border);
+  font-family: var(--font-monospace);
+  position: relative;
+  color: #eee;
+}
+
+.horme-diag-logs-header {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  color: #888;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.horme-diag-logs-content {
+  padding: 10px;
+  max-height: 250px;
+  overflow-y: auto;
+}
+
+.horme-diag-entry {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 4px;
+  line-height: 1.4;
+  font-size: 11px;
+}
+
+.horme-diag-entry-time {
+  color: #666;
+  white-space: nowrap;
+}
+
+.horme-diag-entry-source {
+  color: var(--text-accent);
+  font-weight: bold;
+  white-space: nowrap;
+  opacity: 0.8;
+}
+
+.horme-diag-entry-msg {
+  color: #ccc;
+}
+
+.horme-diag-entry-error .horme-diag-entry-msg {
+  color: #f87171;
+}
+
+.horme-diag-entry-warning .horme-diag-entry-msg {
+  color: #fbbf24;
+}
+
+.horme-diag-logs-title-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.horme-diag-refresh-btn {
+  background: transparent;
+  border: none;
+  padding: 2px;
+  cursor: pointer;
+  color: var(--text-faint);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.2s ease;
+  box-shadow: none !important;
+}
+
+.horme-diag-refresh-btn:hover {
+  color: var(--text-normal);
+}
+
+.horme-diag-refresh-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.horme-diag-refresh-btn.is-spinning svg {
+  animation: horme-spin 0.6s linear infinite;
+}
+
+@keyframes horme-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+/* Dashboard title */
+.horme-diag-title-header {
+  font-size: var(--font-ui-medium);
+  font-weight: 600;
+  color: var(--text-normal);
+  margin: 0 0 12px 0;
+  letter-spacing: 0.04em;
+}
+
+/* Grid error state */
+.horme-diag-empty {
+  color: var(--text-error);
+  font-size: var(--font-ui-smaller);
+  padding: 12px;
+  opacity: 0.7;
+  grid-column: 1 / -1;
+}
+
+/* Loading status badge */
+.horme-diag-status-loading {
+  background: color-mix(in srgb, var(--color-blue) 15%, transparent);
+  color: var(--color-blue);
+}
+
+/* Loading card border indicator */
+.horme-diag-card.is-loading::after {
+  background: var(--color-blue);
 }

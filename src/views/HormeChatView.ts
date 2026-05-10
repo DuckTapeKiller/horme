@@ -3,6 +3,8 @@ import HormePlugin from "../../main";
 import { VIEW_TYPE } from "../constants";
 import { ChatMessage, SavedConversation } from "../types";
 import { NotePickerModal } from "../modals/NotePickerModal";
+import { RewriteModal } from "../modals/RewriteModal";
+import { GenericConfirmModal } from "../modals/GenericConfirmModal";
 
 export class HormeChatView extends ItemView {
   plugin: HormePlugin;
@@ -129,7 +131,7 @@ export class HormeChatView extends ItemView {
     this.presetSelect.addEventListener("change", () => {
       this.sessionSystemPromptOverride = this.presetSelect.value || null;
     });
-    this.refreshPresets();
+    await this.refreshPresets();
 
     const refreshBtn = row0.createEl("button", { cls: "horme-header-btn" });
     refreshBtn.classList.add("horme-icon-btn");
@@ -140,13 +142,11 @@ export class HormeChatView extends ItemView {
     const row1Left = row1.createDiv("horme-header-actions-left");
     const row1Right = row1.createDiv("horme-header-actions-right");
 
-    const clearBtn = row1Left.createEl("button", { cls: "horme-header-btn mod-cta", text: "Clear" });
-    clearBtn.addEventListener("click", () => this.clearChat());
 
-    const tagBtn = row1Left.createEl("button", { cls: "horme-header-btn mod-cta", text: "Tags" });
+    const tagBtn = row1Left.createEl("button", { cls: "horme-header-btn", text: "Tags" });
     tagBtn.addEventListener("click", () => this.plugin.suggestTagsForActiveNote());
 
-    const summaryBtn = row1Left.createEl("button", { cls: "horme-header-btn mod-cta", text: "Summary" });
+    const summaryBtn = row1Left.createEl("button", { cls: "horme-header-btn", text: "Summary" });
     summaryBtn.addEventListener("click", () => this.plugin.generateFrontmatterSummary());
 
     const historyBtn = row1Right.createEl("button", { cls: "horme-header-btn horme-icon-btn" });
@@ -193,11 +193,8 @@ export class HormeChatView extends ItemView {
         this.updateContextNotesLabel();
       }).open();
     });
-    const clearNotesBtn = row3.createEl("button", { cls: "horme-header-btn", text: "Clear" });
-    clearNotesBtn.addEventListener("click", () => {
-      this.selectedContextNotes = [];
-      this.updateContextNotesLabel();
-    });
+    const clearBtn = row3.createEl("button", { cls: "horme-header-btn", text: "Clear" });
+    clearBtn.addEventListener("click", () => this.clearChat());
     this.contextNotesLabel = header.createDiv("horme-context-note-label");
     this.contextToggle.addEventListener("change", async () => {
       if (
@@ -206,21 +203,22 @@ export class HormeChatView extends ItemView {
         !this.plugin.settings.contextCloudWarningShown
       ) {
         const provider = this.plugin.settings.aiProvider.toUpperCase();
-        const confirmed = confirm(
-          `Privacy notice\n\n` +
-          `Your current note's full text will be sent to ${provider}, a cloud provider. ` +
-          `The content will leave your device.\n\n` +
-          `Do you want to continue?`
-        );
-        if (!confirmed) {
-          this.contextToggle.checked = false;
-          this.updateContextNoteLabel();
-          return;
-        }
-        this.plugin.settings.contextCloudWarningShown = true;
-        await this.plugin.saveSettings();
+        new GenericConfirmModal(
+          this.app,
+          `Privacy notice: Your current note's full text will be sent to ${provider}, a cloud provider. The content will leave your device. Do you want to continue?`,
+          async () => {
+            this.plugin.settings.contextCloudWarningShown = true;
+            await this.plugin.saveSettings();
+            this.updateContextNoteLabel();
+          },
+          () => {
+            this.contextToggle.checked = false;
+            this.updateContextNoteLabel();
+          }
+        ).open();
+      } else {
+        this.updateContextNoteLabel();
       }
-      this.updateContextNoteLabel();
     });
 
     this.leafChangeRef = this.app.workspace.on("active-leaf-change", () => this.updateContextNoteLabel());
@@ -272,8 +270,8 @@ export class HormeChatView extends ItemView {
       else this.sendMessage();
     });
 
-    this.unregisterSettingsListener = this.plugin.onSettingsChange(() => {
-      if (this.presetSelect) this.refreshPresets();
+    this.unregisterSettingsListener = this.plugin.onSettingsChange(async () => {
+      if (this.presetSelect) await this.refreshPresets();
     });
 
     await this.refreshModels();
@@ -383,11 +381,11 @@ export class HormeChatView extends ItemView {
     this.updateVaultBrainToggle();
   }
 
-  private refreshPresets() {
+  private async refreshPresets() {
     const current = this.presetSelect.value;
     this.presetSelect.empty();
     this.presetSelect.createEl("option", { text: "Default prompt", value: "" });
-    const presets = this.plugin.settings.promptPresets || [];
+    const presets = await this.plugin.getChatPresets();
     for (const p of presets) {
       this.presetSelect.createEl("option", { text: p.name || "Preset", value: p.prompt });
     }
@@ -467,6 +465,7 @@ export class HormeChatView extends ItemView {
     // Capture context at start to prevent desync
     const mdLeaf = this.plugin.lastActiveMarkdownLeaf;
     const initialSourcePath = mdLeaf?.view instanceof MarkdownView ? mdLeaf.view.file?.path : "";
+    let currentSources: string[] = [];
 
     if (regenerate && this.lastMsgs && this.lastModel) {
       if (this.history.length && this.history[this.history.length - 1].role === "assistant") {
@@ -496,7 +495,7 @@ export class HormeChatView extends ItemView {
       this.messagesEl.querySelectorAll(".horme-image-preview-container").forEach(el => el.remove());
 
       const systemParts: string[] = [];
-      const effectivePrompt = this.sessionSystemPromptOverride ?? this.plugin.getEffectiveSystemPrompt();
+      const effectivePrompt = this.sessionSystemPromptOverride ?? await this.plugin.getEffectiveSystemPrompt();
       if (effectivePrompt) systemParts.push(effectivePrompt);
 
       if (this.contextToggle.checked) {
@@ -525,26 +524,32 @@ export class HormeChatView extends ItemView {
       // --- Vault Brain (RAG) Injection ---
       const canUseRAG = this.plugin.isLocalProviderActive() || this.plugin.settings.allowCloudRAG;
       const sessionRAGEnabled = this.vaultBrainToggle ? this.vaultBrainToggle.checked : true;
+      let relevantChunks: string[] = [];
 
       if (this.plugin.settings.vaultBrainEnabled && canUseRAG && sessionRAGEnabled) {
-        const relevantChunks = await this.plugin.vaultIndexer.search(text);
+        relevantChunks = await this.plugin.vaultIndexer.search(text);
         if (relevantChunks.length > 0) {
-          // Add new chunks to rolling context, avoiding duplicates
-          for (const chunk of relevantChunks) {
-            if (!this.rollingRAGContext.includes(chunk)) {
-              this.rollingRAGContext.push(chunk);
-            }
-          }
-          // Limit buffer size to 12 chunks (keep context manageable but useful)
-          if (this.rollingRAGContext.length > 12) {
-            this.rollingRAGContext = this.rollingRAGContext.slice(-12);
-          }
+          // search() returns chunks sorted best-first (highest score first).
+          // We must preserve that ordering when merging into the rolling context,
+          // otherwise slice() discards the most relevant results and keeps the worst.
+          //
+          // Strategy: current query\'s results go first (score-ordered), then
+          // fill remaining slots with previous context for multi-turn coherence.
+          const prevContext = this.rollingRAGContext.filter(c => !relevantChunks.includes(c));
+          this.rollingRAGContext = [...relevantChunks, ...prevContext].slice(0, 20);
+
+          // Extract unique paths for the "Sources" UI
+          currentSources = relevantChunks.map(c => {
+            const match = c.match(/^\[From (.*?)(?:\s\(.*\))?\]:/);
+            return match ? match[1] : "";
+          }).filter(Boolean);
+          currentSources = [...new Set(currentSources)];
         }
 
         if (this.rollingRAGContext.length > 0) {
           ragWasInjected = true;
           if (relevantChunks.length > 0) {
-            new Notice(`● Vault Brain: Found ${relevantChunks.length} relevant notes.`);
+            new Notice(`● Vault Brain: Consulting ${relevantChunks.length} notes...`);
           }
           systemParts.push(
             `LOCAL VAULT CONTEXT — Relevant notes from your vault are provided below.\n` +
@@ -599,12 +604,12 @@ export class HormeChatView extends ItemView {
     setIcon(this.sendBtn, "square");
     this.sendBtn.classList.add("horme-stop-btn");
     const loadingEl = this.showLoading();
-    this.handleStreamingResponse(msgs, model, loadingEl, initialSourcePath, ragWasInjected, 0);
+    this.handleStreamingResponse(msgs, model, loadingEl, initialSourcePath, ragWasInjected, 0, currentSources);
   }
 
   private static readonly MAX_SKILL_DEPTH = 5;
 
-  private async handleStreamingResponse(msgs: any[], model: string, loadingEl: HTMLElement, initialSourcePath: string, suppressVaultSkill = false, skillDepth = 0) {
+  private async handleStreamingResponse(msgs: any[], model: string, loadingEl: HTMLElement, initialSourcePath: string, suppressVaultSkill = false, skillDepth = 0, sources: string[] = []) {
     let bubbleEl: HTMLElement | null = null;
     let fullContent = "";
     let fullReasoning = "";
@@ -701,6 +706,7 @@ export class HormeChatView extends ItemView {
               await MarkdownRenderer.render(this.app, fullContent, finalArea, initialSourcePath || "", this);
           }
           this.addAssistantActions(bubbleEl, fullContent);
+          this.renderSources(bubbleEl, sources);
       }
 
       const finalMsg = fullReasoning ? `> [!thought]\n> ${fullReasoning.replace(/\n/g, "\n> ")}\n\n${fullContent}` : fullContent;
@@ -733,7 +739,7 @@ export class HormeChatView extends ItemView {
 
             // Prepare the next turn in the loop
             const nextMsgs: any[] = [];
-            const effectivePrompt = this.sessionSystemPromptOverride ?? this.plugin.getEffectiveSystemPrompt();
+            const effectivePrompt = this.sessionSystemPromptOverride ?? await this.plugin.getEffectiveSystemPrompt();
             if (effectivePrompt) nextMsgs.push({ role: "system", content: effectivePrompt });
             
             for (const m of this.history) {
@@ -806,6 +812,29 @@ export class HormeChatView extends ItemView {
     });
   }
 
+  private renderSources(bubbleEl: HTMLElement, paths: string[]) {
+    if (paths.length === 0) return;
+    
+    const sourcesEl = bubbleEl.createDiv("horme-sources-container");
+    sourcesEl.createSpan({ text: "Sources:", cls: "horme-sources-label" });
+    
+    const listEl = sourcesEl.createDiv("horme-sources-list");
+    paths.forEach(path => {
+      const filename = path.split("/").pop() || path;
+      const pill = listEl.createEl("span", { text: filename, cls: "horme-source-pill" });
+      pill.title = path;
+      pill.addEventListener("click", async () => {
+        const abstractFile = this.app.vault.getAbstractFileByPath(path);
+        if (abstractFile instanceof TFile) {
+          const leaf = this.app.workspace.getLeaf(true);
+          await leaf.openFile(abstractFile);
+        } else {
+          new Notice(`Source not found: ${path}`);
+        }
+      });
+    });
+  }
+
   private async exportConversation() {
     if (!this.history.length) return;
     const folder = this.plugin.settings.exportFolder.trim() || "HORME";
@@ -857,16 +886,18 @@ export class HormeChatView extends ItemView {
   }
 
   private async clearChat() {
-  this.history = [];
-  this.conversationId = this.generateId();
-  this.uploadedDocContent = null;
-  this.uploadedDocName = null;
-  this.lastMsgs = null;
-  this.lastModel = null;
-  this.rollingRAGContext = [];
-  this.messagesEl.empty();
-  this.renderEmpty();
-}
+    this.history = [];
+    this.conversationId = this.generateId();
+    this.uploadedDocContent = null;
+    this.uploadedDocName = null;
+    this.lastMsgs = null;
+    this.lastModel = null;
+    this.rollingRAGContext = [];
+    this.selectedContextNotes = [];
+    this.updateContextNotesLabel();
+    this.showingHistory = false;
+    await this.renderChatView();
+  }
 
   private async toggleHistoryPanel() {
     this.showingHistory = !this.showingHistory;
@@ -897,9 +928,20 @@ export class HormeChatView extends ItemView {
     const panel = this.messagesEl.createDiv("horme-history-panel");
     const header = panel.createDiv("horme-history-header");
     header.createEl("h4", { text: "Chat History" });
-    const actions = header.createDiv("horme-history-actions");
-    const backBtn = actions.createEl("button", { cls: "horme-header-btn", text: "Back" });
-    backBtn.addEventListener("click", () => this.toggleHistoryPanel());
+    
+    const backBtn = header.createEl("button", { text: "Close", cls: "horme-history-back" });
+    backBtn.addEventListener("click", () => {
+      this.showingHistory = false;
+      this.renderChatView();
+    });
+
+    const deleteAllBtn = header.createEl("button", { text: "Delete all", cls: "horme-history-delete-all mod-warning" });
+    deleteAllBtn.addEventListener("click", () => {
+      new GenericConfirmModal(this.app, "Are you sure you want to delete ALL chat history? This cannot be undone.", async () => {
+        await this.plugin.historyManager.deleteAll();
+        await this.renderHistoryView();
+      }).open();
+    });
 
     const list = panel.createDiv("horme-history-list");
     const convos = await this.plugin.historyManager.load();
@@ -914,12 +956,12 @@ export class HormeChatView extends ItemView {
       const delBtn = item.createDiv("horme-history-item-delete");
       setIcon(delBtn, "trash-2");
       delBtn.title = "Delete conversation";
-      delBtn.addEventListener("click", async (e) => {
+      delBtn.addEventListener("click", (e) => {
         e.stopPropagation();
-        if (confirm("Delete this conversation?")) {
+        new GenericConfirmModal(this.app, "Delete this conversation?", async () => {
           await this.plugin.historyManager.delete(c.id);
           await this.renderHistoryView();
-        }
+        }).open();
       });
     }
   }

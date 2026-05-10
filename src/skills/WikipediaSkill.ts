@@ -101,7 +101,7 @@ export class WikipediaSkill implements Skill {
       return output;
     } catch (e) {
       console.error("Horme Wikipedia Skill Error:", e);
-      return `Error searching Wikipedia: ${e.message}`;
+      throw e;
     }
   }
 

@@ -52,7 +52,7 @@ export class SpanishScholarSkill implements Skill {
       return joinedResults;
     } catch (e) {
       console.error("Horme Spanish Scholar Skill Error:", e);
-      return `Error searching grammar manuals.`;
+      throw e;
     }
   }
 }

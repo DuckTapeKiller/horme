@@ -52,3 +52,13 @@ export function cosineSimilarity(a: number[], b: number[]): number {
     const denom = Math.sqrt(normA) * Math.sqrt(normB);
     return denom === 0 ? 0 : dot / denom;
 }
+
+/**
+ * Returns the correct query/document prefix for the active embedding model.
+ */
+export function getModelPrefixes(model: string): { query: string; document: string } {
+  const m = model.toLowerCase();
+  if (m.includes("nomic")) return { query: "search_query: ", document: "search_document: " };
+  if (m.includes("mxbai")) return { query: "Represent this sentence for searching relevant passages: ", document: "" };
+  return { query: "", document: "" };
+}

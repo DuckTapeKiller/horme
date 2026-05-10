@@ -10,6 +10,11 @@ interface TagEntry {
 export class TagIndexer {
   private plugin: HormePlugin;
   private index: TagEntry[] = [];
+  
+  get entryCount(): number {
+    return this.index.length;
+  }
+  
   private indexPath: string;
   private indexedModel: string = "";
 
@@ -46,7 +51,7 @@ export class TagIndexer {
         }));
       }
     } catch (e) {
-      console.error("Horme: Failed to load tag index", e);
+      this.plugin.diagnosticService.report("Tags", `Failed to load index: ${e.message}`);
     }
   }
 
@@ -67,7 +72,7 @@ export class TagIndexer {
       });
       await adapter.write(this.indexPath, data);
     } catch (e) {
-      console.error("Horme: Failed to save tag index", e);
+      this.plugin.diagnosticService.report("Tags", `Failed to save index: ${e.message}`);
     }
   }
 
@@ -117,7 +122,7 @@ export class TagIndexer {
           }
         }
       } catch (e) {
-        console.error("Horme Tag Indexer Error:", e);
+        this.plugin.diagnosticService.report("Tags", `Tag batch indexing failed: ${e.message}`, "warning");
       }
     }
 
@@ -136,7 +141,9 @@ export class TagIndexer {
     if (this.index.length === 0) return [];
 
     try {
-      // No prefix: symmetric comparison — tag embeddings were indexed without prefix
+      // Note: No isLocalProviderActive() guard here because EmbeddingService 
+      // always routes embeddings to Ollama, even when the chat provider is cloud.
+      // This ensures tag suggestions work without leaking data to the cloud.
       const queryEmbedding = await this.plugin.embeddingService.getEmbedding(
         text.slice(0, 1500)
       );

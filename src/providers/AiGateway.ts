@@ -40,16 +40,24 @@ export class AiGateway {
     const enhancedSystem = this.getSystemPromptWithSkills(system);
     
     if (Array.isArray(prompt)) {
-      // Use the messages array directly if provided
       const msgs = [
         { role: "system", content: enhancedSystem },
         ...prompt
       ];
-      // We'll use a new non-streaming chat helper to ensure compatibility
-      return await provider.generateChat(msgs, model);
+      try {
+        return await provider.generateChat(msgs, model);
+      } catch (e) {
+        this.plugin.diagnosticService.report(`${this.plugin.settings.aiProvider}`, `Generation failed: ${e.message}`);
+        throw e;
+      }
     }
 
-    return await provider.generate(prompt, enhancedSystem, model);
+    try {
+      return await provider.generate(prompt, enhancedSystem, model);
+    } catch (e) {
+      this.plugin.diagnosticService.report(`${this.plugin.settings.aiProvider}`, `Generation failed: ${e.message}`);
+      throw e;
+    }
   }
 
   async stream(msgs: Array<{ role: string; content: string }>, modelOverride?: string, signal?: AbortSignal, suppressVaultSkill = false): Promise<ReadableStreamDefaultReader<Uint8Array>> {
@@ -68,7 +76,12 @@ export class AiGateway {
       enhancedMsgs.unshift({ role: "system", content: this.getSystemPromptWithSkills("", suppressVaultSkill) });
     }
 
-    return await provider.stream(enhancedMsgs, model, signal);
+    try {
+      return await provider.stream(enhancedMsgs, model, signal);
+    } catch (e) {
+      this.plugin.diagnosticService.report(`${this.plugin.settings.aiProvider}`, `Streaming failed: ${e.message}`);
+      throw e;
+    }
   }
 
   private getCurrentModel(): string {
