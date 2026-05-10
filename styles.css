@@ -1411,3 +1411,28 @@ body.is-mobile .horme-select {
 .horme-diag-card.is-loading::after {
   background: var(--color-blue);
 }
+/* Mobile alignment for diagnostic section buttons */
+@media (max-width: 480px) {
+  .is-mobile .horme-diag-section .setting-item {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    text-align: center !important;
+    padding: 16px 10px !important;
+  }
+  
+  .is-mobile .horme-diag-section .setting-item-info {
+    margin: 0 0 12px 0 !important;
+    text-align: center !important;
+  }
+
+  .is-mobile .horme-diag-section .setting-item-control {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    justify-content: center !important;
+    gap: 10px !important;
+    width: 100% !important;
+    margin: 0 auto !important;
+  }
+}

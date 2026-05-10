@@ -134,7 +134,7 @@ export class HormeSettingTab extends PluginSettingTab {
     header.createEl("h2", { text: "Horme Settings", cls: "horme-settings-title" });
 
     // SYSTEM DIAGNOSTICS & INTELLIGENCE (TOP & EXPANDED)
-    const diagSection = containerEl.createDiv("horme-settings-section");
+    const diagSection = containerEl.createDiv("horme-settings-section horme-diag-section");
     diagSection.createEl("h3", { text: "◈ Intelligence Dashboard", cls: "horme-diag-title-header" });
     
     const summary = this.plugin.diagnosticService.getSummary();
