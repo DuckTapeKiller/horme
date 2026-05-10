@@ -28,10 +28,10 @@
 > 
 > **1. Download the Indexing Model:**
 > This model is *only* for indexing your vault in a compressed format; you cannot chat with it.
-> *   **Recommended Model:** For single-language notes, use `nomic-embed-text:latest` (274 MB). For a multilingual vault, use `bge-m3:latest` (1.2 GB) so that searching for a word in one language also captures matches in other languages.
+> *   **Recommended Model:** `nomic-embed-text:latest` (274 MB).
 > *   **Command (in your terminal):**
 >     ```bash
->     ollama pull bge-m3:latest
+>     ollama pull nomic-embed-text:latest
 >     ```
 > **2. Download the Interaction Model:**
 > This is the model you will use for asking questions.
@@ -60,7 +60,7 @@
 > 3.  **Activate in Obsidian:**
 >     *   Go to **Settings** in Obsidian.
 >     *   Scroll down and toggle on **“Enable Local Vault Memory”**.
->     *   Select the indexing model you just downloaded: **`bge-m3:latest`**.
+>     *   Select the indexing model you just downloaded: **`nomic-embed-text:latest`**.
 >     *   Wait for the count in the status bar to finish processing.
 > 
 > ### Ready to Use
