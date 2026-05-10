@@ -45,7 +45,7 @@ import { HormeSettingTab } from "./src/views/HormeSettingTab";
 
 // Constants & Types
 import { DEFAULT_SETTINGS, VIEW_TYPE, ACTIONS, PROVIDER_MODELS, DEFAULT_SYSTEM_PROMPT } from "./src/constants";
-import { HormeSettings, SavedConversation } from "./src/types";
+import { HormeSettings, SavedConversation, AiProvider } from "./src/types";
 
 declare var __PDF_WORKER_CODE__: string;
 
@@ -71,9 +71,8 @@ export default class HormePlugin extends Plugin {
 
   private statusBarItem: HTMLElement | null = null;
   private settingsChangeListeners = new Set<() => void>();
-  private tagsCache: { path: string; mtime: number; tags: string[] } | null = null;
   private _mobileProviderOverrideActive = false;
-  private _originalProvider: string | null = null;
+  private _originalProvider: AiProvider | null = null;
 
   onSettingsChange(cb: () => void): () => void {
     this.settingsChangeListeners.add(cb);
@@ -213,7 +212,7 @@ export default class HormePlugin extends Plugin {
 
     // Initialize lastActiveMarkdownLeaf if a note is already open
     const activeLeaf = this.app.workspace.getActiveViewOfType(MarkdownView)?.leaf;
-    if (activeLeaf) this.lastActiveMarkdownLeaf = activeLeaf;
+    this.lastActiveMarkdownLeaf = activeLeaf ?? null;
 
     this.addCommand({
       id: "suggest-frontmatter-tags",
@@ -493,11 +492,8 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
       // Language-aware grammar injection: tell the model when to use grammar manuals
       let effectivePrompt = sysPrompt;
       if ((actionId === "proofread" || actionId === "rewrite") && this.grammarIndexer.chunks.length > 0) {
-        const lang = this.settings.grammarLanguage || "Español";
-        effectivePrompt += `\n\nCRITICAL: You have access to the user's ${lang} grammar manuals via the "spanish_scholar" skill. `
-          + `If the text below is written in ${lang}, you MUST call the spanish_scholar skill with any non-obvious constructions, `
-          + `false cognates, or orthotypographic details before making corrections. `
-          + `If the text is written in a different language, do NOT use the grammar skill — rely on your general knowledge.`;
+        effectivePrompt += `\n\nCRITICAL: You have access to the user's reference grammar manuals via the "grammar_scholar" skill. `
+          + `You MUST call the grammar_scholar skill to verify any non-obvious rules, false cognates, or orthotypographic details before making corrections. `;
       }
 
       // Fact-check injection: force Wikipedia verification for every claim
@@ -672,7 +668,7 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
     let leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
     if (!leaf) {
         // Explicitly try to get the right sidebar leaf
-        leaf = this.app.workspace.getRightLeaf(false);
+        leaf = this.app.workspace.getRightLeaf(false) as WorkspaceLeaf;
         if (!leaf) {
           new Notice("Horme: Could not open chat panel.");
           return;
@@ -766,8 +762,13 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
 
   handleError(e: any, context?: string) {
     console.error("Horme Error:", e);
-    const title = context || "Something went wrong";
-    const message = e.message || "An unknown error occurred.";
+    const title = context || "Plugin Error";
+    const message = e.message || String(e) || "An unknown error occurred.";
+    
+    // Log to Intelligence Hub
+    this.diagnosticService.report(title, message, "error");
+    
+    // Visual alert
     new HormeErrorModal(this.app, title, message).open();
   }
 
@@ -849,5 +850,6 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
       await this.saveData(this.settings);
     }
     this.settingsChangeListeners.forEach(cb => cb());
+    this.skillManager?.loadCustomSkills();
   }
 }

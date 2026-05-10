@@ -1,9 +1,9 @@
 {
   "id": "horme",
   "name": "Horme",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "minAppVersion": "1.0.0",
-  "description": "Integrate local LLMs via Ollama — right-click text actions, chat panel, and more.",
+  "description": "AI-powered assistant with chat, right-click actions, vault-wide RAG, and an extensible skill system. Supports Ollama, Claude, Gemini, OpenAI, Groq, OpenRouter, and LM Studio.",
   "author": "DuckTapeKiller",
   "authorUrl": "https://github.com/DuckTapeKiller",
   "isDesktopOnly": false

@@ -1,7 +1,7 @@
 {
   "name": "horme",
-  "version": "1.0.4",
-  "description": "Obsidian plugin for local LLM integration via Ollama",
+  "version": "1.0.5",
+  "description": "AI-powered assistant with chat, right-click actions, vault-wide RAG, and an extensible skill system.",
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",

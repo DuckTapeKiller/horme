@@ -4,10 +4,11 @@ import { Skill, SkillCall } from "../skills/types";
 import { WikipediaSkill } from "../skills/WikipediaSkill";
 import { VaultLinkSkill } from "../skills/VaultLinkSkill";
 import { TaxonomySkill } from "../skills/TaxonomySkill";
-import { SpanishScholarSkill } from "../skills/SpanishScholarSkill";
+import { GrammarScholarSkill } from "../skills/GrammarScholarSkill";
 import { WiktionarySkill } from "../skills/WiktionarySkill";
 import { DuckDuckGoSkill } from "../skills/DuckDuckGoSkill";
 import { DateCalculatorSkill } from "../skills/DateCalculatorSkill";
+import { CustomSkill } from "../skills/CustomSkill";
 
 export class SkillManager {
   private plugin: HormePlugin;
@@ -16,6 +17,7 @@ export class SkillManager {
   constructor(plugin: HormePlugin) {
     this.plugin = plugin;
     this.registerBuiltInSkills();
+    this.loadCustomSkills();
   }
 
   private registerBuiltInSkills() {
@@ -25,7 +27,7 @@ export class SkillManager {
     this.registerSkill(new DateCalculatorSkill());
     this.registerSkill(new VaultLinkSkill(this.plugin));
     this.registerSkill(new TaxonomySkill(this.plugin));
-    this.registerSkill(new SpanishScholarSkill(this.plugin));
+    this.registerSkill(new GrammarScholarSkill(this.plugin));
   }
 
   registerSkill(skill: Skill) {
@@ -64,7 +66,9 @@ export class SkillManager {
         const parameters = JSON.parse(paramsText);
         calls.push({ skillId, parameters });
       } catch (e) {
-        console.error(`Failed to parse parameters for skill ${skillId}:`, paramsText, e);
+        const msg = `Failed to parse parameters for skill ${skillId}. Invalid JSON.`;
+        this.plugin.diagnosticService.report("Skill Parser", msg, "warning");
+        console.error(msg, paramsText, e);
       }
     }
 
@@ -92,6 +96,43 @@ export class SkillManager {
       );
       console.error(`Horme Skill Error [${skill.name}]:`, e);
       return `Error: ${skill.name} failed. ${errorMessage}`;
+    }
+  }
+
+  /** Returns all registered skills as an ordered array. */
+  getSkills(): Skill[] {
+    return [...this.skills.values()];
+  }
+
+  /** Returns a single skill by its id, or undefined if not found. */
+  getSkillById(id: string): Skill | undefined {
+    return this.skills.get(id);
+  }
+
+  /** (Re)loads custom skills from settings. Safe to call multiple times. */
+  loadCustomSkills() {
+    try {
+      // Remove any previously registered custom skills
+      for (const id of this.skills.keys()) {
+        if (id.startsWith("custom_")) this.skills.delete(id);
+      }
+      // Register each custom skill from settings
+      for (const def of this.plugin.settings.customSkills) {
+        if (!def.id || !def.name) {
+          this.plugin.diagnosticService.report("Skill Loader", `Invalid custom skill definition: ${def.name || "Unknown"}`, "warning");
+          continue;
+        }
+        this.skills.set(def.id, new CustomSkill(def));
+      }
+      // Refresh the dropdown in any open chat views
+      this.plugin.app.workspace.iterateAllLeaves(leaf => {
+        const view = leaf.view as any;
+        if (typeof view.buildSkillsMenu === "function") {
+          view.buildSkillsMenu();
+        }
+      });
+    } catch (e) {
+      this.plugin.handleError(e, "Custom Skills Loader");
     }
   }
 }

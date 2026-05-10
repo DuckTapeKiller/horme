@@ -15,7 +15,7 @@ export class AiGateway {
     this.plugin = plugin;
   }
 
-  private getProvider(): AiProvider {
+  public getProvider(): AiProvider {
     const settings = this.plugin.settings;
     const provider = settings.aiProvider;
     switch (provider) {
@@ -84,7 +84,7 @@ export class AiGateway {
     }
   }
 
-  private getCurrentModel(): string {
+  public getCurrentModel(): string {
     const p = this.plugin.settings.aiProvider;
     const settings = this.plugin.settings;
     if (p === "claude") return settings.claudeModel;

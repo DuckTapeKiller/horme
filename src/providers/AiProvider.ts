@@ -4,8 +4,3 @@ export interface AiProvider {
   stream(msgs: Array<{ role: string; content: string }>, model: string, signal?: AbortSignal): Promise<ReadableStreamDefaultReader<Uint8Array>>;
 }
 
-export interface ProviderConfig {
-  apiKey?: string;
-  baseUrl?: string;
-  temperature: number;
-}

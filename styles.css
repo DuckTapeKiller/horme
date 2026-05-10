@@ -1389,6 +1389,7 @@ body.is-mobile .horme-select {
   font-weight: 600;
   color: var(--text-normal);
   margin: 0 0 12px 0;
+  padding: 16px 16px 0 16px;
   letter-spacing: 0.04em;
 }
 
@@ -1435,4 +1436,166 @@ body.is-mobile .horme-select {
     width: 100% !important;
     margin: 0 auto !important;
   }
+}
+
+/* ── Skills dropdown menu ─────────────────────────────── */
+.horme-skills-menu {
+  position: absolute;
+  z-index: 200;
+  min-width: 300px;
+  max-width: 380px;
+  max-height: 360px;
+  overflow-y: auto;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-l);
+  padding: 4px 0;
+}
+
+.horme-skills-menu-hidden {
+  display: none;
+}
+
+.horme-skills-menu-empty {
+  padding: 10px 14px;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+
+.horme-skills-menu-item {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  grid-template-rows: auto auto;
+  column-gap: 8px;
+  align-items: center;
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+
+.horme-skills-menu-item:hover {
+  background: var(--background-modifier-hover);
+}
+
+.horme-skills-menu-item-icon {
+  grid-column: 1;
+  grid-row: 1 / 3;
+  align-self: start;
+  margin-top: 2px;
+}
+
+.horme-skills-menu-item-name {
+  grid-column: 2;
+  grid-row: 1;
+  font-size: var(--font-ui-small);
+  font-weight: 600;
+  color: var(--text-normal);
+}
+
+.horme-skills-menu-item-desc {
+  grid-column: 2;
+  grid-row: 2;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  white-space: normal;
+  line-height: 1.3;
+}
+
+.horme-skills-menu-item-badge {
+  grid-column: 3;
+  grid-row: 1 / 3;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: var(--radius-s);
+  font-weight: 600;
+  white-space: nowrap;
+  align-self: center;
+}
+
+.horme-skills-menu-item-badge.is-direct {
+  background: color-mix(in srgb, var(--color-accent) 15%, transparent);
+  color: var(--color-accent);
+}
+
+.horme-skills-menu-item-badge.is-template {
+  background: color-mix(in srgb, var(--text-muted) 15%, transparent);
+  color: var(--text-muted);
+}
+
+/* ── Armed skill pill ─────────────────────────────────── */
+.horme-skill-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  margin-bottom: 4px;
+  width: fit-content;
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 35%, transparent);
+  border-radius: var(--radius-s);
+  font-size: var(--font-ui-smaller);
+  color: var(--color-accent);
+}
+
+.horme-skill-pill-dismiss {
+  background: transparent !important;
+  border: none;
+  box-shadow: none !important;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+}
+
+.horme-skill-pill-dismiss:hover {
+  color: var(--text-normal);
+  background: transparent !important;
+}
+
+/* ── Custom Skill Modal ── */
+.horme-modal-vertical-setting {
+  flex-direction: column !important;
+  align-items: flex-start !important;
+}
+
+.horme-modal-vertical-setting .setting-item-info {
+  margin-bottom: 8px;
+}
+
+.horme-modal-vertical-setting .setting-item-control {
+  width: 100% !important;
+}
+
+.horme-modal-vertical-setting textarea {
+  min-height: 200px;
+  font-family: var(--font-monospace);
+  line-height: 1.4;
+}
+
+/* ── Settings muted helper text ─────────────────────────── */
+.horme-settings-muted {
+  font-size: 0.8em;
+  padding: 4px 16px 12px 16px;
+  opacity: 0.6;
+  line-height: 1.4;
+}
+
+/* ── Skill icon sizing ─────────────────────────────────── */
+.horme-skill-pill-icon svg,
+.horme-skill-loading-icon svg,
+.horme-skill-summary-icon svg,
+.horme-skills-menu-item-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.horme-skill-pill-icon,
+.horme-skill-loading-icon,
+.horme-skill-summary-icon,
+.horme-skills-menu-item-icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
 }

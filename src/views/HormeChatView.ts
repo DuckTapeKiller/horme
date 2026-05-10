@@ -20,6 +20,7 @@ export class HormeChatView extends ItemView {
   private isGenerating = false;
   private showingHistory = false;
   private unregisterSettingsListener: (() => void) | null = null;
+  private documentClickHandler: (() => void) | null = null;
   private sessionSystemPromptOverride: string | null = null;
 
   private activeReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
@@ -37,6 +38,8 @@ export class HormeChatView extends ItemView {
   private contextNotesLabel!: HTMLElement;
   private vaultBrainToggle!: HTMLInputElement;
   private vaultBrainLabel!: HTMLElement;
+  private forcedSkillId: string | null = null;
+  private skillsMenuEl: HTMLElement | null = null;
  
   private async pickImage() {
     const fileInput = document.createElement("input");
@@ -98,206 +101,370 @@ export class HormeChatView extends ItemView {
   getDisplayText(): string { return "Horme"; }
   getIcon(): string { return "cone"; }
 
-  async onOpen() {
-    const root = this.contentEl;
-    root.empty();
-    root.addClass("horme-chat-container");
+  // Lucide icon for each built-in skill (used in menu, loading, and result box)
+  private static readonly SKILL_ICONS: Record<string, string> = {
+    wikipedia: "book-marked",
+    ddg_search: "binoculars",
+    wiktionary: "book-a",
+    vault_links: "cable",
+    grammar_scholar: "signature",
+    taxonomy: "list-tree",
+    date_calc: "calendar",
+  };
 
-    this.sessionSystemPromptOverride = null;
-    const content = root.createDiv("horme-chat-content");
+  /** Returns the Lucide icon name for a skill. Custom skills use "bot". */
+  private getSkillIcon(skillId: string): string {
+    if (skillId.startsWith("custom_")) return "bot";
+    return HormeChatView.SKILL_ICONS[skillId] || "zap";
+  }
 
-    /* Header */
-    const header = content.createDiv("horme-header");
-    const row0 = header.createDiv("horme-header-row");
-    this.connectionDot = row0.createDiv("horme-connection-icon");
-    setIcon(this.connectionDot, "cone");
-    const selectsWrap = row0.createDiv("horme-header-selects");
+  private buildSkillsMenu() {
+    if (!this.skillsMenuEl) return;
+    this.skillsMenuEl.empty();
 
-    this.modelSelect = selectsWrap.createEl("select", { cls: "horme-select horme-model-select" });
-    this.modelSelect.addEventListener("change", () => {
-      const v = this.modelSelect.value;
-      const p = this.plugin.settings.aiProvider;
-      if (p === "claude")          this.plugin.settings.claudeModel = v;
-      else if (p === "gemini")     this.plugin.settings.geminiModel = v;
-      else if (p === "openai")     this.plugin.settings.openaiModel = v;
-      else if (p === "groq")       this.plugin.settings.groqModel = v;
-      else if (p === "openrouter") this.plugin.settings.openRouterModel = v;
-      else if (p === "lmstudio")   this.plugin.settings.lmStudioModel = v;
-      else                         this.plugin.settings.defaultModel = v;
-      this.plugin.saveSettings();
-    });
+    const allSkills = this.plugin.skillManager.getSkills();
 
-    this.presetSelect = selectsWrap.createEl("select", { cls: "horme-select horme-preset-select" });
-    this.presetSelect.addEventListener("change", () => {
-      this.sessionSystemPromptOverride = this.presetSelect.value || null;
-    });
-    await this.refreshPresets();
+    // Skills that support forced direct execution:
+    // these have a single primary string input and bypass the LLM's skill selection.
+    // Verify these IDs against each skill file's `id` field before deploying.
+    // Custom skills (prefix "custom_") are always forced-execution.
+    const FORCED_EXECUTION_IDS = new Set([
+      "wikipedia",
+      "ddg_search",
+      "wiktionary",
+      "vault_links",
+      "grammar_scholar",
+      "taxonomy",
+    ]);
 
-    const refreshBtn = row0.createEl("button", { cls: "horme-header-btn" });
-    refreshBtn.classList.add("horme-icon-btn");
-    setIcon(refreshBtn, "refresh-cw");
-    refreshBtn.addEventListener("click", () => this.refreshModels());
+    for (const skill of allSkills) {
+      const isForced = FORCED_EXECUTION_IDS.has(skill.id) || skill.id.startsWith("custom_");
 
-    const row1 = header.createDiv("horme-header-row horme-header-row-actions");
-    const row1Left = row1.createDiv("horme-header-actions-left");
-    const row1Right = row1.createDiv("horme-header-actions-right");
+      const item = this.skillsMenuEl.createDiv({ cls: "horme-skills-menu-item" });
 
+      const iconEl = item.createSpan({ cls: "horme-skills-menu-item-icon" });
+      setIcon(iconEl, this.getSkillIcon(skill.id));
 
-    const tagBtn = row1Left.createEl("button", { cls: "horme-header-btn", text: "Tags" });
-    tagBtn.addEventListener("click", () => this.plugin.suggestTagsForActiveNote());
+      item.createEl("span", { cls: "horme-skills-menu-item-name", text: skill.name });
+      item.createEl("span", { cls: "horme-skills-menu-item-desc", text: skill.description });
 
-    const summaryBtn = row1Left.createEl("button", { cls: "horme-header-btn", text: "Summary" });
-    summaryBtn.addEventListener("click", () => this.plugin.generateFrontmatterSummary());
+      // Visual badge: forced skills show "Direct" (bypasses model), template skills show "Template"
+      item.createEl("span", {
+        cls: `horme-skills-menu-item-badge ${isForced ? "is-direct" : "is-template"}`,
+        text: isForced ? "Direct" : "Template"
+      });
 
-    const historyBtn = row1Right.createEl("button", { cls: "horme-header-btn horme-icon-btn" });
-    setIcon(historyBtn, "history");
-    historyBtn.addEventListener("click", () => this.toggleHistoryPanel());
+      item.addEventListener("click", () => {
+        this.skillsMenuEl!.classList.add("horme-skills-menu-hidden");
 
-    const exportBtn = row1Right.createEl("button", { cls: "horme-header-btn horme-icon-btn" });
-    setIcon(exportBtn, "download");
-    exportBtn.addEventListener("click", () => this.exportConversation());
-
-    const row2 = header.createDiv("horme-header-row");
-    const label = row2.createEl("label", { cls: "horme-context-toggle" });
-    this.contextToggle = label.createEl("input", { type: "checkbox" });
-    label.createSpan({ text: "Use current note as context" });
-
-    const vbLabel = row2.createEl("label", { cls: "horme-context-toggle" });
-    vbLabel.style.marginLeft = "12px";
-    this.vaultBrainToggle = vbLabel.createEl("input", { type: "checkbox" });
-    this.vaultBrainToggle.checked = true;
-    vbLabel.createSpan({ text: "Use Vault Brain" });
-    this.vaultBrainLabel = vbLabel;
-    this.updateVaultBrainToggle();
-
-    this.contextNoteLabel = header.createDiv("horme-context-note-label");
-
-    // Multi-note context
-    const row3 = header.createDiv("horme-header-row");
-    const addNotesBtn = row3.createEl("button", { cls: "horme-header-btn", text: "+ Add notes" });
-    addNotesBtn.addEventListener("click", () => {
-      if (this.selectedContextNotes.length >= 5) {
-        new Notice("Horme: Maximum 5 context notes.");
-        return;
-      }
-      new NotePickerModal(this.app, (file) => {
-        if (this.selectedContextNotes.some(f => f.path === file.path)) {
-          new Notice(`Already added: ${file.basename}`);
-          return;
+        if (isForced) {
+          // ARM the skill for direct execution on next send.
+          // Vault Brain will be suppressed for that turn (see sendMessage intercept).
+          this.forcedSkillId = skill.id;
+          this.showArmedSkillPill(skill.name, skill.id);
+          this.inputEl.focus();
+        } else {
+          // TEMPLATE mode: insert a starter phrase; the model handles the skill call normally.
+          const templates: Record<string, string> = {
+            "date_calc": "Calculate the time between ",
+          };
+          const template = templates[skill.id] ?? `Use the ${skill.name} skill: `;
+          this.inputEl.value = template;
+          this.inputEl.focus();
+          this.inputEl.setSelectionRange(template.length, template.length);
+          this.autoGrow?.();
         }
+      });
+    }
+
+    if (allSkills.length === 0) {
+      this.skillsMenuEl.createEl("p", {
+        cls: "horme-skills-menu-empty",
+        text: "No skills available."
+      });
+    }
+  }
+
+  private showArmedSkillPill(skillName: string, skillId: string) {
+    // Remove any existing pill first
+    this.containerEl.querySelector(".horme-skill-pill")?.remove();
+
+    const inputWrapper = this.inputEl.parentElement!;
+    const pill = document.createElement("div");
+    pill.className = "horme-skill-pill";
+
+    const iconEl = document.createElement("span");
+    iconEl.className = "horme-skill-pill-icon";
+    setIcon(iconEl, this.getSkillIcon(skillId));
+    pill.appendChild(iconEl);
+
+    const label = document.createElement("span");
+    label.textContent = skillName;
+    pill.appendChild(label);
+
+    const dismiss = document.createElement("button");
+    dismiss.className = "horme-skill-pill-dismiss";
+    dismiss.textContent = "×";
+    dismiss.title = "Disarm skill";
+    dismiss.addEventListener("click", () => {
+      this.forcedSkillId = null;
+      pill.remove();
+    });
+    pill.appendChild(dismiss);
+
+    // Insert before the textarea
+    inputWrapper.insertBefore(pill, this.inputEl);
+  }
+
+  async onOpen() {
+    try {
+      const root = this.contentEl;
+      root.empty();
+      root.addClass("horme-chat-container");
+
+      this.sessionSystemPromptOverride = null;
+      const content = root.createDiv("horme-chat-content");
+
+      /* Header */
+      const header = content.createDiv("horme-header");
+      const row0 = header.createDiv("horme-header-row");
+      this.connectionDot = row0.createDiv("horme-connection-icon");
+      setIcon(this.connectionDot, "cone");
+      const selectsWrap = row0.createDiv("horme-header-selects");
+
+      this.modelSelect = selectsWrap.createEl("select", { cls: "horme-select horme-model-select" });
+      this.modelSelect.addEventListener("change", () => {
+        const v = this.modelSelect.value;
+        const p = this.plugin.settings.aiProvider;
+        if (p === "claude")          this.plugin.settings.claudeModel = v;
+        else if (p === "gemini")     this.plugin.settings.geminiModel = v;
+        else if (p === "openai")     this.plugin.settings.openaiModel = v;
+        else if (p === "groq")       this.plugin.settings.groqModel = v;
+        else if (p === "openrouter") this.plugin.settings.openRouterModel = v;
+        else if (p === "lmstudio")   this.plugin.settings.lmStudioModel = v;
+        else                         this.plugin.settings.defaultModel = v;
+        this.plugin.saveSettings();
+      });
+
+      this.presetSelect = selectsWrap.createEl("select", { cls: "horme-select horme-preset-select" });
+      this.presetSelect.addEventListener("change", () => {
+        this.sessionSystemPromptOverride = this.presetSelect.value || null;
+      });
+      await this.refreshPresets();
+
+      const refreshBtn = row0.createEl("button", { cls: "horme-header-btn" });
+      refreshBtn.classList.add("horme-icon-btn");
+      setIcon(refreshBtn, "refresh-cw");
+      refreshBtn.addEventListener("click", () => this.refreshModels());
+
+      const row1 = header.createDiv("horme-header-row horme-header-row-actions");
+      const row1Left = row1.createDiv("horme-header-actions-left");
+      const row1Right = row1.createDiv("horme-header-actions-right");
+
+
+      const tagBtn = row1Left.createEl("button", { cls: "horme-header-btn", text: "Tags" });
+      tagBtn.addEventListener("click", () => this.plugin.suggestTagsForActiveNote());
+
+      const summaryBtn = row1Left.createEl("button", { cls: "horme-header-btn", text: "Summary" });
+      summaryBtn.addEventListener("click", () => this.plugin.generateFrontmatterSummary());
+
+      // Skills dropdown trigger button
+      const skillsBtn = row1Left.createEl("button", {
+        cls: "horme-header-btn",
+        text: "Skills ▾"
+      });
+
+      // Build the floating menu attached to the view container (hidden by default)
+      this.skillsMenuEl = this.containerEl.createDiv({ cls: "horme-skills-menu horme-skills-menu-hidden" });
+      this.buildSkillsMenu();
+
+      skillsBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const isHidden = this.skillsMenuEl!.classList.contains("horme-skills-menu-hidden");
+        if (isHidden) {
+          this.skillsMenuEl!.classList.remove("horme-skills-menu-hidden");
+          const rect = skillsBtn.getBoundingClientRect();
+          const containerRect = this.containerEl.getBoundingClientRect();
+          const menuWidth = 300; 
+
+          let left = rect.left - containerRect.left;
+          // If menu would overflow container on the right, align its right edge to the button's right edge
+          if (left + menuWidth > containerRect.width) {
+            left = (rect.right - containerRect.left) - menuWidth;
+          }
+          // Ensure it doesn't overflow the left edge
+          left = Math.max(4, left); // 4px margin
+
+          this.skillsMenuEl!.style.top = `${rect.bottom - containerRect.top + 4}px`;
+          this.skillsMenuEl!.style.left = `${left}px`;
+        } else {
+          this.skillsMenuEl!.classList.add("horme-skills-menu-hidden");
+        }
+      });
+
+      // Close the menu when clicking anywhere outside it
+      this.documentClickHandler = () => {
+        this.skillsMenuEl?.classList.add("horme-skills-menu-hidden");
+      };
+      document.addEventListener("click", this.documentClickHandler);
+
+      const historyBtn = row1Right.createEl("button", { cls: "horme-header-btn horme-icon-btn" });
+      setIcon(historyBtn, "history");
+      historyBtn.addEventListener("click", () => this.toggleHistoryPanel());
+
+      const exportBtn = row1Right.createEl("button", { cls: "horme-header-btn horme-icon-btn" });
+      setIcon(exportBtn, "download");
+      exportBtn.addEventListener("click", () => this.exportConversation());
+
+      const row2 = header.createDiv("horme-header-row");
+      const label = row2.createEl("label", { cls: "horme-context-toggle" });
+      this.contextToggle = label.createEl("input", { type: "checkbox" });
+      label.createSpan({ text: "Use current note as context" });
+
+      const vbLabel = row2.createEl("label", { cls: "horme-context-toggle" });
+      vbLabel.style.marginLeft = "12px";
+      this.vaultBrainToggle = vbLabel.createEl("input", { type: "checkbox" });
+      this.vaultBrainToggle.checked = true;
+      vbLabel.createSpan({ text: "Use Vault Brain" });
+      this.vaultBrainLabel = vbLabel;
+      this.updateVaultBrainToggle();
+
+      this.contextNoteLabel = header.createDiv("horme-context-note-label");
+
+      // Multi-note context
+      const row3 = header.createDiv("horme-header-row");
+      const addNotesBtn = row3.createEl("button", { cls: "horme-header-btn", text: "+ Add notes" });
+      addNotesBtn.addEventListener("click", () => {
         if (this.selectedContextNotes.length >= 5) {
           new Notice("Horme: Maximum 5 context notes.");
           return;
         }
-        this.selectedContextNotes.push(file);
-        this.updateContextNotesLabel();
-      }).open();
-    });
-    const clearBtn = row3.createEl("button", { cls: "horme-header-btn", text: "Clear" });
-    clearBtn.addEventListener("click", () => this.clearChat());
-    this.contextNotesLabel = header.createDiv("horme-context-note-label");
-    this.contextToggle.addEventListener("change", async () => {
-      if (
-        this.contextToggle.checked &&
-        !this.plugin.isLocalProviderActive() &&
-        !this.plugin.settings.contextCloudWarningShown
-      ) {
-        const provider = this.plugin.settings.aiProvider.toUpperCase();
-        new GenericConfirmModal(
-          this.app,
-          `Privacy notice: Your current note's full text will be sent to ${provider}, a cloud provider. The content will leave your device. Do you want to continue?`,
-          async () => {
-            this.plugin.settings.contextCloudWarningShown = true;
-            await this.plugin.saveSettings();
-            this.updateContextNoteLabel();
-          },
-          () => {
-            this.contextToggle.checked = false;
-            this.updateContextNoteLabel();
+        new NotePickerModal(this.app, (file) => {
+          if (this.selectedContextNotes.some(f => f.path === file.path)) {
+            new Notice(`Already added: ${file.basename}`);
+            return;
           }
-        ).open();
-      } else {
-        this.updateContextNoteLabel();
-      }
-    });
+          if (this.selectedContextNotes.length >= 5) {
+            new Notice("Horme: Maximum 5 context notes.");
+            return;
+          }
+          this.selectedContextNotes.push(file);
+          this.updateContextNotesLabel();
+        }).open();
+      });
+      const clearBtn = row3.createEl("button", { cls: "horme-header-btn", text: "Clear" });
+      clearBtn.addEventListener("click", () => this.clearChat());
+      this.contextNotesLabel = header.createDiv("horme-context-note-label");
+      this.contextToggle.addEventListener("change", async () => {
+        if (
+          this.contextToggle.checked &&
+          !this.plugin.isLocalProviderActive() &&
+          !this.plugin.settings.contextCloudWarningShown
+        ) {
+          const provider = this.plugin.settings.aiProvider.toUpperCase();
+          new GenericConfirmModal(
+            this.app,
+            `Privacy notice: Your current note's full text will be sent to ${provider}, a cloud provider. The content will leave your device. Do you want to continue?`,
+            async () => {
+              this.plugin.settings.contextCloudWarningShown = true;
+              await this.plugin.saveSettings();
+              this.updateContextNoteLabel();
+            },
+            () => {
+              this.contextToggle.checked = false;
+              this.updateContextNoteLabel();
+            }
+          ).open();
+        } else {
+          this.updateContextNoteLabel();
+        }
+      });
 
-    this.leafChangeRef = this.app.workspace.on("active-leaf-change", () => this.updateContextNoteLabel());
-    this.registerEvent(this.leafChangeRef);
+      this.leafChangeRef = this.app.workspace.on("active-leaf-change", () => this.updateContextNoteLabel());
+      this.registerEvent(this.leafChangeRef);
 
-    /* Messages */
-    this.messagesEl = content.createDiv("horme-messages");
-    this.renderEmpty();
+      /* Messages */
+      this.messagesEl = content.createDiv("horme-messages");
+      this.renderEmpty();
 
-    /* Input Area */
-    const inputArea = content.createDiv("horme-input-area");
-    const inputContainer = inputArea.createDiv("horme-input-container");
+      /* Input Area */
+      const inputArea = content.createDiv("horme-input-area");
+      const inputContainer = inputArea.createDiv("horme-input-container");
 
-    this.inputEl = inputContainer.createEl("textarea", {
-      cls: "horme-input",
-      attr: { placeholder: "Ask Horme…", rows: "1" },
-    });
-    this.inputEl.addEventListener("input", () => this.autoGrow());
-    this.inputEl.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && !e.shiftKey) {
+      this.inputEl = inputContainer.createEl("textarea", {
+        cls: "horme-input",
+        attr: { placeholder: "Ask Horme…", rows: "1" },
+      });
+      this.inputEl.addEventListener("input", () => this.autoGrow());
+      this.inputEl.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          this.sendMessage();
+        }
+      });
+
+      const actionRow = inputContainer.createDiv("horme-input-actions");
+      
+      const uploadBtn = actionRow.createEl("button", { cls: "horme-upload-btn" });
+      setIcon(uploadBtn, "paperclip");
+      uploadBtn.title = "Upload document";
+      uploadBtn.addEventListener("click", (e) => {
+        this.pickDocument();
+      });
+
+      const imageBtn = actionRow.createEl("button", { cls: "horme-image-btn" });
+      setIcon(imageBtn, "image");
+      imageBtn.title = "Upload image";
+      imageBtn.addEventListener("click", (e) => {
+        this.pickImage();
+      });
+
+      actionRow.createDiv("horme-input-spacer");
+
+      this.sendBtn = actionRow.createEl("button", { cls: "horme-send-btn" });
+      setIcon(this.sendBtn, "send");
+      this.sendBtn.addEventListener("pointerdown", (e) => {
         e.preventDefault();
-        this.sendMessage();
-      }
-    });
+        if (this.isGenerating) this.stopGeneration();
+        else this.sendMessage();
+      });
 
-    const actionRow = inputContainer.createDiv("horme-input-actions");
-    
-    const uploadBtn = actionRow.createEl("button", { cls: "horme-upload-btn" });
-    setIcon(uploadBtn, "paperclip");
-    uploadBtn.title = "Upload document";
-    uploadBtn.addEventListener("click", (e) => {
-      this.pickDocument();
-    });
+      this.unregisterSettingsListener = this.plugin.onSettingsChange(async () => {
+        if (this.presetSelect) await this.refreshPresets();
+      });
 
-    const imageBtn = actionRow.createEl("button", { cls: "horme-image-btn" });
-    setIcon(imageBtn, "image");
-    imageBtn.title = "Upload image";
-    imageBtn.addEventListener("click", (e) => {
-      this.pickImage();
-    });
+      await this.refreshModels();
+      
+      // Mobile keyboard fix: anchor input to keyboard
+      const getDrawer = () => this.containerEl.closest('.workspace-drawer') as HTMLElement | null;
+      this.inputEl.addEventListener("focus", () => {
+        getDrawer()?.classList.add('horme-keyboard-open');
+        setTimeout(() => {
+          this.inputEl.scrollIntoView({ behavior: "smooth", block: "end" });
+          this.scrollToBottom();
+        }, 300);
+      });
+      this.inputEl.addEventListener("blur", () => {
+        setTimeout(() => {
+          getDrawer()?.classList.remove('horme-keyboard-open');
+        }, 100);
+      });
 
-    actionRow.createDiv("horme-input-spacer");
-
-    this.sendBtn = actionRow.createEl("button", { cls: "horme-send-btn" });
-    setIcon(this.sendBtn, "send");
-    this.sendBtn.addEventListener("pointerdown", (e) => {
-      e.preventDefault();
-      if (this.isGenerating) this.stopGeneration();
-      else this.sendMessage();
-    });
-
-    this.unregisterSettingsListener = this.plugin.onSettingsChange(async () => {
-      if (this.presetSelect) await this.refreshPresets();
-    });
-
-    await this.refreshModels();
-    
-    // Mobile keyboard fix: anchor input to keyboard
-    const getDrawer = () => this.containerEl.closest('.workspace-drawer') as HTMLElement | null;
-    this.inputEl.addEventListener("focus", () => {
-      getDrawer()?.classList.add('horme-keyboard-open');
-      setTimeout(() => {
-        this.inputEl.scrollIntoView({ behavior: "smooth", block: "end" });
-        this.scrollToBottom();
-      }, 300);
-    });
-    this.inputEl.addEventListener("blur", () => {
-      setTimeout(() => {
-        getDrawer()?.classList.remove('horme-keyboard-open');
-      }, 100);
-    });
-
-    this.updateConnectionStatus();
+      this.updateConnectionStatus();
+    } catch (e) {
+      this.plugin.handleError(e, "Chat Interface");
+    }
   }
 
   async onClose() {
     // Flush any pending history write before the view is destroyed
     await this.plugin.historyManager.flush();
     this.unregisterSettingsListener?.();
+    // Clean up global listener to prevent leak on repeated open/close
+    if (this.documentClickHandler) {
+      document.removeEventListener("click", this.documentClickHandler);
+      this.documentClickHandler = null;
+    }
     this.contentEl.empty();
   }
 
@@ -458,13 +625,76 @@ export class HormeChatView extends ItemView {
   private async sendMessage(regenerate = false) {
     if (this.isGenerating) return;
 
+    const suppressRAG = !!this.forcedSkillId;
+
+    // ── Forced skill execution ──────────────────────────────────────────────
+    // When a skill is armed from the dropdown, we bypass both the normal
+    // send flow AND Vault Brain RAG. The skill owns the context for this turn.
+    if (this.forcedSkillId) {
+      const skillId = this.forcedSkillId;
+      const query = this.inputEl.value.trim();
+      if (!query) return;
+
+      // Disarm immediately — pill and flag cleared before any async work
+      this.forcedSkillId = null;
+      this.containerEl.querySelector(".horme-skill-pill")?.remove();
+
+      // Render the user's message in the chat
+      this.addMessageBubble("user", query);
+      this.history.push({ role: "user", content: query });
+      this.inputEl.value = "";
+      this.autoGrow?.();
+
+      const loadingEl = this.showLoading(`Running skill...`);
+
+      try {
+        const skill = this.plugin.skillManager.getSkillById(skillId);
+        if (!skill) throw new Error(`Skill "${skillId}" not found.`);
+
+        // Map the user's raw input to the skill's primary parameter.
+        // All forced-execution skills have a single primary string param.
+        const primaryParam = skill.parameters[0]?.name ?? "query";
+        const result = await skill.execute({ [primaryParam]: query });
+
+        loadingEl.remove();
+
+        // All skills (built-in and custom) return fetched/computed data.
+        const systemInjection =
+          `RESULT FROM SKILL "${skill.name}":\n\n${result}\n\n` +
+          `Based on this result, provide a helpful response to the user's query: "${query}"`;
+
+        this.history.push({ role: "system", content: systemInjection });
+
+        // Build message array for the LLM synthesis call
+        const effectivePrompt = this.sessionSystemPromptOverride
+          ?? await this.plugin.getEffectiveSystemPrompt();
+        const msgs: any[] = [];
+        if (effectivePrompt) msgs.push({ role: "system", content: effectivePrompt });
+        for (const m of this.history) msgs.push({ role: m.role, content: m.content });
+
+        const model = this.modelSelect.value;
+        const synthLoadingEl = this.showLoading();
+
+        // suppressRAG = true: Vault Brain must not inject additional context
+        // when the user has explicitly chosen a skill as their information source.
+        await this.handleStreamingResponse(msgs, model, synthLoadingEl, null, false, 0, true, []);
+
+      } catch (e: any) {
+        loadingEl.remove();
+        this.plugin.handleError(e);
+      }
+
+      return; // Skip the rest of sendMessage()
+    }
+    // ── End forced skill execution ───────────────────────────────────────────
+
     let msgs: Array<{ role: string; content: string }>;
     let model: string;
     let ragWasInjected = false;
     
     // Capture context at start to prevent desync
     const mdLeaf = this.plugin.lastActiveMarkdownLeaf;
-    const initialSourcePath = mdLeaf?.view instanceof MarkdownView ? mdLeaf.view.file?.path : "";
+    const initialSourcePath = (mdLeaf?.view instanceof MarkdownView ? mdLeaf.view.file?.path : null) ?? null;
     let currentSources: string[] = [];
 
     if (regenerate && this.lastMsgs && this.lastModel) {
@@ -526,14 +756,14 @@ export class HormeChatView extends ItemView {
       const sessionRAGEnabled = this.vaultBrainToggle ? this.vaultBrainToggle.checked : true;
       let relevantChunks: string[] = [];
 
-      if (this.plugin.settings.vaultBrainEnabled && canUseRAG && sessionRAGEnabled) {
+      if (!suppressRAG && this.plugin.settings.vaultBrainEnabled && canUseRAG && sessionRAGEnabled) {
         relevantChunks = await this.plugin.vaultIndexer.search(text);
         if (relevantChunks.length > 0) {
           // search() returns chunks sorted best-first (highest score first).
           // We must preserve that ordering when merging into the rolling context,
           // otherwise slice() discards the most relevant results and keeps the worst.
           //
-          // Strategy: current query\'s results go first (score-ordered), then
+          // Strategy: current query's results go first (score-ordered), then
           // fill remaining slots with previous context for multi-turn coherence.
           const prevContext = this.rollingRAGContext.filter(c => !relevantChunks.includes(c));
           this.rollingRAGContext = [...relevantChunks, ...prevContext].slice(0, 20);
@@ -572,8 +802,15 @@ export class HormeChatView extends ItemView {
       const currentMsg: any = { role: "user", content: text };
       
       if (this.uploadedImages.length > 0) {
-        currentMsg.images = [...this.uploadedImages];
-        this.uploadedImages = [];
+        if (!this.plugin.isLocalProviderActive()) {
+          // Cloud providers don't support Ollama-style base64 images.
+          // Clear the data so it never leaves the device.
+          new Notice("⚠ Image upload is only supported with local providers (Ollama / LM Studio). Images have been removed from this message.");
+          this.uploadedImages = [];
+        } else {
+          currentMsg.images = [...this.uploadedImages];
+          this.uploadedImages = [];
+        }
       }
       if (this.uploadedAudio) {
         currentMsg.audio = this.uploadedAudio;
@@ -592,7 +829,7 @@ export class HormeChatView extends ItemView {
           msgs.push({ role: m.role, content: m.content });
         }
         // Attach media to the latest user message in the payload
-        const lastMsg = msgs[msgs.length - 1];
+        const lastMsg = msgs[msgs.length - 1] as ChatMessage;
         if (currentMsg.images) lastMsg.images = currentMsg.images;
         if (currentMsg.audio) lastMsg.audio = currentMsg.audio;
       }
@@ -604,12 +841,21 @@ export class HormeChatView extends ItemView {
     setIcon(this.sendBtn, "square");
     this.sendBtn.classList.add("horme-stop-btn");
     const loadingEl = this.showLoading();
-    this.handleStreamingResponse(msgs, model, loadingEl, initialSourcePath, ragWasInjected, 0, currentSources);
+    this.handleStreamingResponse(msgs, model, loadingEl, initialSourcePath, ragWasInjected, 0, false, currentSources);
   }
 
   private static readonly MAX_SKILL_DEPTH = 5;
 
-  private async handleStreamingResponse(msgs: any[], model: string, loadingEl: HTMLElement, initialSourcePath: string, suppressVaultSkill = false, skillDepth = 0, sources: string[] = []) {
+  private async handleStreamingResponse(
+    msgs: any[],
+    model: string,
+    loadingEl: HTMLElement | null,
+    initialSourcePath: string | null,
+    suppressVaultSkill: boolean,
+    skillDepth: number,
+    suppressRAG = false,
+    sources: string[] = []
+  ) {
     let bubbleEl: HTMLElement | null = null;
     let fullContent = "";
     let fullReasoning = "";
@@ -660,25 +906,29 @@ export class HormeChatView extends ItemView {
                                 bubbleEl = this.addMessageBubble("assistant", "");
                             }
                             
-                            if (!bubbleEl) return;
+                            // Capture in a local const so TypeScript's narrowing works correctly
+                            // across the closure boundary. Without this, TypeScript cannot track
+                            // that bubbleEl was assigned above and types it as `never` after the guard.
+                            const el = bubbleEl;
+                            if (!el) return;
                             
                             if (reasoning) {
                                 if (!reasoningEl) {
-                                    reasoningEl = bubbleEl.createEl("details", { cls: "horme-reasoning-details" });
+                                    reasoningEl = el.createEl("details", { cls: "horme-reasoning-details" });
                                     reasoningEl.createEl("summary", { text: "Reasoning Process", cls: "horme-reasoning-summary" });
                                 }
                                 fullReasoning += reasoning;
                                 let reasoningBody = reasoningEl.querySelector(".horme-reasoning-body");
                                 if (!reasoningBody) reasoningBody = reasoningEl.createDiv("horme-reasoning-body");
-                                reasoningBody.textContent = fullReasoning;
+                                (reasoningBody as HTMLElement).textContent = fullReasoning;
                             }
 
                             if (content) {
                                 fullContent += content;
                                 // If there was reasoning, ensure the content is outside/after it
-                                let contentArea = bubbleEl.querySelector(".horme-content-area");
-                                if (!contentArea) contentArea = bubbleEl.createDiv("horme-content-area");
-                                contentArea.textContent = fullContent;
+                                let contentArea = el.querySelector(".horme-content-area");
+                                if (!contentArea) contentArea = el.createDiv("horme-content-area");
+                                (contentArea as HTMLElement).textContent = fullContent;
                             }
                             this.scrollToBottom();
                         });
@@ -693,20 +943,21 @@ export class HormeChatView extends ItemView {
       this.activeReader = null;
       
       if (bubbleEl) {
+          const el = bubbleEl as HTMLElement;
           // Re-render the final content with Markdown
-          const contentArea = bubbleEl.querySelector(".horme-content-area") as HTMLElement;
+          const contentArea = el.querySelector(".horme-content-area") as HTMLElement;
           if (contentArea) {
               contentArea.empty();
               await MarkdownRenderer.render(this.app, fullContent, contentArea, initialSourcePath || "", this);
           } else {
               // Fallback if only content was received without special area
-              bubbleEl.empty();
-              if (reasoningEl) bubbleEl.appendChild(reasoningEl);
-              const finalArea = bubbleEl.createDiv("horme-content-area");
+              el.empty();
+              if (reasoningEl) el.appendChild(reasoningEl);
+              const finalArea = el.createDiv("horme-content-area");
               await MarkdownRenderer.render(this.app, fullContent, finalArea, initialSourcePath || "", this);
           }
-          this.addAssistantActions(bubbleEl, fullContent);
-          this.renderSources(bubbleEl, sources);
+          this.addAssistantActions(el, fullContent);
+          this.renderSources(el, sources);
       }
 
       const finalMsg = fullReasoning ? `> [!thought]\n> ${fullReasoning.replace(/\n/g, "\n> ")}\n\n${fullContent}` : fullContent;
@@ -716,9 +967,40 @@ export class HormeChatView extends ItemView {
           // --- Skill Execution Agent Loop ---
           const skillCalls = this.plugin.skillManager.parseSkillCalls(fullContent);
           if (skillCalls.length > 0) {
+            // Clean the assistant bubble: strip raw <call:...> XML and leave
+            // only the model's natural language text (if any).
+            if (bubbleEl) {
+              const bEl = bubbleEl as HTMLElement;
+              const contentArea = bEl.querySelector(".horme-content-area") as HTMLElement;
+              if (contentArea) {
+                const cleanedContent = this.stripSkillCallXml(fullContent);
+                contentArea.empty();
+                if (cleanedContent) {
+                  await MarkdownRenderer.render(this.app, cleanedContent, contentArea, initialSourcePath || "", this);
+                } else {
+                  // Nothing left after stripping — remove the empty bubble entirely
+                  bEl.remove();
+                  // Also remove the actions row (Copy/Regen/Save) that was appended after it
+                  const actionsRow = this.messagesEl.querySelector(".horme-save-wrapper:last-child");
+                  actionsRow?.remove();
+                }
+              }
+            }
+
             for (const call of skillCalls) {
               const skillName = call.skillId;
-              const skillLoading = this.showLoading(`Skill: ${skillName}...`);
+              const skill = this.plugin.skillManager.getSkillById(skillName);
+              const displayName = skill?.name || skillName;
+              const summaryText = this.formatSkillSummary(displayName, call.parameters);
+
+              const skillLoading = this.showLoading(displayName);
+              const loadingSpan = skillLoading.querySelector("span");
+              if (loadingSpan) {
+                const iconEl = document.createElement("span");
+                iconEl.className = "horme-skill-loading-icon";
+                setIcon(iconEl, this.getSkillIcon(skillName));
+                loadingSpan.insertBefore(iconEl, loadingSpan.firstChild);
+              }
               const result = await this.plugin.skillManager.executeSkill(call);
               skillLoading.remove();
 
@@ -731,7 +1013,10 @@ export class HormeChatView extends ItemView {
               // Re-render the "system" message for the user to see what happened (as a technical detail)
               const resultBubble = this.messagesEl.createDiv("horme-msg horme-msg-assistant");
               const details = resultBubble.createEl("details", { cls: "horme-reasoning-details" });
-              details.createEl("summary", { text: `Used Skill: ${skillName}`, cls: "horme-reasoning-summary" });
+              const summaryEl = details.createEl("summary", { cls: "horme-reasoning-summary" });
+              const summaryIcon = summaryEl.createSpan({ cls: "horme-skill-summary-icon" });
+              setIcon(summaryIcon, this.getSkillIcon(skillName));
+              summaryEl.appendText(` ${summaryText}`);
               const body = details.createDiv("horme-reasoning-body");
               body.textContent = result;
               this.scrollToBottom();
@@ -751,7 +1036,7 @@ export class HormeChatView extends ItemView {
               new Notice("Horme: Maximum skill depth reached. Stopping skill loop.");
             } else {
               const nextLoading = this.showLoading();
-              await this.handleStreamingResponse(nextMsgs, model, nextLoading, initialSourcePath, false, skillDepth + 1);
+              await this.handleStreamingResponse(nextMsgs, model, nextLoading, initialSourcePath, false, skillDepth + 1, false, []);
             }
             return;
           }
@@ -912,7 +1197,19 @@ export class HormeChatView extends ItemView {
       if (m.role === "user" || m.role === "assistant") {
         const bubble = this.addMessageBubble(m.role, "", m.images);
         if (m.role === "assistant") {
-          await MarkdownRenderer.render(this.app, m.content, bubble, "", this);
+          // Render into the .horme-content-area div (created by addMessageBubble)
+          // to match the structure used by the streaming path.
+          // Strip any raw <call:...> skill XML that was stored in history.
+          const displayContent = this.stripSkillCallXml(m.content);
+          const contentArea = bubble.querySelector(".horme-content-area") as HTMLElement;
+          if (contentArea) {
+            contentArea.empty();
+            if (displayContent) {
+              await MarkdownRenderer.render(this.app, displayContent, contentArea, "", this);
+            }
+          } else if (displayContent) {
+            await MarkdownRenderer.render(this.app, displayContent, bubble, "", this);
+          }
           this.addAssistantActions(bubble, m.content);
         } else {
           const contentArea = bubble.querySelector(".horme-content-area") as HTMLElement;
@@ -981,14 +1278,48 @@ export class HormeChatView extends ItemView {
     this.inputEl.style.height = Math.min(this.inputEl.scrollHeight, 140) + "px";
   }
 
+  /**
+   * Strips raw skill call XML (e.g. `<call:wikipedia>{...}</call>`) from content
+   * so the user sees clean text instead of the model's internal tool invocations.
+   */
+  private stripSkillCallXml(content: string): string {
+    return content.replace(/<call:[^>]+>[\s\S]*?<\/call>/g, "").trim();
+  }
+
+  /**
+   * Builds a human-readable summary for the skill result box.
+   * Adds contextual details like language names where applicable.
+   */
+  private static readonly LANG_NAMES: Record<string, string> = {
+    en: "English", es: "Spanish", fr: "French", de: "German",
+    it: "Italian", pt: "Portuguese", zh: "Chinese", ja: "Japanese",
+    ko: "Korean", ru: "Russian", nl: "Dutch", ar: "Arabic",
+    tr: "Turkish", hi: "Hindi", pl: "Polish", sv: "Swedish",
+    da: "Danish", fi: "Finnish", no: "Norwegian", cs: "Czech",
+    el: "Greek", he: "Hebrew", th: "Thai", vi: "Vietnamese",
+    uk: "Ukrainian", ro: "Romanian", hu: "Hungarian", ca: "Catalan",
+  };
+
+  private formatSkillSummary(skillName: string, params: any): string {
+    // Add language detail for skills that use it (Wikipedia, Wiktionary)
+    if (params?.language) {
+      const code = String(params.language).toLowerCase().slice(0, 2);
+      const langName = HormeChatView.LANG_NAMES[code] || params.language.toUpperCase();
+      return `Skill used: ${skillName} (${langName})`;
+    }
+    return `Skill used: ${skillName}`;
+  }
+
   private processChunk(line: string, onContent: (c: string, r?: string) => void) {
     const raw = line.trim();
     if (!raw || raw === "data: [DONE]") return;
     try {
-      const data = JSON.parse(raw.startsWith("data: ") ? raw.slice(6) : raw);
+      // The upstream brace-counting parser already extracts clean JSON objects,
+      // so no SSE "data: " prefix stripping is needed here.
+      const data = JSON.parse(raw);
       const content = data.message?.content || 
                     data.choices?.[0]?.delta?.content || 
-                    data.delta?.text || 
+                    data.delta?.text ||
                     data.candidates?.[0]?.content?.parts?.[0]?.text || "";
       
       const reasoning = data.choices?.[0]?.delta?.reasoning_content || 

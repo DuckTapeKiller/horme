@@ -46,6 +46,11 @@ export const DEFAULT_SETTINGS: HormeSettings = {
   summaryField: "summary",
   summaryLanguage: "Español",
   allowCloudRAG: false,
+  tagShadowingEnabled: true,
+  tagShadowingLanguage: "English",
+  tagTranslationModel: "",
+  tagTranslationProvider: "ollama",
+  customSkills: [],
 };
 
 export const PROVIDER_MODELS: Record<string, string[]> = {

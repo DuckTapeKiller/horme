@@ -19,7 +19,3 @@ export interface SkillCall {
   parameters: any;
 }
 
-export interface SkillResult {
-  skillId: string;
-  result: string;
-}

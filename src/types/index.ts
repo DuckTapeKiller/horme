@@ -2,6 +2,17 @@ import { TFile, WorkspaceLeaf } from "obsidian";
 
 export type AiProvider = "ollama" | "lmstudio" | "claude" | "gemini" | "openai" | "groq" | "openrouter";
 
+export interface CustomSkillDefinition {
+  id: string;           // generated slug: "custom_" + sanitized name
+  name: string;         // display name shown in dropdown
+  description: string;  // one-line description shown in dropdown
+  url: string;          // URL template — use {{query}} as placeholder
+  method: "GET" | "POST";
+  headers: Record<string, string>;  // optional request headers
+  body: string;         // POST body template — use {{query}} as placeholder
+  responsePath: string; // dot-path to extract from JSON response (e.g. "results[0].text")
+}
+
 export interface HormeSettings {
   aiProvider: AiProvider;
   ollamaBaseUrl: string;
@@ -39,17 +50,23 @@ export interface HormeSettings {
   summaryField: string;
   summaryLanguage: string;
   allowCloudRAG: boolean;
+  tagShadowingEnabled: boolean;
+  tagShadowingLanguage: string;
+  tagTranslationModel: string;
+  tagTranslationProvider: "ollama" | "lmstudio";
+  customSkills: CustomSkillDefinition[];
 }
 
 export interface SavedConversation {
   id: string;
   title: string;
   timestamp: number;
-  messages: Array<{ role: string; content: string; images?: string[] }>;
+  messages: ChatMessage[];
 }
 
 export interface ChatMessage {
   role: "user" | "assistant" | "system";
   content: string;
-  images?: string[]
+  images?: string[];
+  audio?: string | null;
 }

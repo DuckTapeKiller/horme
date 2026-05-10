@@ -148,6 +148,7 @@ Manage large tag collections (3,000+ tags) with ease using the **Hybrid Tag Sugg
 
 - **Keyword + Semantic:** Combines traditional word-matching with mathematical topic-matching. It finds specific names (like "Hernán Cortés") AND broad themes (like "Spanish History") simultaneously.
 - **Intelligent Candidates:** From a collection of thousands, it selects the most relevant candidates and lets your local LLM make the final, precise selection.
+- **Shadow Tagging (Bilingual):** Translate your tags automatically during indexing. Keep your vault in one language (e.g. Spanish `#pájaros`) but retrieve them using another (e.g. English "birds"). This is fully decoupled from the chat model, allowing you to use a dedicated local model just for translations. This does not affect your real tags in any way. It is just for the index. 
 - **Tag Index:** Dedicated tag brain that maps your entire hierarchy for instant retrieval. Use `Rebuild Tag Index` in settings to refresh.
 - **Tag Button:** Quick access via the "Tags" button in the chat header.
 
@@ -187,6 +188,16 @@ Horme extends the LLM with modular skills that it can invoke autonomously during
 | **Vault Linker** | &#128218; Index | Finds semantically related notes within your vault. Privacy-guarded — only available to local providers (or with explicit cloud opt-in). |
 | **Taxonomy Scholar** | &#128218; Index | Retrieves the full list of existing tags to ensure consistent tagging. |
 | **Grammar Scholar** | &#128218; Index | Consults your local grammar and orthography manuals for precision checks on syntax, false friends, and orthotypography. |
+
+#### Custom HTTP Skills
+Beyond the built-in skills, you can create your own HTTP-based skills to connect Horme to any REST API (local or public). You just configure the URL, method, headers, and a response path.
+
+**Example: Open Library Book Search**
+- **Method:** `GET`
+- **URL:** `https://openlibrary.org/search.json?q={{query}}&limit=3`
+- **Response Path:** `docs`
+
+When armed, typing a query (e.g., "Don Quixote") replaces the `{{query}}` placeholder, makes the request, extracts the `docs` array, and injects it directly into the AI's context so it can answer your question using real-time data.
 
 ---
 

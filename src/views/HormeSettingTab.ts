@@ -1,12 +1,14 @@
-import { App, PluginSettingTab, Setting, Notice, setIcon, requestUrl } from "obsidian";
+import { App, PluginSettingTab, Setting, Notice, setIcon, requestUrl, MarkdownView, TFile, TFolder } from "obsidian";
 import HormePlugin from "../../main";
 import { DEFAULT_SETTINGS, PROVIDER_MODELS } from "../constants";
 import { AiProvider } from "../types";
 import { FileSuggest, FolderSuggest, FileOrFolderSuggest } from "../utils/Suggest";
 import { GenericConfirmModal } from "../modals/GenericConfirmModal";
+import { CustomSkillModal } from "../modals/CustomSkillModal";
 
 export class HormeSettingTab extends PluginSettingTab {
   plugin: HormePlugin;
+  private expandedSections: Record<string, boolean> = {};
 
   constructor(app: App, plugin: HormePlugin) {
     super(app, plugin);
@@ -243,7 +245,8 @@ export class HormeSettingTab extends PluginSettingTab {
 
     // AI PROVIDER
     const aiSection = containerEl.createEl("details", { cls: "horme-settings-section" });
-    aiSection.open = false;
+    aiSection.open = this.expandedSections["ai_providers"] ?? false;
+    aiSection.ontoggle = () => this.expandedSections["ai_providers"] = aiSection.open;
     aiSection.createEl("summary", { text: "◈ AI Providers" });
 
     new Setting(aiSection)
@@ -342,7 +345,8 @@ export class HormeSettingTab extends PluginSettingTab {
 
     // GENERAL
     const generalSection = containerEl.createEl("details", { cls: "horme-settings-section" });
-    generalSection.open = false;
+    generalSection.open = this.expandedSections["general"] ?? false;
+    generalSection.ontoggle = () => this.expandedSections["general"] = generalSection.open;
     generalSection.createEl("summary", { text: "◈ General Settings" });
     const tempSetting = new Setting(generalSection).setName("Temperature")
       .setDesc(`Default: 0.3 | Current: ${this.plugin.settings.temperature}`);
@@ -357,7 +361,8 @@ export class HormeSettingTab extends PluginSettingTab {
 
     // SYSTEM PROMPT & PRESETS
     const presetSection = containerEl.createEl("details", { cls: "horme-settings-section" });
-    presetSection.open = false;
+    presetSection.open = this.expandedSections["presets"] ?? false;
+    presetSection.ontoggle = () => this.expandedSections["presets"] = presetSection.open;
     presetSection.createEl("summary", { text: "◈ System Prompt & Presets" });
 
     new Setting(presetSection)
@@ -411,7 +416,8 @@ export class HormeSettingTab extends PluginSettingTab {
 
     // PLATFORM OVERRIDES
     const platformSection = containerEl.createEl("details", { cls: "horme-settings-section" });
-    platformSection.open = false;
+    platformSection.open = this.expandedSections["platform"] ?? false;
+    platformSection.ontoggle = () => this.expandedSections["platform"] = platformSection.open;
     platformSection.createEl("summary", { text: "◈ Platform Overrides" });
 
     new Setting(platformSection)
@@ -467,7 +473,8 @@ export class HormeSettingTab extends PluginSettingTab {
 
     // --- Grammar Scholar Index ---
     const grammarSection = containerEl.createEl("details", { cls: "horme-settings-section" });
-    grammarSection.open = false;
+    grammarSection.open = this.expandedSections["grammar"] ?? false;
+    grammarSection.ontoggle = () => this.expandedSections["grammar"] = grammarSection.open;
     grammarSection.createEl("summary", { text: "◈ Grammar Scholar Index" });
 
     new Setting(grammarSection)
@@ -502,7 +509,8 @@ export class HormeSettingTab extends PluginSettingTab {
 
     // --- Frontmatter Summary ---
     const summarySection = containerEl.createEl("details", { cls: "horme-settings-section" });
-    summarySection.open = false;
+    summarySection.open = this.expandedSections["summary"] ?? false;
+    summarySection.ontoggle = () => this.expandedSections["summary"] = summarySection.open;
     summarySection.createEl("summary", { text: "◈ Frontmatter Summary" });
 
     new Setting(summarySection)
@@ -523,7 +531,8 @@ export class HormeSettingTab extends PluginSettingTab {
 
     // --- Tag Taxonomy Index ---
     const tagSection = containerEl.createEl("details", { cls: "horme-settings-section" });
-    tagSection.open = false;
+    tagSection.open = this.expandedSections["tags"] ?? false;
+    tagSection.ontoggle = () => this.expandedSections["tags"] = tagSection.open;
     tagSection.createEl("summary", { text: "◈ Tag Taxonomy Index" });
 
     new Setting(tagSection)
@@ -547,7 +556,8 @@ export class HormeSettingTab extends PluginSettingTab {
 
     // --- Vault Brain (Local RAG) ---
     const ragSection = containerEl.createEl("details", { cls: "horme-settings-section" });
-    ragSection.open = false;
+    ragSection.open = this.expandedSections["vault_brain"] ?? false;
+    ragSection.ontoggle = () => this.expandedSections["vault_brain"] = ragSection.open;
     ragSection.createEl("summary", { text: "◈ Vault Brain" });
     
     const isLocal = this.plugin.settings.aiProvider === "ollama" || this.plugin.settings.aiProvider === "lmstudio";
@@ -619,6 +629,81 @@ export class HormeSettingTab extends PluginSettingTab {
           this.displayPreserveScroll();
         }
       );
+      
+      new Setting(ragSection)
+        .setName("Bilingual Tag Shadowing")
+        .setDesc("Automatically translates your tags into a second language during indexing. This 'shadows' your tags so that search queries in either language will find the note. (Note: This only affects the AI Index; it will never modify your actual note files or tags.)")
+        .addToggle(toggle => toggle
+          .setValue(this.plugin.settings.tagShadowingEnabled)
+          .onChange(async v => {
+            this.plugin.settings.tagShadowingEnabled = v;
+            await this.plugin.saveSettings();
+            this.displayPreserveScroll();
+          })
+        );
+
+      if (this.plugin.settings.tagShadowingEnabled) {
+        new Setting(ragSection)
+          .setName("Shadowing Target Language")
+          .setDesc("The language that tags will be translated into.")
+          .addDropdown(drp => drp
+            .addOption("Spanish", "Spanish")
+            .addOption("English", "English")
+            .addOption("German", "German")
+            .addOption("French", "French")
+            .addOption("Italian", "Italian")
+            .addOption("Portuguese", "Portuguese")
+            .addOption("Chinese", "Chinese")
+            .addOption("Japanese", "Japanese")
+            .addOption("Korean", "Korean")
+            .addOption("Russian", "Russian")
+            .addOption("Dutch", "Dutch")
+            .addOption("Arabic", "Arabic")
+            .addOption("Turkish", "Turkish")
+            .addOption("Hindi", "Hindi")
+            .addOption("Polish", "Polish")
+            .setValue(this.plugin.settings.tagShadowingLanguage)
+            .onChange(async v => {
+              this.plugin.settings.tagShadowingLanguage = v;
+              await this.plugin.saveSettings();
+            })
+          );
+
+        new Setting(ragSection)
+          .setName("Tag Translation Provider")
+          .setDesc("The local provider to use for tag translation.")
+          .addDropdown(drp => drp
+            .addOption("ollama", "Ollama")
+            .addOption("lmstudio", "LM Studio")
+            .setValue(this.plugin.settings.tagTranslationProvider)
+            .onChange(async v => {
+              this.plugin.settings.tagTranslationProvider = v as "ollama" | "lmstudio";
+              await this.plugin.saveSettings();
+              this.displayPreserveScroll();
+            })
+          );
+
+        this.buildModelCombo(
+          new Setting(ragSection)
+            .setName("Tag Translation Model")
+            .setDesc("Optional: Specific model for translations. If empty, uses the active Chat Model (as long as it's local)."),
+          "horme-tag-trans-models",
+          async () => {
+            if (this.plugin.settings.tagTranslationProvider === "lmstudio") return [];
+            try {
+              const res = await fetch(`${this.plugin.settings.ollamaBaseUrl}/api/tags`);
+              const data = await res.json();
+              return data.models?.map((m: any) => m.name) || [];
+            } catch { return []; }
+          },
+          this.plugin.settings.tagTranslationModel,
+          async v => {
+            this.plugin.settings.tagTranslationModel = v;
+            await this.plugin.saveSettings();
+            this.displayPreserveScroll();
+          }
+        );
+      }
 
       new Setting(ragSection)
         .setName("Index Control")
@@ -631,6 +716,58 @@ export class HormeSettingTab extends PluginSettingTab {
                this.displayPreserveScroll();
              });
         });
+
+      const rebuildNotice = ragSection.createDiv("horme-settings-muted");
+      rebuildNotice.textContent = "Recommended: A full rebuild is required to enable bilingual tag support for existing notes.";
     }
+
+    // --- Custom Skills ---
+    const customSkillsSection = containerEl.createEl("details", { cls: "horme-settings-section" });
+    customSkillsSection.open = this.expandedSections["custom_skills"] ?? false;
+    customSkillsSection.ontoggle = () => this.expandedSections["custom_skills"] = customSkillsSection.open;
+    customSkillsSection.createEl("summary", { text: "◈ Custom Skills" });
+
+    const renderCustomSkills = (container: HTMLElement) => {
+      container.empty();
+      const skills = this.plugin.settings.customSkills;
+
+      if (skills.length === 0) {
+        container.createEl("p", {
+          cls: "horme-settings-muted",
+          text: "No custom skills yet. Add one below."
+        });
+      }
+
+      for (const skill of skills) {
+        new Setting(container)
+          .setName(skill.name)
+          .setDesc(skill.description)
+          .addButton(btn => btn
+            .setIcon("trash")
+            .setTooltip("Delete skill")
+            .onClick(async () => {
+              this.plugin.settings.customSkills =
+                this.plugin.settings.customSkills.filter(s => s.id !== skill.id);
+              await this.plugin.saveSettings(); // triggers loadCustomSkills() via main.ts
+              renderCustomSkills(listContainer);
+            })
+          );
+      }
+    };
+
+    const listContainer = customSkillsSection.createDiv();
+    renderCustomSkills(listContainer);
+
+    new Setting(customSkillsSection)
+      .addButton(btn => btn
+        .setButtonText("+ Add Custom Skill")
+        .onClick(() => {
+          new CustomSkillModal(this.app, this.plugin, async (def) => {
+            this.plugin.settings.customSkills.push(def);
+            await this.plugin.saveSettings(); // triggers loadCustomSkills() via main.ts
+            renderCustomSkills(listContainer);
+          }).open();
+        })
+      );
   }
 }

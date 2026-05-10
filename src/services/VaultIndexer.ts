@@ -2,6 +2,8 @@ import { TFile, Notice, normalizePath } from "obsidian";
 import HormePlugin from "../../main";
 import { HormeErrorModal } from "../modals/HormeErrorModal";
 import { compressEmbedding, decompressEmbedding, cosineSimilarity, getModelPrefixes } from "../utils/VectorUtils";
+import { OllamaProvider } from "../providers/OllamaProvider";
+import { LmStudioProvider } from "../providers/LmStudioProvider";
 
 interface IndexEntry {
   path: string;
@@ -27,6 +29,10 @@ export class VaultIndexer {
   private pathIndex: Map<string, IndexEntry[]> = new Map();
   public indexedModel: string = "";
   private indexPath: string;
+  // Cache of Spanish tag string → bilingual tag string.
+  // Built during indexing to avoid redundant LLM calls for notes sharing the same tags.
+  // Cleared when the plugin unloads (in-memory only — intentionally not persisted).
+  private tagTranslationCache: Map<string, string> = new Map();
 
   /** O(1) lookup of entries by path */
   private getEntriesForPath(path: string): IndexEntry[] {
@@ -309,7 +315,69 @@ export class VaultIndexer {
     return stack.join(' > ');
   }
 
-  private extractFrontmatterSummary(content: string, file: TFile): { fullText: string; summaryOnly: string; tagsOnly: string } | null {
+  /**
+   * Translates a Spanish tag string to English and returns a bilingual
+   * combined string. Results are cached so notes sharing the same tag
+   * set only pay the LLM cost once per rebuild session.
+   *
+   * Falls back silently to the original Spanish string on any error —
+   * the index still works, just without the bilingual enrichment.
+   */
+  private async translateTagsBilingually(spanishTags: string): Promise<string> {
+    if (!this.plugin.settings.tagShadowingEnabled || !spanishTags.trim()) return spanishTags;
+
+    // Cache hit — no LLM call needed
+    const cached = this.tagTranslationCache.get(spanishTags);
+    if (cached !== undefined) return cached;
+
+    try {
+      const settings = this.plugin.settings;
+      
+      // Resolve provider and model based on specific tag settings or global fallback
+      let provider;
+      let model = settings.tagTranslationModel || this.plugin.aiGateway.getCurrentModel();
+
+      // If user specified a specific provider for tags, use it.
+      // Otherwise, fall back to whatever is active in chat ONLY IF it is local.
+      if (settings.tagTranslationModel) {
+        if (settings.tagTranslationProvider === "lmstudio") {
+          provider = new LmStudioProvider(settings.lmStudioUrl, settings.temperature);
+        } else {
+          provider = new OllamaProvider(settings.ollamaBaseUrl, settings.temperature);
+        }
+      } else {
+        // Fallback to active chat provider IF it is local. 
+        // If chat is cloud, this will fail (caught below) because indexer must be local.
+        provider = this.plugin.aiGateway.getProvider();
+      }
+
+      const result = await provider.generate(
+        `Translate these tags to ${settings.tagShadowingLanguage}. Return ONLY a comma-separated list ` +
+        `of equivalents with no explanation, no numbering, no quotes.\n` +
+        `Tags: ${spanishTags}`,
+        "", // no system prompt needed
+        model
+      );
+
+      const translatedTags = result.trim().replace(/\.$/, "");
+      // Combine: Spanish original + translation
+      const bilingual = `${spanishTags}, ${translatedTags}`;
+      this.tagTranslationCache.set(spanishTags, bilingual);
+      return bilingual;
+    } catch (e) {
+      // Factual Fallback: report the specific error to the dashboard but continue indexing
+      this.plugin.diagnosticService.report(
+        "Vault Brain", 
+        `Tag translation failed (Model: ${this.plugin.settings.tagTranslationModel || "Chat Default"}). ` +
+        `Falling back to original tags. Error: ${e.message}`,
+        "warning"
+      );
+      this.tagTranslationCache.set(spanishTags, spanishTags);
+      return spanishTags;
+    }
+  }
+
+  private async extractFrontmatterSummary(content: string, file: TFile): Promise<{ fullText: string; summaryOnly: string; tagsOnly: string } | null> {
     // Extract YAML frontmatter block (support both LF and CRLF)
     const fmMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
     if (!fmMatch) return null;
@@ -328,6 +396,13 @@ export class VaultIndexer {
         .map(l => l.replace(/^\s*-\s*/, "").replace(/[/_]/g, " ").trim())
         .filter(t => t.length > 0);
       if (tags.length > 0) tagsOnly = tags.join(", ");
+    }
+
+    // Shadow Tagging: translate Spanish tags to English and store both.
+    // This allows English queries to find Spanish-tagged notes via both
+    // the keyword bonus and the embedding vector.
+    if (tagsOnly) {
+      tagsOnly = await this.translateTagsBilingually(tagsOnly);
     }
 
     // Build the full semantic string for embedding (with nomic prefix)
@@ -355,9 +430,17 @@ export class VaultIndexer {
     }
     this.isIndexing = true;
     
+    // Clear the translation cache at the start of each full rebuild.
+    // This ensures stale translations don't persist if the user changes
+    // the active model or settings between rebuilds.
+    this.tagTranslationCache.clear();
+
     try {
-      if (!this.plugin.isLocalProviderActive()) {
-        new Notice("Vault Brain: Privacy lock active. Indexing aborted.");
+      // Decoupled Privacy Guard: Indexing is allowed if the embedding model is local (Ollama).
+      // Summaries are extracted via regex (local).
+      // Tag translation will be handled locally or reported as a warning if it fails.
+      if (!this.plugin.settings.ragEmbeddingModel) {
+        new Notice("Vault Brain: No embedding model selected.");
         return;
       }
       if (!this.plugin.settings.vaultBrainEnabled) {
@@ -400,15 +483,20 @@ export class VaultIndexer {
           // Extract heading structure for heading-aware chunking
           const headings = this.extractHeadings(content);
 
+          const fmData = await this.extractFrontmatterSummary(content, file);
+          const bilingualTags = fmData?.tagsOnly || "";
+
           // Build embedding texts with search_document prefix and heading context
           const embeddingTexts = validChunks.map(c => {
             const hp = this.getHeadingPathAtOffset(headings, c.start);
             const docPrefix = getModelPrefixes(this.plugin.settings.ragEmbeddingModel).document;
-            return `${docPrefix}${file.basename}${hp ? ' > ' + hp : ''}\n\n${c.text}`;
+            // Prepend bilingual tags to every chunk so the vector captures both languages.
+            // Tags are brief (30–80 chars) and won't dilute the body content meaningfully.
+            const tagLine = bilingualTags ? `Tags: ${bilingualTags}\n` : "";
+            return `${docPrefix}${file.basename}${hp ? ' > ' + hp : ''}\n${tagLine}\n${c.text}`;
           });
 
           // Add a dedicated frontmatter summary embedding (offset 0,0 = signals summary entry)
-          const fmData = this.extractFrontmatterSummary(content, file);
           const hasFmSummary = fmData !== null;
           if (hasFmSummary) embeddingTexts.unshift(fmData.fullText);
 
@@ -442,7 +530,8 @@ export class VaultIndexer {
                 chunkEnd: validChunks[j].end,
                 embedding: emb,
                 mtime: file.stat.mtime,
-                ...(hp ? { headingPath: hp } : {})
+                ...(hp ? { headingPath: hp } : {}),
+                ...(bilingualTags ? { tagsText: bilingualTags } : {})
               });
             }
           }
@@ -503,7 +592,8 @@ export class VaultIndexer {
    * Enqueues a file for indexing.
    */
   async enqueueIndex(file: TFile) {
-    if (!this.plugin.isLocalProviderActive() || !this.plugin.settings.vaultBrainEnabled) {
+    const canIndex = this.plugin.isLocalProviderActive() || this.plugin.settings.allowCloudRAG;
+    if (!canIndex || !this.plugin.settings.vaultBrainEnabled) {
       return;
     }
     
@@ -534,7 +624,8 @@ export class VaultIndexer {
     try {
       while (this.indexingQueue.length > 0) {
         // Re-check on every iteration — provider may have changed since enqueue
-        if (!this.plugin.isLocalProviderActive() || !this.plugin.settings.vaultBrainEnabled) {
+        const canStillIndex = this.plugin.isLocalProviderActive() || this.plugin.settings.allowCloudRAG;
+        if (!canStillIndex || !this.plugin.settings.vaultBrainEnabled) {
           console.log("Horme Brain: Provider changed during queue processing. Clearing queue.");
           this.indexingQueue = [];
           break;
@@ -576,13 +667,18 @@ export class VaultIndexer {
       if (validChunks.length > 0) {
         const headings = this.extractHeadings(content);
 
+        const fmData = await this.extractFrontmatterSummary(content, file);
+        const bilingualTags = fmData?.tagsOnly || "";
+
         const embeddingTexts = validChunks.map(c => {
           const hp = this.getHeadingPathAtOffset(headings, c.start);
           const docPrefix = getModelPrefixes(this.plugin.settings.ragEmbeddingModel).document;
-          return `${docPrefix}${file.basename}${hp ? ' > ' + hp : ''}\n\n${c.text}`;
+          // Prepend bilingual tags to every chunk so the vector captures both languages.
+          // Tags are brief (30–80 chars) and won't dilute the body content meaningfully.
+          const tagLine = bilingualTags ? `Tags: ${bilingualTags}\n` : "";
+          return `${docPrefix}${file.basename}${hp ? ' > ' + hp : ''}\n${tagLine}\n${c.text}`;
         });
 
-        const fmData = this.extractFrontmatterSummary(content, file);
         const hasFmSummary = fmData !== null;
         if (hasFmSummary) embeddingTexts.unshift(fmData.fullText);
 
@@ -615,7 +711,8 @@ export class VaultIndexer {
               chunkEnd: validChunks[j].end,
               embedding: emb,
               mtime: file.stat.mtime,
-              ...(hp ? { headingPath: hp } : {})
+              ...(hp ? { headingPath: hp } : {}),
+              ...(bilingualTags ? { tagsText: bilingualTags } : {})
             });
           }
         }
