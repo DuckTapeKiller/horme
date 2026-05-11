@@ -51,10 +51,19 @@ export class CustomSkill implements Skill {
     };
 
     if (this.method === "POST" && this.body) {
-      reqOptions.body = this.body.replace(/\{\{query\}\}/g, query);
-      // Set Content-Type if not explicitly provided
-      if (!reqOptions.headers["Content-Type"]) {
-        reqOptions.headers["Content-Type"] = "application/json";
+      const isJson = (!reqOptions.headers["Content-Type"] || reqOptions.headers["Content-Type"].includes("json"));
+      
+      if (isJson) {
+        // Safely escape the query before injecting it to prevent breaking the JSON structure.
+        // JSON.stringify("test") returns '"test"'. We slice off the outer quotes to get the escaped inner string.
+        const escapedQuery = JSON.stringify(query).slice(1, -1);
+        reqOptions.body = this.body.replace(/\{\{query\}\}/g, escapedQuery);
+        
+        if (!reqOptions.headers["Content-Type"]) {
+          reqOptions.headers["Content-Type"] = "application/json";
+        }
+      } else {
+        reqOptions.body = this.body.replace(/\{\{query\}\}/g, query);
       }
     }
 

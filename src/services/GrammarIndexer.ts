@@ -65,6 +65,7 @@ export class GrammarIndexer {
 
     if (!folder || !(folder instanceof TFolder)) {
       console.warn(`Horme: Grammar folder "${folderPath}" not found.`);
+      this.plugin.diagnosticService.report("Grammar", `Grammar folder "${folderPath}" not found.`, "warning");
       return;
     }
 
@@ -176,8 +177,9 @@ export class GrammarIndexer {
       scored.sort((a, b) => b.score - a.score);
       
       return scored.slice(0, 3).map(s => `[Manual: ${s.path}] (Relevance: ${s.score.toFixed(2)})\n${s.content}`);
-    } catch (e) {
+    } catch (e: any) {
       console.error("Grammar Search Error:", e);
+      this.plugin.diagnosticService.report("Grammar", `Search failed: ${e.message}`);
       return [];
     }
   }

@@ -25,6 +25,7 @@ export class TaxonomySkill implements Skill {
 
       return "Existing tags in the vault:\n" + tags.map(t => `#${t}`).join(", ");
     } catch (e) {
+
       console.error("Horme Taxonomy Skill Error:", e);
       throw e;
     }

@@ -1599,3 +1599,112 @@ body.is-mobile .horme-select {
   align-items: center;
   flex-shrink: 0;
 }
+
+/* ── Connections View ──────────────────────────────────── */
+.horme-connections-view {
+  padding: var(--size-4-2);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.horme-connections-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: var(--size-4-2);
+  border-bottom: 1px solid var(--background-modifier-border);
+  margin-bottom: var(--size-4-2);
+}
+
+.horme-connections-header h4 {
+  margin: 0;
+  font-size: var(--font-ui-medium);
+  font-weight: 600;
+  color: var(--text-normal);
+}
+
+.horme-connections-controls button {
+  background: transparent;
+  border: 1px solid var(--background-modifier-border);
+  padding: 4px 8px;
+  border-radius: var(--radius-s);
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.horme-connections-controls button:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.horme-connections-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-2);
+  overflow-y: auto;
+  flex: 1;
+}
+
+.horme-connection-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  transition: border-color 0.15s ease;
+}
+
+.horme-connection-item:hover {
+  border-color: var(--interactive-accent);
+}
+
+.horme-connection-title-container {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  max-width: 80%;
+}
+
+.horme-connection-title {
+  font-size: var(--font-ui-small);
+  color: var(--text-normal);
+  text-decoration: none;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.horme-connection-path {
+  font-size: 10px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+
+.horme-connection-score {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-normal);
+  background-color: var(--background-primary);
+  padding: 2px 6px;
+  border-radius: var(--radius-s);
+  border: 1px solid var(--background-modifier-border);
+}
+
+.horme-connections-empty,
+.horme-connections-loading,
+.horme-connections-error {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  margin-top: 2rem;
+  font-style: italic;
+}
+

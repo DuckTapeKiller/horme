@@ -43,6 +43,12 @@ export interface HormeSettings {
   contextCloudWarningShown: boolean;
   // Vault Brain (Local RAG)
   vaultBrainEnabled: boolean;
+  connectionsEnabled: boolean;
+  connectionsThreshold: number;
+  connectionsMaxResults: number;
+  connectionsExcludedFolders: string;
+  connectionsOpenInNewTab: boolean;
+  connectionsDisplayStyle: "minimal" | "detailed";
   ragEmbeddingModel: string;
   indexStatus: string;
   grammarFolderPath: string;

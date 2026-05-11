@@ -841,7 +841,8 @@ export class HormeChatView extends ItemView {
     setIcon(this.sendBtn, "square");
     this.sendBtn.classList.add("horme-stop-btn");
     const loadingEl = this.showLoading();
-    this.handleStreamingResponse(msgs, model, loadingEl, initialSourcePath, ragWasInjected, 0, false, currentSources);
+    this.handleStreamingResponse(msgs, model, loadingEl, initialSourcePath, ragWasInjected, 0, false, currentSources)
+      .catch(e => this.plugin.handleError(e));
   }
 
   private static readonly MAX_SKILL_DEPTH = 5;

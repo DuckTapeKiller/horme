@@ -81,6 +81,7 @@
 - [Requirements](#-requirements)
 - [Features](#-features)
   - [Vault Brain (Local RAG)](#-vault-brain-local-rag)
+  - [Live Connections](#-live-connections)
   - [Semantic Tagging](#-semantic-tagging)
   - [Grammar Proofreading Engine](#-grammar-proofreading-engine)
   - [Frontmatter Summary Generation](#-frontmatter-summary-generation)
@@ -139,6 +140,14 @@ The Vault Brain gives the AI long-term memory of your entire knowledge base. It 
 - **Multi-Query Fusion:** Search runs dual-embedding (full query + keyword distillation) for improved recall across your vault.
 - **Model-Locked Integrity:** The index is versioned. If you change your embedding model in settings, the plugin detects the mismatch and prompts for a rebuild to prevent corrupted results.
 - **Session Toggle:** A "Use Vault Brain" checkbox in the chat header lets you disable vault search per-session for faster responses when you don't need it.
+
+### <span style="color:#6d28d9">&#9655; Live Connections</span>
+
+Horme can magically surface notes semantically related to what you're currently reading or writing in real-time. This feature runs entirely locally on top of the Vault Brain.
+
+- **Real-time Discovery:** As you switch notes, a sidebar panel updates to show you related content across your vault.
+- **Granular Control:** Adjust the similarity threshold, limit the maximum number of results, and exclude specific folders (like Templates or Daily Notes) directly from settings.
+- **Privacy First:** Connections are generated locally using your indexed vector embeddings. No data is sent to the cloud.
 
 ---
 

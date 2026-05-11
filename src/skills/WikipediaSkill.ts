@@ -100,6 +100,7 @@ export class WikipediaSkill implements Skill {
 
       return output;
     } catch (e) {
+
       console.error("Horme Wikipedia Skill Error:", e);
       throw e;
     }

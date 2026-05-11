@@ -52,6 +52,7 @@ export class GrammarScholarSkill implements Skill {
 
       return joinedResults;
     } catch (e) {
+
       console.error("Horme Grammar Scholar Skill Error:", e);
       throw e;
     }

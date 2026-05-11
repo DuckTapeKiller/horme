@@ -280,7 +280,10 @@ export class VaultIndexer {
     this.plugin.saveSettings();
     this.saveIndex()
       .then(() => console.log("Horme Brain: Emergency flush complete."))
-      .catch(e => console.error("Horme Brain: Emergency flush failed.", e));
+      .catch(e => {
+        console.error("Horme Brain: Emergency flush failed.", e);
+        this.plugin.diagnosticService.report("Vault Brain", `Emergency flush failed: ${e.message}`);
+      });
   }
 
 
@@ -618,6 +621,7 @@ export class VaultIndexer {
       }
       if (!this.isLoaded) {
         console.warn("Horme Brain: Index not yet loaded after timeout, proceeding with queue anyway.");
+        this.plugin.diagnosticService.report("Vault Brain", "Index not yet loaded after 5s timeout — proceeding with queue anyway.", "warning");
       }
     }
 
@@ -872,5 +876,57 @@ export class VaultIndexer {
       this.plugin.diagnosticService.report("Search", `Search failed: ${e.message}`);
       return [];
     }
+  }
+  /**
+   * Retrieves semantically related notes for the active file.
+   * Useful for the "Connections" side panel.
+   */
+  async getConnections(activeFilePath: string): Promise<{path: string, score: number}[] | null | undefined> {
+    if (!this.plugin.settings.vaultBrainEnabled || !this.isLoaded) return null;
+
+    const sourceEntries = this.getEntriesForPath(activeFilePath);
+    if (!sourceEntries || sourceEntries.length === 0) return undefined;
+
+    // Parse excluded folders
+    const excludedPrefixes = this.plugin.settings.connectionsExcludedFolders
+      .split(",")
+      .map(s => s.trim())
+      .filter(s => s.length > 0);
+
+    // Find the most representative embedding for the file.
+    // Prefer the summary entry (chunkStart: 0) or fallback to the first content chunk.
+    const representativeEntry = sourceEntries.find(e => e.chunkStart === 0 && e.chunkEnd === 0) || sourceEntries[0];
+    
+    const sourceEmb = typeof representativeEntry.embedding === "string" 
+      ? decompressEmbedding(representativeEntry.embedding) 
+      : representativeEntry.embedding;
+
+    const pathScores = new Map<string, number>();
+
+    for (const entry of this.index) {
+      if (entry.path === activeFilePath) continue; // Skip source file
+
+      // Check exclusions
+      if (excludedPrefixes.some(prefix => entry.path.startsWith(prefix))) {
+        continue;
+      }
+
+      const emb = typeof entry.embedding === "string" 
+        ? decompressEmbedding(entry.embedding) 
+        : entry.embedding;
+      
+      const score = cosineSimilarity(sourceEmb, emb);
+      
+      const currentMax = pathScores.get(entry.path) || 0;
+      if (score > currentMax) {
+        pathScores.set(entry.path, score);
+      }
+    }
+    
+    return Array.from(pathScores.entries())
+      .map(([path, score]) => ({ path, score }))
+      .filter(s => s.score >= this.plugin.settings.connectionsThreshold)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, this.plugin.settings.connectionsMaxResults);
   }
 }

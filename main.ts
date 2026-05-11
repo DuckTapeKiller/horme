@@ -41,10 +41,11 @@ import { AiGateway } from "./src/providers/AiGateway";
 
 // Views
 import { HormeChatView } from "./src/views/HormeChatView";
+import { HormeConnectionsView } from "./src/views/HormeConnectionsView";
 import { HormeSettingTab } from "./src/views/HormeSettingTab";
 
 // Constants & Types
-import { DEFAULT_SETTINGS, VIEW_TYPE, ACTIONS, PROVIDER_MODELS, DEFAULT_SYSTEM_PROMPT } from "./src/constants";
+import { DEFAULT_SETTINGS, VIEW_TYPE, CONNECTIONS_VIEW_TYPE, ACTIONS, PROVIDER_MODELS, DEFAULT_SYSTEM_PROMPT } from "./src/constants";
 import { HormeSettings, SavedConversation, AiProvider } from "./src/types";
 
 declare var __PDF_WORKER_CODE__: string;
@@ -117,13 +118,21 @@ export default class HormePlugin extends Plugin {
     this.aiGateway = new AiGateway(this);
 
     this.registerView(VIEW_TYPE, (leaf) => new HormeChatView(leaf, this));
+    this.registerView(CONNECTIONS_VIEW_TYPE, (leaf) => new HormeConnectionsView(leaf, this));
 
     this.addRibbonIcon("cone", "Open Horme chat", () => this.activateChat());
+    this.addRibbonIcon("cable", "Open Horme connections", () => this.activateConnections());
 
     this.addCommand({
       id: "open-chat",
       name: "Open chat panel",
       callback: () => this.activateChat(),
+    });
+
+    this.addCommand({
+      id: "open-connections",
+      name: "Open connections panel",
+      callback: () => this.activateConnections(),
     });
 
     // Register text actions
@@ -271,6 +280,17 @@ export default class HormePlugin extends Plugin {
       this.app.workspace.on("active-leaf-change", (leaf) => {
         if (leaf?.view instanceof MarkdownView) {
           this.lastActiveMarkdownLeaf = leaf;
+          
+          // Trigger connections view refresh if it's open
+          if (this.settings.connectionsEnabled) {
+            const connLeaves = this.app.workspace.getLeavesOfType(CONNECTIONS_VIEW_TYPE);
+            if (connLeaves.length > 0) {
+              const connView = connLeaves[0].view as HormeConnectionsView;
+              if (leaf.view.file) {
+                connView.updateConnections(leaf.view.file.path);
+              }
+            }
+          }
         }
       })
     );
@@ -684,6 +704,36 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
     this.app.workspace.revealLeaf(leaf);
   }
 
+  async activateConnections() {
+    if (!this.settings.connectionsEnabled) {
+      new Notice("Horme: Connections feature is disabled in settings.");
+      return;
+    }
+
+    let leaf = this.app.workspace.getLeavesOfType(CONNECTIONS_VIEW_TYPE)[0];
+    if (!leaf) {
+        leaf = this.app.workspace.getRightLeaf(false) as WorkspaceLeaf;
+        if (!leaf) {
+          new Notice("Horme: Could not open connections panel.");
+          return;
+        }
+        await leaf.setViewState({ type: CONNECTIONS_VIEW_TYPE, active: true });
+    }
+    
+    if (Platform.isMobile) {
+      this.app.workspace.rightSplit.expand();
+    }
+    
+    this.app.workspace.revealLeaf(leaf);
+    
+    // Initial load
+    const activeView = this.app.workspace.getActiveViewOfType(MarkdownView) || 
+                       (this.lastActiveMarkdownLeaf?.view instanceof MarkdownView ? this.lastActiveMarkdownLeaf.view : null);
+    if (activeView && activeView.file) {
+      (leaf.view as HormeConnectionsView).updateConnections(activeView.file.path);
+    }
+  }
+
   async fetchModels(): Promise<string[]> {
     const provider = this.settings.aiProvider;
     try {
@@ -780,8 +830,9 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
         try {
           const content = await this.app.vault.read(file);
           if (content.trim()) return content;
-        } catch (e) {
+        } catch (e: any) {
           console.error("Horme: Failed to read system prompt note", e);
+          this.diagnosticService.report("System Prompt", `Failed to read prompt note: ${e.message}`, "warning");
         }
       }
     }
@@ -820,8 +871,9 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
         prompt: content.trim()
       });
       seenPaths.add(file.path);
-    } catch (e) {
+    } catch (e: any) {
       console.error(`Horme: Failed to read preset note ${file.path}`, e);
+      this.diagnosticService.report("Presets", `Failed to read preset: ${file.path} — ${e.message}`, "warning");
     }
   }
 

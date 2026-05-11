@@ -38,6 +38,7 @@ export class VaultLinkSkill implements Skill {
 
       return "Found the following related content in your vault:\n\n" + results.join("\n\n---\n\n");
     } catch (e) {
+
       console.error("Horme Vault Link Skill Error:", e);
       throw e;
     }

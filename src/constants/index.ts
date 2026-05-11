@@ -38,6 +38,12 @@ export const DEFAULT_SETTINGS: HormeSettings = {
   mobileProvider: "gemini",
   mobileModel: "gemini-2.5-flash",
   vaultBrainEnabled: false,
+  connectionsEnabled: true,
+  connectionsThreshold: 0.45,
+  connectionsMaxResults: 15,
+  connectionsExcludedFolders: "",
+  connectionsOpenInNewTab: false,
+  connectionsDisplayStyle: "minimal",
   ragEmbeddingModel: "nomic-embed-text",
   indexStatus: "Ready",
   contextCloudWarningShown: false,
@@ -90,3 +96,4 @@ export const ACTIONS: Array<{ id: string; title: string; prompt: string }> = [
 ];
 
 export const VIEW_TYPE = "horme-chat";
+export const CONNECTIONS_VIEW_TYPE = "horme-connections";

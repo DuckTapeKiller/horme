@@ -554,6 +554,90 @@ export class HormeSettingTab extends PluginSettingTab {
            });
       });
 
+    // --- Connections Feature ---
+    const connectionsSection = containerEl.createEl("details", { cls: "horme-settings-section" });
+    connectionsSection.open = this.expandedSections["connections"] ?? false;
+    connectionsSection.ontoggle = () => this.expandedSections["connections"] = connectionsSection.open;
+    connectionsSection.createEl("summary", { text: "◈ Live Connections" });
+
+    new Setting(connectionsSection)
+      .setName("Enable Live Connections")
+      .setDesc("Automatically surface related notes in a sidebar panel as you write. (Requires Vault Brain to be enabled and indexed).")
+      .addToggle(t => {
+        t.setValue(this.plugin.settings.connectionsEnabled)
+         .onChange(async v => {
+           this.plugin.settings.connectionsEnabled = v;
+           await this.plugin.saveSettings();
+           this.displayPreserveScroll();
+         });
+      });
+
+    if (this.plugin.settings.connectionsEnabled) {
+      const threshSetting = new Setting(connectionsSection)
+        .setName("Similarity Threshold")
+        .setDesc(`Minimum similarity required to show a connection. (Current: ${this.plugin.settings.connectionsThreshold})`);
+      threshSetting.addSlider(sl => sl
+        .setLimits(0.1, 0.9, 0.05)
+        .setValue(this.plugin.settings.connectionsThreshold)
+        .setDynamicTooltip()
+        .onChange(async v => {
+          this.plugin.settings.connectionsThreshold = v;
+          threshSetting.setDesc(`Minimum similarity required to show a connection. (Current: ${v})`);
+          await this.plugin.saveSettings();
+        })
+      );
+
+      const maxResultsSetting = new Setting(connectionsSection)
+        .setName("Max Results Limit")
+        .setDesc(`Maximum number of connections to display. (Current: ${this.plugin.settings.connectionsMaxResults})`);
+      maxResultsSetting.addSlider(sl => sl
+        .setLimits(5, 50, 1)
+        .setValue(this.plugin.settings.connectionsMaxResults)
+        .setDynamicTooltip()
+        .onChange(async v => {
+          this.plugin.settings.connectionsMaxResults = v;
+          maxResultsSetting.setDesc(`Maximum number of connections to display. (Current: ${v})`);
+          await this.plugin.saveSettings();
+        })
+      );
+
+      new Setting(connectionsSection)
+        .setName("Excluded Folders")
+        .setDesc("Comma-separated list of folder prefixes to ignore (e.g., 'Templates, Daily Notes').")
+        .addText(t => t
+          .setPlaceholder("e.g. Templates, Daily Notes")
+          .setValue(this.plugin.settings.connectionsExcludedFolders)
+          .onChange(async v => {
+            this.plugin.settings.connectionsExcludedFolders = v;
+            await this.plugin.saveSettings();
+          })
+        );
+
+      new Setting(connectionsSection)
+        .setName("Open in New Tab")
+        .setDesc("Clicking a connection opens it in a new split pane instead of replacing the active view.")
+        .addToggle(t => t
+          .setValue(this.plugin.settings.connectionsOpenInNewTab)
+          .onChange(async v => {
+            this.plugin.settings.connectionsOpenInNewTab = v;
+            await this.plugin.saveSettings();
+          })
+        );
+
+      new Setting(connectionsSection)
+        .setName("Display Style")
+        .setDesc("Choose how connections are rendered in the sidebar.")
+        .addDropdown(dd => dd
+          .addOption("minimal", "Minimal (Title only)")
+          .addOption("detailed", "Detailed (Title + Path)")
+          .setValue(this.plugin.settings.connectionsDisplayStyle)
+          .onChange(async v => {
+            this.plugin.settings.connectionsDisplayStyle = v as "minimal" | "detailed";
+            await this.plugin.saveSettings();
+          })
+        );
+    }
+
     // --- Vault Brain (Local RAG) ---
     const ragSection = containerEl.createEl("details", { cls: "horme-settings-section" });
     ragSection.open = this.expandedSections["vault_brain"] ?? false;
