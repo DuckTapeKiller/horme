@@ -23,7 +23,7 @@ export class HormeConnectionsView extends ItemView {
   }
 
   getIcon(): string {
-    return "link";
+    return "cable";
   }
 
   async onOpen() {
