@@ -50,6 +50,11 @@ export class HormeConnectionsView extends ItemView {
   }
 
   async onClose() {
+    if (this.debounceTimer !== null) {
+      window.clearTimeout(this.debounceTimer);
+      this.debounceTimer = null;
+    }
+    this.activeFilePath = null;
     this.contentEl.empty();
   }
 
@@ -140,7 +145,6 @@ export class HormeConnectionsView extends ItemView {
       this.connectionsListEl.empty();
       const errorEl = this.connectionsListEl.createEl("div", { cls: "horme-connections-error" });
       errorEl.createEl("p", { text: "Failed to load connections." });
-      console.error(e);
       this.plugin.diagnosticService.report("Connections", `Failed to load connections: ${e instanceof Error ? e.message : String(e)}`);
     }
   }

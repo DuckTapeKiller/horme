@@ -178,7 +178,7 @@ export class GrammarIndexer {
       
       return scored.slice(0, 3).map(s => `[Manual: ${s.path}] (Relevance: ${s.score.toFixed(2)})\n${s.content}`);
     } catch (e: any) {
-      console.error("Grammar Search Error:", e);
+      console.error("Grammar Search Error:", this.plugin.diagnosticService.sanitizeText(e?.message || String(e)));
       this.plugin.diagnosticService.report("Grammar", `Search failed: ${e.message}`);
       return [];
     }

@@ -52,8 +52,6 @@ export class DateCalculatorSkill implements Skill {
           return `Unknown operation: "${operation}". Use "difference", "day_of_week", or "add".`;
       }
     } catch (e) {
-
-      console.error("Horme Date Calculator Error:", e);
       throw e;
     }
   }

@@ -40,7 +40,7 @@ export class HormeChatView extends ItemView {
   private vaultBrainLabel!: HTMLElement;
   private forcedSkillId: string | null = null;
   private skillsMenuEl: HTMLElement | null = null;
- 
+  private tagsMenuEl: HTMLElement | null = null;
   private async pickImage() {
     const fileInput = document.createElement("input");
     fileInput.type = "file";
@@ -261,9 +261,53 @@ export class HormeChatView extends ItemView {
       const row1Left = row1.createDiv("horme-header-actions-left");
       const row1Right = row1.createDiv("horme-header-actions-right");
 
+      const tagsBtn = row1Left.createEl("button", {
+        cls: "horme-header-btn",
+        text: "Tags ▾"
+      });
 
-      const tagBtn = row1Left.createEl("button", { cls: "horme-header-btn", text: "Tags" });
-      tagBtn.addEventListener("click", () => this.plugin.suggestTagsForActiveNote());
+      this.tagsMenuEl = this.containerEl.createDiv({ cls: "horme-skills-menu horme-skills-menu-hidden" });
+      
+      const tagItem1 = this.tagsMenuEl.createDiv({ cls: "horme-skills-menu-item" });
+      const tagIcon1 = tagItem1.createSpan({ cls: "horme-skills-menu-item-icon" });
+      setIcon(tagIcon1, "tag");
+      tagItem1.createEl("span", { cls: "horme-skills-menu-item-name", text: "Generate tags for active note" });
+      tagItem1.addEventListener("click", () => {
+        this.tagsMenuEl!.classList.add("horme-skills-menu-hidden");
+        this.plugin.suggestTagsForActiveNote();
+      });
+
+      const tagItem2 = this.tagsMenuEl.createDiv({ cls: "horme-skills-menu-item" });
+      const tagIcon2 = tagItem2.createSpan({ cls: "horme-skills-menu-item-icon" });
+      setIcon(tagIcon2, "list-tree");
+      tagItem2.createEl("span", { cls: "horme-skills-menu-item-name", text: "Audit all tags" });
+      tagItem2.addEventListener("click", () => {
+        this.tagsMenuEl!.classList.add("horme-skills-menu-hidden");
+        this.plugin.auditTaxonomy();
+      });
+
+      tagsBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this.skillsMenuEl?.classList.add("horme-skills-menu-hidden");
+        const isHidden = this.tagsMenuEl!.classList.contains("horme-skills-menu-hidden");
+        if (isHidden) {
+          this.tagsMenuEl!.classList.remove("horme-skills-menu-hidden");
+          const rect = tagsBtn.getBoundingClientRect();
+          const containerRect = this.containerEl.getBoundingClientRect();
+          const menuWidth = 300; 
+
+          let left = rect.left - containerRect.left;
+          if (left + menuWidth > containerRect.width) {
+            left = (rect.right - containerRect.left) - menuWidth;
+          }
+          left = Math.max(4, left);
+
+          this.tagsMenuEl!.style.top = `${rect.bottom - containerRect.top + 4}px`;
+          this.tagsMenuEl!.style.left = `${left}px`;
+        } else {
+          this.tagsMenuEl!.classList.add("horme-skills-menu-hidden");
+        }
+      });
 
       const summaryBtn = row1Left.createEl("button", { cls: "horme-header-btn", text: "Summary" });
       summaryBtn.addEventListener("click", () => this.plugin.generateFrontmatterSummary());
@@ -280,6 +324,7 @@ export class HormeChatView extends ItemView {
 
       skillsBtn.addEventListener("click", (e) => {
         e.stopPropagation();
+        this.tagsMenuEl?.classList.add("horme-skills-menu-hidden");
         const isHidden = this.skillsMenuEl!.classList.contains("horme-skills-menu-hidden");
         if (isHidden) {
           this.skillsMenuEl!.classList.remove("horme-skills-menu-hidden");
@@ -305,6 +350,7 @@ export class HormeChatView extends ItemView {
       // Close the menu when clicking anywhere outside it
       this.documentClickHandler = () => {
         this.skillsMenuEl?.classList.add("horme-skills-menu-hidden");
+        this.tagsMenuEl?.classList.add("horme-skills-menu-hidden");
       };
       document.addEventListener("click", this.documentClickHandler);
 
@@ -334,23 +380,43 @@ export class HormeChatView extends ItemView {
       // Multi-note context
       const row3 = header.createDiv("horme-header-row");
       const addNotesBtn = row3.createEl("button", { cls: "horme-header-btn", text: "+ Add notes" });
-      addNotesBtn.addEventListener("click", () => {
+      addNotesBtn.addEventListener("click", async () => {
         if (this.selectedContextNotes.length >= 5) {
           new Notice("Horme: Maximum 5 context notes.");
           return;
         }
-        new NotePickerModal(this.app, (file) => {
-          if (this.selectedContextNotes.some(f => f.path === file.path)) {
-            new Notice(`Already added: ${file.basename}`);
-            return;
-          }
-          if (this.selectedContextNotes.length >= 5) {
-            new Notice("Horme: Maximum 5 context notes.");
-            return;
-          }
-          this.selectedContextNotes.push(file);
-          this.updateContextNotesLabel();
-        }).open();
+
+        const openPicker = () => {
+          new NotePickerModal(this.app, (file) => {
+            if (this.selectedContextNotes.some(f => f.path === file.path)) {
+              new Notice(`Already added: ${file.basename}`);
+              return;
+            }
+            if (this.selectedContextNotes.length >= 5) {
+              new Notice("Horme: Maximum 5 context notes.");
+              return;
+            }
+            this.selectedContextNotes.push(file);
+            this.updateContextNotesLabel();
+          }).open();
+        };
+
+        // Privacy guard: warn before enabling multi-note exfiltration to cloud providers
+        if (!this.plugin.isLocalProviderActive() && !this.plugin.settings.contextNotesCloudWarningShown) {
+          const provider = this.plugin.settings.aiProvider.toUpperCase();
+          new GenericConfirmModal(
+            this.app,
+            `Privacy notice: The full text of selected notes will be sent to ${provider}, a cloud provider. The content will leave your device. Do you want to continue?`,
+            async () => {
+              this.plugin.settings.contextNotesCloudWarningShown = true;
+              await this.plugin.saveSettings();
+              openPicker();
+            }
+          ).open();
+          return;
+        }
+
+        openPicker();
       });
       const clearBtn = row3.createEl("button", { cls: "horme-header-btn", text: "Clear" });
       clearBtn.addEventListener("click", () => this.clearChat());
@@ -457,6 +523,8 @@ export class HormeChatView extends ItemView {
   }
 
   async onClose() {
+    // Cancel any active stream to avoid zombie readers after view close/reload
+    await this.stopGeneration();
     // Flush any pending history write before the view is destroyed
     await this.plugin.historyManager.flush();
     this.unregisterSettingsListener?.();
@@ -582,6 +650,22 @@ export class HormeChatView extends ItemView {
   }
 
   private async pickDocument() {
+    // Privacy guard: warn once before any uploaded document content is allowed
+    // to be sent to cloud providers.
+    if (!this.plugin.isLocalProviderActive() && !this.plugin.settings.documentCloudWarningShown) {
+      const provider = this.plugin.settings.aiProvider.toUpperCase();
+      new GenericConfirmModal(
+        this.app,
+        `Privacy notice: Uploaded document text will be sent to ${provider}, a cloud provider. The content will leave your device. Do you want to continue?`,
+        async () => {
+          this.plugin.settings.documentCloudWarningShown = true;
+          await this.plugin.saveSettings();
+          await this.pickDocument();
+        }
+      ).open();
+      return;
+    }
+
     const fileInput = document.createElement("input");
     fileInput.type = "file";
     fileInput.accept = ".pdf,.txt,.md";
@@ -601,19 +685,24 @@ export class HormeChatView extends ItemView {
       if (!file) { fileInput.remove(); return; }
 
       try {
-        const text = file.name.toLowerCase().endsWith(".pdf")
+        const isPdf = file.name.toLowerCase().endsWith(".pdf");
+        this.plugin.setIndexingStatus(isPdf ? "Extracting PDF text..." : "Loading document...");
+        
+        const text = isPdf
           ? await this.plugin.pdfService.extractText(file)
           : await file.text();
 
         this.uploadedDocContent = text;
         this.uploadedDocName = file.name;
 
+        this.plugin.setIndexingStatus(null);
         if (!this.history.length) this.messagesEl.empty();
         const notice = this.messagesEl.createDiv("horme-doc-notice");
         notice.textContent = `📎 ${file.name} loaded as context`;
         this.scrollToBottom();
         new Notice(`📎 ${file.name} loaded as context`);
       } catch (err: any) {
+        this.plugin.setIndexingStatus(null);
         new Notice(`Error loading document: ${err.message || err}`);
       } finally {
         fileInput.remove();
@@ -736,19 +825,23 @@ export class HormeChatView extends ItemView {
 
       // --- Multi-Note Context Injection ---
       if (this.selectedContextNotes.length > 0) {
-        const noteParts: string[] = [];
-        for (const file of this.selectedContextNotes) {
-          try {
-            const content = await this.app.vault.read(file);
-            noteParts.push(`--- Note: ${file.basename} ---\n${content.slice(0, 4000)}`);
-          } catch {
-            noteParts.push(`--- Note: ${file.basename} ---\n[Error reading file]`);
+        if (!this.plugin.isLocalProviderActive() && !this.plugin.settings.contextNotesCloudWarningShown) {
+          new Notice("Horme: Multi-note context withheld — privacy notice not acknowledged for cloud providers.");
+        } else {
+          const noteParts: string[] = [];
+          for (const file of this.selectedContextNotes) {
+            try {
+              const content = await this.app.vault.read(file);
+              noteParts.push(`--- Note: ${file.basename} ---\n${content.slice(0, 4000)}`);
+            } catch {
+              noteParts.push(`--- Note: ${file.basename} ---\n[Error reading file]`);
+            }
           }
+          systemParts.push(
+            `The user has provided the following notes as additional context:\n\n`
+            + noteParts.join("\n\n")
+          );
         }
-        systemParts.push(
-          `The user has provided the following notes as additional context:\n\n`
-          + noteParts.join("\n\n")
-        );
       }
 
       // --- Vault Brain (RAG) Injection ---
@@ -791,10 +884,14 @@ export class HormeChatView extends ItemView {
       }
 
       if (this.uploadedDocContent) {
-        const formatInfo = this.uploadedDocName?.toLowerCase().endsWith(".pdf") 
-          ? "The user has uploaded a PDF. The text below contains structural metadata: [x, y] are normalized coordinates (0-1000), 'size' is font size, and 'bold/italic' are styles.\n\n"
-          : "The user has uploaded a document. Its content is:\n\n";
-        systemParts.push(`${formatInfo}${this.uploadedDocContent}`);
+        if (!this.plugin.isLocalProviderActive() && !this.plugin.settings.documentCloudWarningShown) {
+          new Notice("Horme: Uploaded document context withheld — privacy notice not acknowledged for cloud providers.");
+        } else {
+          const formatInfo = this.uploadedDocName?.toLowerCase().endsWith(".pdf") 
+            ? "The user has uploaded a PDF. The text below contains structural metadata: [x, y] are normalized coordinates (0-1000), 'size' is font size, and 'bold/italic' are styles.\n\n"
+            : "The user has uploaded a document. Its content is:\n\n";
+          systemParts.push(`${formatInfo}${this.uploadedDocContent}`);
+        }
       }
 
       msgs = [];
@@ -945,19 +1042,20 @@ export class HormeChatView extends ItemView {
       
       if (bubbleEl) {
           const el = bubbleEl as HTMLElement;
+          const displayContent = this.stripSkillCallXml(fullContent);
           // Re-render the final content with Markdown
           const contentArea = el.querySelector(".horme-content-area") as HTMLElement;
           if (contentArea) {
               contentArea.empty();
-              await MarkdownRenderer.render(this.app, fullContent, contentArea, initialSourcePath || "", this);
+              await MarkdownRenderer.render(this.app, displayContent || fullContent, contentArea, initialSourcePath || "", this);
           } else {
               // Fallback if only content was received without special area
               el.empty();
               if (reasoningEl) el.appendChild(reasoningEl);
               const finalArea = el.createDiv("horme-content-area");
-              await MarkdownRenderer.render(this.app, fullContent, finalArea, initialSourcePath || "", this);
+              await MarkdownRenderer.render(this.app, displayContent || fullContent, finalArea, initialSourcePath || "", this);
           }
-          this.addAssistantActions(el, fullContent);
+          this.addAssistantActions(el, displayContent || fullContent);
           this.renderSources(el, sources);
       }
 

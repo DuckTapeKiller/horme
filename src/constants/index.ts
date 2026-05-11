@@ -47,6 +47,8 @@ export const DEFAULT_SETTINGS: HormeSettings = {
   ragEmbeddingModel: "nomic-embed-text",
   indexStatus: "Ready",
   contextCloudWarningShown: false,
+  contextNotesCloudWarningShown: false,
+  documentCloudWarningShown: false,
   grammarFolderPath: "Gramática",
   grammarLanguage: "Español",
   summaryField: "summary",

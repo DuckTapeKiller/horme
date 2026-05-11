@@ -23,6 +23,7 @@ import { ConfirmReplaceModal } from "./src/modals/ConfirmReplaceModal";
 import { ConversionModal } from "./src/modals/ConversionModal";
 import { HormeErrorModal } from "./src/modals/HormeErrorModal";
 import { GenericConfirmModal } from "./src/modals/GenericConfirmModal";
+import { TaxonomyAuditModal, TaxonomyMergeSuggestion } from "./src/views/TaxonomyAuditModal";
 
 // Services
 import { PdfService } from "./src/services/PdfService";
@@ -35,6 +36,7 @@ import { TagIndexer } from "./src/services/TagIndexer";
 import { SkillManager } from "./src/services/SkillManager";
 import { GrammarIndexer } from "./src/services/GrammarIndexer";
 import { DiagnosticService } from "./src/services/DiagnosticService";
+import { TaxonomyAuditor } from "./src/services/TaxonomyAuditor";
 
 // Providers
 import { AiGateway } from "./src/providers/AiGateway";
@@ -69,6 +71,7 @@ export default class HormePlugin extends Plugin {
   skillManager: SkillManager;
   grammarIndexer: GrammarIndexer;
   diagnosticService: DiagnosticService;
+  taxonomyAuditor: TaxonomyAuditor;
 
   private statusBarItem: HTMLElement | null = null;
   private settingsChangeListeners = new Set<() => void>();
@@ -116,6 +119,7 @@ export default class HormePlugin extends Plugin {
     this.tagIndexer = new TagIndexer(this);
     this.skillManager = new SkillManager(this);
     this.aiGateway = new AiGateway(this);
+    this.taxonomyAuditor = new TaxonomyAuditor(this);
 
     this.registerView(VIEW_TYPE, (leaf) => new HormeChatView(leaf, this));
     this.registerView(CONNECTIONS_VIEW_TYPE, (leaf) => new HormeConnectionsView(leaf, this));
@@ -172,6 +176,13 @@ export default class HormePlugin extends Plugin {
       callback: () => this.generateFrontmatterSummary(),
     });
 
+    // Audit Taxonomy
+    this.addCommand({
+      id: "audit-taxonomy",
+      name: "Audit Vault Taxonomy",
+      callback: () => this.auditTaxonomy(),
+    });
+
     this.registerEvent(
       this.app.workspace.on("editor-menu", (menu, editor) => {
         const sel = editor.getSelection();
@@ -194,8 +205,17 @@ export default class HormePlugin extends Plugin {
         // Debounce 2 seconds per file
         if (indexDebounceMap.has(file.path)) window.clearTimeout(indexDebounceMap.get(file.path));
         const timeout = window.setTimeout(async () => {
-          await this.vaultIndexer.enqueueIndex(file);
-          indexDebounceMap.delete(file.path);
+          try {
+            await this.vaultIndexer.enqueueIndex(file);
+          } catch (e: any) {
+            this.diagnosticService.report(
+              "Vault Brain",
+              `Auto-index enqueue failed for ${file.path}: ${e?.message || String(e)}`,
+              "warning"
+            );
+          } finally {
+            indexDebounceMap.delete(file.path);
+          }
         }, 2000);
         indexDebounceMap.set(file.path, timeout);
       })
@@ -204,7 +224,13 @@ export default class HormePlugin extends Plugin {
     this.registerEvent(
       this.app.vault.on("create", (file) => {
         if (file instanceof TFile && file.path.endsWith(".md")) {
-          this.vaultIndexer.enqueueIndex(file);
+          this.vaultIndexer.enqueueIndex(file).catch((e: any) => {
+            this.diagnosticService.report(
+              "Vault Brain",
+              `Auto-index enqueue failed for ${file.path}: ${e?.message || String(e)}`,
+              "warning"
+            );
+          });
         }
       })
     );
@@ -291,6 +317,9 @@ export default class HormePlugin extends Plugin {
               }
             }
           }
+        } else if (!leaf) {
+          // Prevent stale leaf references ("zombie" leaves) after rapid workspace changes.
+          this.lastActiveMarkdownLeaf = null;
         }
       })
     );
@@ -308,10 +337,13 @@ export default class HormePlugin extends Plugin {
     const file = view.file;
     if (!file) return;
     try {
+      this.setIndexingStatus("Converting to Word...");
       const buffer = await this.docxService.generateBuffer(view.getViewData());
       await this.saveBinaryFile(file.name.replace(/\.md$/, ".docx"), buffer);
+      this.setIndexingStatus(null);
       new Notice(`Note converted to DOCX successfully.`);
     } catch (err: any) {
+      this.setIndexingStatus(null);
       this.handleError(err);
     }
   }
@@ -320,9 +352,12 @@ export default class HormePlugin extends Plugin {
     const file = view.file;
     if (!file) return;
     try {
+      this.setIndexingStatus("Converting to PDF...");
       await this.saveAsPdf(view.getViewData(), file.name);
+      this.setIndexingStatus(null);
       new Notice(`Note converted to PDF successfully.`);
     } catch (err: any) {
+      this.setIndexingStatus(null);
       this.handleError(err);
     }
   }
@@ -432,6 +467,8 @@ Your Goal: Reconstruct the document into clean, professional Markdown.
     const body = this.tagService.stripFrontmatter(raw);
     const context = `${file.basename}\n\n${body}`;
 
+    this.setIndexingStatus("Analyzing note for tags...");
+
     // HYBRID APPROACH: Combine Keyword ranking and Semantic ranking
     const keywordCandidates = this.tagService.rankCandidates(context, tags).slice(0, 60);
     const semanticCandidates = await this.tagIndexer.getSemanticCandidates(context, 60);
@@ -454,14 +491,20 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
         .map(t => t.trim().replace(/^#/, ""))
         .filter(t => t.length > 0 && !t.includes(" "));
       
-      if (!suggested.length) { new Notice("Horme: No valid tags generated."); return; }
+      if (!suggested.length) { 
+        this.setIndexingStatus(null);
+        new Notice("Horme: No valid tags generated."); 
+        return; 
+      }
 
+      this.setIndexingStatus(null);
       new ConfirmReplaceModal(this.app, "Add these tags?", suggested.map(t => `#${t}`).join("\n"), async (edited) => {
         const finalTags = edited.split("\n").map(t => t.trim().replace(/^#/, "")).filter(Boolean);
         await this.tagService.applyTags(file, finalTags);
         new Notice("Horme: Tags updated ✓");
       }).open();
     } catch (e) {
+      this.setIndexingStatus(null);
       this.handleError(e);
     }
   }
@@ -600,7 +643,10 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
       }
 
       const prompt = `Summarise the following note in ${lang}. Write a concise 1-2 sentence summary that captures the core topic and key points. Return ONLY the summary text — no quotes, no formatting, no explanation.`;
+      
+      this.setIndexingStatus("Generating summary...");
       const summary = (await this.aiGateway.generate(bodyContent.slice(0, 6000), prompt)).trim();
+      this.setIndexingStatus(null);
 
       if (!summary) {
         new Notice("Horme: AI returned an empty summary.");
@@ -650,9 +696,63 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
       await this.app.vault.modify(file, newContent);
       new Notice(`Horme: Summary added to "${field}" field.`);
     } catch (e) {
-      console.error("Horme: Summary generation error", e);
+      this.setIndexingStatus(null);
+      console.error("Horme: Summary generation error", this.diagnosticService.sanitizeText(e?.message || String(e)));
       this.diagnosticService.report("Summary", `Generation failed: ${e.message}`);
       new Notice("Horme: Failed to generate summary.");
+    }
+  }
+
+  async auditTaxonomy() {
+    new Notice("Horme: Auditing Taxonomy... Please wait.");
+    
+    // Fetch all tags in the vault
+    const tagsObj = (this.app.metadataCache as any).getTags() || {};
+    const allTags = Object.keys(tagsObj);
+    
+    if (allTags.length === 0) {
+        new Notice("Horme: No tags found in the vault to audit.");
+        return;
+    }
+
+    const prompt = `You are a strict data architect analyzing my Obsidian vault's taxonomy. 
+Here is my complete list of tags:
+${allTags.join(", ")}
+
+Analyze this list and find redundancies (e.g., plurals vs singulars, casing inconsistencies like #Idea vs #idea, or conceptually identical tags).
+You must output ONLY a raw JSON array matching this exact schema:
+[
+  {
+    "from": "the redundant tag you want to remove (e.g. #ideas)",
+    "to": "the unified tag you want to keep (e.g. #idea)",
+    "reason": "Brief explanation of why"
+  }
+]
+Do not use markdown code blocks (\`\`\`). Do not add any conversational text. Output ONLY valid JSON. If there are no issues, output an empty array [].`;
+
+    try {
+        this.setIndexingStatus("Auditing tags...");
+        const response = await this.aiGateway.generate(prompt, "You are a strict data architect. Output ONLY valid JSON array with no markdown blocks.");
+        this.setIndexingStatus(null);
+        let jsonStr = response.trim();
+        
+        // Strip markdown codeblocks if model disobeys
+        if (jsonStr.startsWith("\`\`\`json")) jsonStr = jsonStr.substring(7);
+        else if (jsonStr.startsWith("\`\`\`")) jsonStr = jsonStr.substring(3);
+        if (jsonStr.endsWith("\`\`\`")) jsonStr = jsonStr.substring(0, jsonStr.length - 3);
+        
+        const suggestions = JSON.parse(jsonStr.trim()) as TaxonomyMergeSuggestion[];
+        
+        if (!Array.isArray(suggestions)) {
+           throw new Error("Invalid response format. Expected JSON array.");
+        }
+
+        new TaxonomyAuditModal(this.app, this, suggestions).open();
+    } catch (e) {
+        this.setIndexingStatus(null);
+        console.error("Horme: Taxonomy Audit Failed", this.diagnosticService.sanitizeText(e?.message || String(e)));
+        this.diagnosticService.report("Taxonomy", `Audit failed: ${e instanceof Error ? e.message : String(e)}`);
+        new Notice("Horme: Taxonomy audit failed. Check the Intelligence Dashboard for details.");
     }
   }
 
@@ -746,7 +846,7 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
       this.models = fetchedModels;
       return fetchedModels;
     } catch (e) {
-      console.error("Horme: Failed to fetch models", e);
+      console.error("Horme: Failed to fetch models", this.diagnosticService.sanitizeText((e as any)?.message || String(e)));
       this.diagnosticService.report("Provider", `Failed to fetch models: ${e.message}`, "warning");
       this.models = PROVIDER_MODELS[provider] || [];
       return this.models;
@@ -769,7 +869,8 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
       }
       if (p === "gemini" && this.settings.geminiApiKey) {
         const res = await requestUrl({
-          url: `https://generativelanguage.googleapis.com/v1beta/models?key=${this.settings.geminiApiKey}`
+          url: "https://generativelanguage.googleapis.com/v1beta/models",
+          headers: { "x-goog-api-key": this.settings.geminiApiKey }
         });
         return res.status === 200;
       }
@@ -811,15 +912,18 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
   }
 
   handleError(e: any, context?: string) {
-    console.error("Horme Error:", e);
     const title = context || "Plugin Error";
-    const message = e.message || String(e) || "An unknown error occurred.";
+    const message = e?.message || String(e) || "An unknown error occurred.";
+    const safeMessage = this.diagnosticService?.sanitizeText
+      ? this.diagnosticService.sanitizeText(message)
+      : message;
     
     // Log to Intelligence Hub
     this.diagnosticService.report(title, message, "error");
     
     // Visual alert
-    new HormeErrorModal(this.app, title, message).open();
+    console.error("Horme Error:", title, safeMessage);
+    new HormeErrorModal(this.app, title, safeMessage).open();
   }
 
   async getEffectiveSystemPrompt(): Promise<string> {
@@ -832,7 +936,7 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
           const content = await this.app.vault.read(file);
           if (content.trim()) prompt = content;
         } catch (e: any) {
-          console.error("Horme: Failed to read system prompt note", e);
+          console.error("Horme: Failed to read system prompt note", this.diagnosticService.sanitizeText(e?.message || String(e)));
           this.diagnosticService.report("System Prompt", `Failed to read prompt note: ${e.message}`, "warning");
         }
       }
@@ -877,7 +981,7 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
       });
       seenPaths.add(file.path);
     } catch (e: any) {
-      console.error(`Horme: Failed to read preset note ${file.path}`, e);
+      console.error(`Horme: Failed to read preset note ${file.path}`, this.diagnosticService.sanitizeText(e?.message || String(e)));
       this.diagnosticService.report("Presets", `Failed to read preset: ${file.path} — ${e.message}`, "warning");
     }
   }

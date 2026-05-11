@@ -1,5 +1,4 @@
 import HormePlugin from "../../main";
-import { HormeSettings } from "../types";
 import { Skill, SkillCall } from "../skills/types";
 import { WikipediaSkill } from "../skills/WikipediaSkill";
 import { VaultLinkSkill } from "../skills/VaultLinkSkill";
@@ -13,6 +12,8 @@ import { CustomSkill } from "../skills/CustomSkill";
 export class SkillManager {
   private plugin: HormePlugin;
   private skills: Map<string, Skill> = new Map();
+  private static readonly MAX_SKILL_CALLS_PER_MESSAGE = 3;
+  private static readonly MAX_SKILL_PARAMS_LEN = 10_000;
 
   constructor(plugin: HormePlugin) {
     this.plugin = plugin;
@@ -60,15 +61,39 @@ export class SkillManager {
     let match;
 
     while ((match = regex.exec(text)) !== null) {
-      const skillId = match[1];
+      if (calls.length >= SkillManager.MAX_SKILL_CALLS_PER_MESSAGE) break;
+
+      const skillId = match[1].trim();
       const paramsText = match[2];
+      if (!skillId) continue;
+
+      // Ignore hallucinated / unregistered skills early to prevent useless loops.
+      if (!this.skills.has(skillId)) {
+        this.plugin.diagnosticService.report("Skill Parser", `Ignored unknown skill call: "${skillId}".`, "warning");
+        continue;
+      }
+
+      if (paramsText.length > SkillManager.MAX_SKILL_PARAMS_LEN) {
+        this.plugin.diagnosticService.report(
+          "Skill Parser",
+          `Ignored skill call "${skillId}": parameters too large (${paramsText.length} chars).`,
+          "warning"
+        );
+        continue;
+      }
+
       try {
         const parameters = JSON.parse(paramsText);
+        // Only allow plain objects/arrays as parameters
+        if (parameters === null || (typeof parameters !== "object" && !Array.isArray(parameters))) {
+          this.plugin.diagnosticService.report("Skill Parser", `Ignored skill call "${skillId}": parameters must be JSON object/array.`, "warning");
+          continue;
+        }
         calls.push({ skillId, parameters });
       } catch (e) {
-        const msg = `Failed to parse parameters for skill ${skillId}. Invalid JSON.`;
+        const msg = `Failed to parse parameters for skill "${skillId}". Invalid JSON.`;
         this.plugin.diagnosticService.report("Skill Parser", msg, "warning");
-        console.error(msg, paramsText, e);
+        console.error(msg, e);
       }
     }
 
@@ -84,7 +109,6 @@ export class SkillManager {
     }
 
     try {
-      console.log(`Horme: Executing skill "${skill.name}" with params:`, call.parameters);
       return await skill.execute(call.parameters);
     } catch (e) {
       const errorMessage = e instanceof Error ? e.message : String(e);
@@ -94,7 +118,7 @@ export class SkillManager {
         `Skill: ${skill.name} / Execution failed: ${errorMessage}`,
         "error"
       );
-      console.error(`Horme Skill Error [${skill.name}]:`, e);
+      console.error(`Horme Skill Error [${skill.name}]:`, this.plugin.diagnosticService.sanitizeText(errorMessage));
       return `Error: ${skill.name} failed. ${errorMessage}`;
     }
   }

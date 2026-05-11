@@ -161,7 +161,7 @@ export class TagIndexer {
       scored.sort((a, b) => b.score - a.score);
       return scored.slice(0, topN).map(s => s.tag);
     } catch (e: any) {
-      console.error("Horme: Semantic tag search failed", e);
+      console.error("Horme: Semantic tag search failed", this.plugin.diagnosticService.sanitizeText(e?.message || String(e)));
       this.plugin.diagnosticService.report("Tags", `Semantic search failed: ${e.message}`);
       return [];
     }

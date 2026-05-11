@@ -281,7 +281,7 @@ export class VaultIndexer {
     this.saveIndex()
       .then(() => console.log("Horme Brain: Emergency flush complete."))
       .catch(e => {
-        console.error("Horme Brain: Emergency flush failed.", e);
+        console.error("Horme Brain: Emergency flush failed.", this.plugin.diagnosticService.sanitizeText(e?.message || String(e)));
         this.plugin.diagnosticService.report("Vault Brain", `Emergency flush failed: ${e.message}`);
       });
   }
@@ -335,32 +335,62 @@ export class VaultIndexer {
 
     try {
       const settings = this.plugin.settings;
-      
-      // Resolve provider and model based on specific tag settings or global fallback
-      let provider;
-      let model = settings.tagTranslationModel || this.plugin.aiGateway.getCurrentModel();
 
-      // If user specified a specific provider for tags, use it.
-      // Otherwise, fall back to whatever is active in chat ONLY IF it is local.
-      if (settings.tagTranslationModel) {
-        if (settings.tagTranslationProvider === "lmstudio") {
-          provider = new LmStudioProvider(settings.lmStudioUrl, settings.temperature);
+      // SECURITY: Tag Shadowing must never call a cloud provider.
+      // We always use a local provider (Ollama/LM Studio) and only borrow the
+      // *model id* from the active chat model when chat is local.
+      const provider =
+        settings.tagTranslationProvider === "lmstudio"
+          ? new LmStudioProvider(settings.lmStudioUrl, settings.temperature)
+          : new OllamaProvider(settings.ollamaBaseUrl, settings.temperature);
+
+      let model = settings.tagTranslationModel?.trim();
+      if (!model) {
+        if (this.plugin.isLocalProviderActive()) {
+          model = this.plugin.aiGateway.getCurrentModel();
         } else {
-          provider = new OllamaProvider(settings.ollamaBaseUrl, settings.temperature);
+          model = settings.tagTranslationProvider === "lmstudio"
+            ? settings.lmStudioModel?.trim()
+            : settings.defaultModel?.trim();
         }
-      } else {
-        // Fallback to active chat provider IF it is local. 
-        // If chat is cloud, this will fail (caught below) because indexer must be local.
-        provider = this.plugin.aiGateway.getProvider();
       }
 
-      const result = await provider.generate(
+      if (!model) {
+        this.plugin.diagnosticService.report(
+          "Vault Brain",
+          "Tag translation skipped: no local translation model configured.",
+          "warning"
+        );
+        this.tagTranslationCache.set(spanishTags, spanishTags);
+        return spanishTags;
+      }
+      const prompt =
         `Translate these tags to ${settings.tagShadowingLanguage}. Return ONLY a comma-separated list ` +
         `of equivalents with no explanation, no numbering, no quotes.\n` +
-        `Tags: ${spanishTags}`,
-        "", // no system prompt needed
-        model
-      );
+        `Tags: ${spanishTags}`;
+
+      // If the borrowed model id doesn't exist on the selected local provider,
+      // retry once using that provider's configured model.
+      const providerDefaultModel = settings.tagTranslationProvider === "lmstudio"
+        ? settings.lmStudioModel?.trim()
+        : settings.defaultModel?.trim();
+
+      const modelsToTry = providerDefaultModel && providerDefaultModel !== model
+        ? [model, providerDefaultModel]
+        : [model];
+
+      let result = "";
+      let lastErr: any = null;
+      for (const m of modelsToTry) {
+        try {
+          result = await provider.generate(prompt, "", m);
+          model = m;
+          break;
+        } catch (err) {
+          lastErr = err;
+        }
+      }
+      if (!result) throw lastErr ?? new Error("Tag translation failed");
 
       const translatedTags = result.trim().replace(/\.$/, "");
       // Combine: Spanish original + translation
@@ -371,7 +401,7 @@ export class VaultIndexer {
       // Factual Fallback: report the specific error to the dashboard but continue indexing
       this.plugin.diagnosticService.report(
         "Vault Brain", 
-        `Tag translation failed (Model: ${this.plugin.settings.tagTranslationModel || "Chat Default"}). ` +
+        `Tag translation failed (Model: ${this.plugin.settings.tagTranslationModel || "Auto"}). ` +
         `Falling back to original tags. Error: ${e.message}`,
         "warning"
       );
@@ -862,6 +892,11 @@ export class VaultIndexer {
           } else {
             chunk = content.slice(entry.chunkStart, entry.chunkEnd).trim();
           }
+          // Safety/perf: cap context chunk size so prompts can't explode on large paragraphs.
+          const MAX_CONTEXT_CHARS = 1200;
+          if (chunk.length > MAX_CONTEXT_CHARS) {
+            chunk = chunk.slice(0, MAX_CONTEXT_CHARS).trimEnd() + "\n...[TRUNCATED]";
+          }
 
           const heading = entry.headingPath ? ` (${entry.headingPath})` : "";
           if (chunk) results.push(`[From ${entry.path}${heading}]:\n${chunk}`);
@@ -872,7 +907,7 @@ export class VaultIndexer {
 
       return results;
     } catch (e) {
-      console.error("Horme: Search failed", e);
+      console.error("Horme: Search failed", this.plugin.diagnosticService.sanitizeText(e?.message || String(e)));
       this.plugin.diagnosticService.report("Search", `Search failed: ${e.message}`);
       return [];
     }

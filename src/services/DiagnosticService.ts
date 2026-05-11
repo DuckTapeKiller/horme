@@ -22,6 +22,7 @@ export class DiagnosticService {
   private app: App;
   private errors: DiagnosticError[] = [];
   private readonly MAX_LOGS = 50;
+  private readonly MAX_MESSAGE_LEN = 4000;
 
   constructor(plugin: HormePlugin) {
     this.plugin = plugin;
@@ -29,9 +30,11 @@ export class DiagnosticService {
   }
 
   report(source: string, message: string, type: "error" | "warning" | "info" = "error") {
+    const safeSource = (source || "Unknown").slice(0, 80);
+    const safeMessage = this.sanitizeText(message || ""); // always sanitize before persisting
     const error: DiagnosticError = {
-      source,
-      message,
+      source: safeSource,
+      message: safeMessage,
       timestamp: Date.now(),
       type
     };
@@ -47,6 +50,50 @@ export class DiagnosticService {
       errors: this.errors.filter(e => e.type === "error").length,
       warnings: this.errors.filter(e => e.type === "warning").length
     };
+  }
+
+  /**
+   * Redacts secrets (API keys / tokens) and caps length so the dashboard
+   * can't become a covert data sink for sensitive content.
+   */
+  sanitizeText(input: string): string {
+    let text = String(input ?? "");
+
+    // Cap length early to avoid expensive regex work on huge blobs
+    if (text.length > this.MAX_MESSAGE_LEN) {
+      text = text.slice(0, this.MAX_MESSAGE_LEN) + "…[TRUNCATED]";
+    }
+
+    // Replace any exact configured secrets first (most reliable)
+    const secrets = [
+      this.plugin.settings?.claudeApiKey,
+      this.plugin.settings?.geminiApiKey,
+      this.plugin.settings?.openaiApiKey,
+      this.plugin.settings?.groqApiKey,
+      this.plugin.settings?.openRouterApiKey,
+    ].filter((s): s is string => typeof s === "string" && s.trim().length >= 8);
+
+    for (const secret of secrets) {
+      if (!secret) continue;
+      // split/join avoids regex special chars and is fast for exact matches
+      text = text.split(secret).join("[REDACTED]");
+    }
+
+    // Generic token redactions (best-effort)
+    text = text
+      // Authorization headers / Bearer tokens
+      .replace(/Authorization\s*[:=]\s*Bearer\s+[^\s,"]+/gi, "Authorization: Bearer [REDACTED]")
+      .replace(/Bearer\s+[A-Za-z0-9._-]{10,}/g, "Bearer [REDACTED]")
+      // Common API-key header formats
+      .replace(/\b(x-api-key|x-goog-api-key)\s*[:=]\s*[^\s,"]+/gi, "$1: [REDACTED]")
+      // Query-string secrets
+      .replace(/([?&](?:key|api_key|apikey|token)=)[^&\s]+/gi, "$1[REDACTED]")
+      // Common key formats (best-effort, avoid over-matching short strings)
+      .replace(/\bsk-[A-Za-z0-9]{20,}\b/g, "[REDACTED]")
+      .replace(/\bsk-ant-[A-Za-z0-9_-]{20,}\b/g, "[REDACTED]")
+      .replace(/\bAIza[0-9A-Za-z_-]{20,}\b/g, "[REDACTED]");
+
+    return text;
   }
 
   async getIndexHealth(): Promise<IndexHealth[]> {

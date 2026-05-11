@@ -41,6 +41,8 @@ export interface HormeSettings {
   mobileProvider: AiProvider;
   mobileModel: string;
   contextCloudWarningShown: boolean;
+  contextNotesCloudWarningShown: boolean;
+  documentCloudWarningShown: boolean;
   // Vault Brain (Local RAG)
   vaultBrainEnabled: boolean;
   connectionsEnabled: boolean;

@@ -128,6 +128,7 @@ export class HormeSettingTab extends PluginSettingTab {
   async display() {
     const { containerEl } = this;
     containerEl.empty();
+    containerEl.addClass("horme-settings-root");
     
     // Header Section
     const header = containerEl.createDiv("horme-settings-header");
@@ -649,11 +650,6 @@ export class HormeSettingTab extends PluginSettingTab {
     if (!isLocal && !this.plugin.settings.allowCloudRAG) {
       const warning = ragSection.createDiv("horme-settings-warning");
       warning.textContent = "⚠️ Vault Brain is disabled for cloud providers to protect your privacy.";
-      warning.style.color = "var(--text-error)";
-      warning.style.padding = "10px";
-      warning.style.marginBottom = "10px";
-      warning.style.border = "1px solid var(--background-modifier-border)";
-      warning.style.borderRadius = "var(--radius-s)";
     }
 
     new Setting(ragSection)

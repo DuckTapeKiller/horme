@@ -13,23 +13,33 @@ export class PdfService {
       ? await this.app.vault.readBinary(file)
       : await (file as File).arrayBuffer();
       
-    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-    const numPages = pdf.numPages;
-    const pages: string[] = [];
+    const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+    const pdf = await loadingTask.promise;
+    try {
+      const numPages = pdf.numPages;
+      const pages: string[] = [];
 
-    for (let i = 1; i <= numPages; i++) {
-      if (onProgress) onProgress(i / numPages, `Extracting page ${i} of ${numPages}...`);
-      const page = await pdf.getPage(i);
-      const structuredText = await this.extractStructuredText(page);
-      
-      if (this.detectBadOcr(structuredText)) {
-        pages.push(`--- PAGE ${i} (Warning: Low quality or garbled text) ---\n${structuredText}`);
-      } else {
-        pages.push(`--- PAGE ${i} ---\n${structuredText}`);
+      for (let i = 1; i <= numPages; i++) {
+        if (onProgress) onProgress(i / numPages, `Extracting page ${i} of ${numPages}...`);
+        const page = await pdf.getPage(i);
+        try {
+          const structuredText = await this.extractStructuredText(page);
+          
+          if (this.detectBadOcr(structuredText)) {
+            pages.push(`--- PAGE ${i} (Warning: Low quality or garbled text) ---\n${structuredText}`);
+          } else {
+            pages.push(`--- PAGE ${i} ---\n${structuredText}`);
+          }
+        } finally {
+          try { page.cleanup?.(); } catch { /* best-effort */ }
+        }
       }
-    }
 
-    return pages.join("\n\n");
+      return pages.join("\n\n");
+    } finally {
+      // Best-effort cleanup to avoid leaving PDF.js workers alive after extraction.
+      try { await loadingTask.destroy(); } catch { /* best-effort */ }
+    }
   }
 
   private async extractStructuredText(page: any): Promise<string> {
