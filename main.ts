@@ -285,8 +285,8 @@ export default class HormePlugin extends Plugin {
           if (this.settings.connectionsEnabled) {
             const connLeaves = this.app.workspace.getLeavesOfType(CONNECTIONS_VIEW_TYPE);
             if (connLeaves.length > 0) {
-              const connView = connLeaves[0].view as HormeConnectionsView;
-              if (leaf.view.file) {
+              const connView = connLeaves[0].view as any;
+              if (leaf.view.file && typeof connView.updateConnections === "function") {
                 connView.updateConnections(leaf.view.file.path);
               }
             }
@@ -823,20 +823,25 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
   }
 
   async getEffectiveSystemPrompt(): Promise<string> {
+    let prompt = DEFAULT_SYSTEM_PROMPT;
     const path = this.settings.systemPromptPath.trim();
     if (path) {
       const file = this.app.vault.getAbstractFileByPath(path);
       if (file instanceof TFile) {
         try {
           const content = await this.app.vault.read(file);
-          if (content.trim()) return content;
+          if (content.trim()) prompt = content;
         } catch (e: any) {
           console.error("Horme: Failed to read system prompt note", e);
           this.diagnosticService.report("System Prompt", `Failed to read prompt note: ${e.message}`, "warning");
         }
       }
     }
-    return DEFAULT_SYSTEM_PROMPT;
+    
+    // Always append the mandatory Spanish quotation rule
+    prompt += "\n\nWhen responding in Spanish, you must exclusively use angled quotation marks (« ») instead of standard double quotes (\" \"), except when writing code.";
+    
+    return prompt;
   }
 
   async getChatPresets(): Promise<Array<{ name: string; prompt: string }>> {

@@ -240,6 +240,8 @@
   overflow-x: auto;
   margin: 6px 0;
   font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .horme-msg-assistant code {
