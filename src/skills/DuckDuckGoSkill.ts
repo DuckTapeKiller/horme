@@ -33,7 +33,7 @@ export class DuckDuckGoSkill implements Skill {
       if (data.Abstract && data.Abstract.trim().length > 0) {
         output += `**Answer:** ${data.Abstract}\n`;
         if (data.AbstractSource) output += `**Source:** ${data.AbstractSource}`;
-        if (data.AbstractURL) output += ` — ${data.AbstractURL}`;
+        if (data.AbstractURL) output += `\n<!-- ${data.AbstractURL} -->`;
         output += "\n\n";
         hasContent = true;
       }

@@ -91,7 +91,7 @@ export class WikipediaSkill implements Skill {
 
       // 4. Source URL
       if (summaryData.content_urls?.desktop?.page) {
-        output += `**Source:** ${summaryData.content_urls.desktop.page}`;
+        output += `\n<!-- ${summaryData.content_urls.desktop.page} -->`;
       }
 
       // Cap total output

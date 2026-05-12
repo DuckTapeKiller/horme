@@ -1086,7 +1086,9 @@ export class HormeChatView extends ItemView {
               await this.renderSkillResultBox(skillName, displayName, call.parameters, result);
 
               const isTerminal = skill?.terminal === true;
-              if (isTerminal) {
+              const shouldPromote = this.shouldPromoteSkillFailure(result);
+
+              if (isTerminal || shouldPromote) {
                 // Render result as a proper assistant bubble — same as the forced execution path
                 const resultBubble = this.addMessageBubble("assistant", "");
                 const resultArea = resultBubble.querySelector(".horme-content-area") as HTMLElement;
@@ -1096,18 +1098,6 @@ export class HormeChatView extends ItemView {
                 }
                 this.addAssistantActions(resultBubble, result);
                 this.renderSkillSourceLinks(resultBubble, skillLinks);
-                this.history.push({ role: "assistant", content: result });
-              }
-
-              if (this.shouldPromoteSkillFailure(result)) {
-                const failureBubble = this.addMessageBubble("assistant", "");
-                const failureArea = failureBubble.querySelector(".horme-content-area") as HTMLElement;
-                if (failureArea) {
-                  failureArea.empty();
-                  await MarkdownRenderer.render(this.app, result, failureArea, initialSourcePath || "", this);
-                }
-                this.addAssistantActions(failureBubble, result);
-                this.renderSkillSourceLinks(failureBubble, skillLinks);
                 this.history.push({ role: "assistant", content: result });
               }
             }
