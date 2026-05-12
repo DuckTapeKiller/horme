@@ -75,6 +75,17 @@ export class DiagnosticService {
       if (!exists) return { name, id, status: "missing", lastUpdate: 0, entryCount: 0, path: folderPath };
       
       const files = await this.app.vault.adapter.list(folderPath);
+      if (files.files.length === 0) {
+        return {
+          name,
+          id,
+          status: inMemoryCount > 0 ? "stale" : "missing",
+          lastUpdate: 0,
+          entryCount: inMemoryCount,
+          path: folderPath
+        };
+      }
+
       let latestMtime = 0;
       for (const f of files.files) {
         const s = await this.app.vault.adapter.stat(f);

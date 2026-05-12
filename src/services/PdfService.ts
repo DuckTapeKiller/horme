@@ -12,24 +12,47 @@ export class PdfService {
     const arrayBuffer = file instanceof TFile 
       ? await this.app.vault.readBinary(file)
       : await (file as File).arrayBuffer();
-      
-    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-    const numPages = pdf.numPages;
-    const pages: string[] = [];
 
-    for (let i = 1; i <= numPages; i++) {
-      if (onProgress) onProgress(i / numPages, `Extracting page ${i} of ${numPages}...`);
-      const page = await pdf.getPage(i);
-      const structuredText = await this.extractStructuredText(page);
-      
-      if (this.detectBadOcr(structuredText)) {
-        pages.push(`--- PAGE ${i} (Warning: Low quality or garbled text) ---\n${structuredText}`);
-      } else {
-        pages.push(`--- PAGE ${i} ---\n${structuredText}`);
+    const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+    let pdf: any = null;
+    try {
+      pdf = await loadingTask.promise;
+      const numPages = pdf.numPages;
+      const pages: string[] = [];
+
+      for (let i = 1; i <= numPages; i++) {
+        if (onProgress) onProgress(i / numPages, `Extracting page ${i} of ${numPages}...`);
+        const page = await pdf.getPage(i);
+        try {
+          const structuredText = await this.extractStructuredText(page);
+          if (this.detectBadOcr(structuredText)) {
+            pages.push(`--- PAGE ${i} (Warning: Low quality or garbled text) ---\n${structuredText}`);
+          } else {
+            pages.push(`--- PAGE ${i} ---\n${structuredText}`);
+          }
+        } finally {
+          if (typeof page.cleanup === "function") page.cleanup();
+        }
+      }
+
+      return pages.join("\n\n");
+    } finally {
+      try {
+        if (pdf && typeof pdf.cleanup === "function") pdf.cleanup();
+      } catch {
+        // no-op
+      }
+      try {
+        if (pdf && typeof pdf.destroy === "function") await pdf.destroy();
+      } catch {
+        // no-op
+      }
+      try {
+        if (typeof (loadingTask as any).destroy === "function") await (loadingTask as any).destroy();
+      } catch {
+        // no-op
       }
     }
-
-    return pages.join("\n\n");
   }
 
   private async extractStructuredText(page: any): Promise<string> {

@@ -327,7 +327,7 @@ export class HormeChatView extends ItemView {
       this.vaultBrainToggle.checked = true;
       vbLabel.createSpan({ text: "Use Vault Brain" });
       this.vaultBrainLabel = vbLabel;
-      this.updateVaultBrainToggle();
+      await this.updateVaultBrainToggle();
 
       this.contextNoteLabel = header.createDiv("horme-context-note-label");
 
@@ -431,6 +431,7 @@ export class HormeChatView extends ItemView {
 
       this.unregisterSettingsListener = this.plugin.onSettingsChange(async () => {
         if (this.presetSelect) await this.refreshPresets();
+        await this.updateVaultBrainToggle();
       });
 
       await this.refreshModels();
@@ -484,9 +485,12 @@ export class HormeChatView extends ItemView {
     }
   }
 
-  private updateVaultBrainToggle() {
-    const canUse = this.plugin.settings.vaultBrainEnabled
+  private async updateVaultBrainToggle() {
+    const canUseBySettings =
+      this.plugin.settings.vaultBrainEnabled
       && (this.plugin.isLocalProviderActive() || this.plugin.settings.allowCloudRAG);
+    const hasIndex = canUseBySettings ? await this.plugin.vaultIndexer.hasBuiltIndex() : false;
+    const canUse = canUseBySettings && hasIndex;
     this.vaultBrainLabel.style.display = canUse ? "" : "none";
     if (!canUse) this.vaultBrainToggle.checked = false;
   }
@@ -545,7 +549,7 @@ export class HormeChatView extends ItemView {
       if (m === this.getCurrentProviderModel()) opt.selected = true;
     });
     this.updateConnectionStatus();
-    this.updateVaultBrainToggle();
+    await this.updateVaultBrainToggle();
   }
 
   private async refreshPresets() {
@@ -622,6 +626,17 @@ export class HormeChatView extends ItemView {
     fileInput.click();
   }
 
+  private async confirmCloudSend(message: string): Promise<boolean> {
+    return await new Promise<boolean>((resolve) => {
+      new GenericConfirmModal(
+        this.app,
+        message,
+        () => resolve(true),
+        () => resolve(false)
+      ).open();
+    });
+  }
+
   private async sendMessage(regenerate = false) {
     if (this.isGenerating) return;
 
@@ -641,6 +656,7 @@ export class HormeChatView extends ItemView {
 
       // Render the user's message in the chat
       this.addMessageBubble("user", query);
+      this.addUserActions(query);
       this.history.push({ role: "user", content: query });
       this.inputEl.value = "";
       this.autoGrow?.();
@@ -654,30 +670,28 @@ export class HormeChatView extends ItemView {
         // Map the user's raw input to the skill's primary parameter.
         // All forced-execution skills have a single primary string param.
         const primaryParam = skill.parameters[0]?.name ?? "query";
-        const result = await skill.execute({ [primaryParam]: query });
+        const forcedParams = { [primaryParam]: query };
+        const result = await skill.execute(forcedParams);
 
         loadingEl.remove();
-
-        // All skills (built-in and custom) return fetched/computed data.
-        const systemInjection =
-          `RESULT FROM SKILL "${skill.name}":\n\n${result}\n\n` +
-          `Based on this result, provide a helpful response to the user's query: "${query}"`;
-
-        this.history.push({ role: "system", content: systemInjection });
-
-        // Build message array for the LLM synthesis call
-        const effectivePrompt = this.sessionSystemPromptOverride
-          ?? await this.plugin.getEffectiveSystemPrompt();
-        const msgs: any[] = [];
-        if (effectivePrompt) msgs.push({ role: "system", content: effectivePrompt });
-        for (const m of this.history) msgs.push({ role: m.role, content: m.content });
-
-        const model = this.modelSelect.value;
-        const synthLoadingEl = this.showLoading();
-
-        // suppressRAG = true: Vault Brain must not inject additional context
-        // when the user has explicitly chosen a skill as their information source.
-        await this.handleStreamingResponse(msgs, model, synthLoadingEl, null, false, 0, true, []);
+        await this.renderSkillResultBox(skill.id, skill.name, forcedParams, result);
+        const forcedSkillLinks = this.extractSourceLinks(result);
+        const resultBubble = this.addMessageBubble("assistant", "");
+        const contentArea = resultBubble.querySelector(".horme-content-area") as HTMLElement;
+        if (contentArea) {
+          contentArea.empty();
+          await MarkdownRenderer.render(this.app, result, contentArea, "", this);
+        }
+        this.addAssistantActions(resultBubble, result);
+        this.renderSkillSourceLinks(resultBubble, forcedSkillLinks);
+        this.history.push({ role: "assistant", content: result });
+        await this.plugin.historyManager.append({
+          id: this.conversationId,
+          title: this.history.find(m => m.role === "user")?.content.slice(0, 60) || "Untitled chat",
+          timestamp: Date.now(),
+          messages: this.history
+        });
+        this.scrollToBottom();
 
       } catch (e: any) {
         loadingEl.remove();
@@ -714,12 +728,13 @@ export class HormeChatView extends ItemView {
       }
 
       if (!this.history.length) this.messagesEl.empty();
-      this.inputEl.value = "";
-      this.autoGrow();
-      
-      const imagesToSave = [...this.uploadedImages];
-      this.addMessageBubble("user", text, imagesToSave);
-      this.history.push({ role: "user", content: text, images: imagesToSave });
+	      this.inputEl.value = "";
+	      this.autoGrow();
+	      
+	      const imagesToSave = [...this.uploadedImages];
+	      this.addMessageBubble("user", text, imagesToSave);
+	      this.addUserActions(text);
+	      this.history.push({ role: "user", content: text, images: imagesToSave });
 
       // Clear previews
       this.messagesEl.querySelectorAll(".horme-image-preview-container").forEach(el => el.remove());
@@ -728,35 +743,71 @@ export class HormeChatView extends ItemView {
       const effectivePrompt = this.sessionSystemPromptOverride ?? await this.plugin.getEffectiveSystemPrompt();
       if (effectivePrompt) systemParts.push(effectivePrompt);
 
+      const providerIsLocal = this.plugin.isLocalProviderActive();
+      const providerLabel = this.plugin.settings.aiProvider.toUpperCase();
+
+      // --- Current Note Context (privacy guarded) ---
       if (this.contextToggle.checked) {
-        if (mdLeaf?.view instanceof MarkdownView) {
+        if (!providerIsLocal && !this.plugin.settings.contextCloudWarningShown) {
+          const ok = await this.confirmCloudSend(
+            `Privacy notice: Your current note's full text will be sent to ${providerLabel}, a cloud provider. The content will leave your device. Do you want to continue?`
+          );
+          if (ok) {
+            this.plugin.settings.contextCloudWarningShown = true;
+            await this.plugin.saveSettings();
+          } else {
+            this.contextToggle.checked = false;
+            this.updateContextNoteLabel();
+            new Notice("Horme: Current note context not sent.");
+          }
+        }
+
+        if (this.contextToggle.checked && mdLeaf?.view instanceof MarkdownView) {
           systemParts.push(`The user's current note:\n\n${mdLeaf.view.editor.getValue()}`);
         }
       }
 
       // --- Multi-Note Context Injection ---
       if (this.selectedContextNotes.length > 0) {
-        const noteParts: string[] = [];
-        for (const file of this.selectedContextNotes) {
-          try {
-            const content = await this.app.vault.read(file);
-            noteParts.push(`--- Note: ${file.basename} ---\n${content.slice(0, 4000)}`);
-          } catch {
-            noteParts.push(`--- Note: ${file.basename} ---\n[Error reading file]`);
+        let includeContextNotes = true;
+
+        if (!providerIsLocal && !this.plugin.settings.contextNotesCloudWarningShown) {
+          const ok = await this.confirmCloudSend(
+            `Privacy notice: Up to 5 notes (excerpts) will be sent to ${providerLabel}, a cloud provider. The content will leave your device. Do you want to continue?`
+          );
+          if (ok) {
+            this.plugin.settings.contextNotesCloudWarningShown = true;
+            await this.plugin.saveSettings();
+          } else {
+            includeContextNotes = false;
+            new Notice("Horme: Context notes not sent.");
           }
         }
-        systemParts.push(
-          `The user has provided the following notes as additional context:\n\n`
-          + noteParts.join("\n\n")
-        );
+
+        if (includeContextNotes) {
+          const noteParts: string[] = [];
+          for (const file of this.selectedContextNotes) {
+            try {
+              const content = await this.app.vault.read(file);
+              noteParts.push(`--- Note: ${file.basename} ---\n${content.slice(0, 4000)}`);
+            } catch {
+              noteParts.push(`--- Note: ${file.basename} ---\n[Error reading file]`);
+            }
+          }
+          systemParts.push(
+            `The user has provided the following notes as additional context:\n\n`
+            + noteParts.join("\n\n")
+          );
+        }
       }
 
       // --- Vault Brain (RAG) Injection ---
       const canUseRAG = this.plugin.isLocalProviderActive() || this.plugin.settings.allowCloudRAG;
+      const hasBuiltVaultIndex = canUseRAG ? await this.plugin.vaultIndexer.hasBuiltIndex() : false;
       const sessionRAGEnabled = this.vaultBrainToggle ? this.vaultBrainToggle.checked : true;
       let relevantChunks: string[] = [];
 
-      if (!suppressRAG && this.plugin.settings.vaultBrainEnabled && canUseRAG && sessionRAGEnabled) {
+      if (!suppressRAG && this.plugin.settings.vaultBrainEnabled && canUseRAG && hasBuiltVaultIndex && sessionRAGEnabled) {
         relevantChunks = await this.plugin.vaultIndexer.search(text);
         if (relevantChunks.length > 0) {
           // search() returns chunks sorted best-first (highest score first).
@@ -791,10 +842,27 @@ export class HormeChatView extends ItemView {
       }
 
       if (this.uploadedDocContent) {
-        const formatInfo = this.uploadedDocName?.toLowerCase().endsWith(".pdf") 
-          ? "The user has uploaded a PDF. The text below contains structural metadata: [x, y] are normalized coordinates (0-1000), 'size' is font size, and 'bold/italic' are styles.\n\n"
-          : "The user has uploaded a document. Its content is:\n\n";
-        systemParts.push(`${formatInfo}${this.uploadedDocContent}`);
+        let includeDocument = true;
+
+        if (!providerIsLocal && !this.plugin.settings.documentCloudWarningShown) {
+          const ok = await this.confirmCloudSend(
+            `Privacy notice: Your uploaded document's extracted text will be sent to ${providerLabel}, a cloud provider. The content will leave your device. Do you want to continue?`
+          );
+          if (ok) {
+            this.plugin.settings.documentCloudWarningShown = true;
+            await this.plugin.saveSettings();
+          } else {
+            includeDocument = false;
+            new Notice("Horme: Uploaded document not sent.");
+          }
+        }
+
+        if (includeDocument) {
+          const formatInfo = this.uploadedDocName?.toLowerCase().endsWith(".pdf") 
+            ? "The user has uploaded a PDF. The text below contains structural metadata: [x, y] are normalized coordinates (0-1000), 'size' is font size, and 'bold/italic' are styles.\n\n"
+            : "The user has uploaded a document. Its content is:\n\n";
+          systemParts.push(`${formatInfo}${this.uploadedDocContent}`);
+        }
       }
 
       msgs = [];
@@ -841,7 +909,7 @@ export class HormeChatView extends ItemView {
     setIcon(this.sendBtn, "square");
     this.sendBtn.classList.add("horme-stop-btn");
     const loadingEl = this.showLoading();
-    this.handleStreamingResponse(msgs, model, loadingEl, initialSourcePath, ragWasInjected, 0, false, currentSources)
+    this.handleStreamingResponse(msgs, model, loadingEl, initialSourcePath, ragWasInjected, 0, false, currentSources, [])
       .catch(e => this.plugin.handleError(e));
   }
 
@@ -855,7 +923,8 @@ export class HormeChatView extends ItemView {
     suppressVaultSkill: boolean,
     skillDepth: number,
     suppressRAG = false,
-    sources: string[] = []
+    sources: string[] = [],
+    skillSourceLinks: string[] = []
   ) {
     let bubbleEl: HTMLElement | null = null;
     let fullContent = "";
@@ -988,11 +1057,11 @@ export class HormeChatView extends ItemView {
               }
             }
 
+            const aggregatedSkillLinks = [...skillSourceLinks];
             for (const call of skillCalls) {
               const skillName = call.skillId;
               const skill = this.plugin.skillManager.getSkillById(skillName);
               const displayName = skill?.name || skillName;
-              const summaryText = this.formatSkillSummary(displayName, call.parameters);
 
               const skillLoading = this.showLoading(displayName);
               const loadingSpan = skillLoading.querySelector("span");
@@ -1004,42 +1073,83 @@ export class HormeChatView extends ItemView {
               }
               const result = await this.plugin.skillManager.executeSkill(call);
               skillLoading.remove();
+              const skillLinks = this.extractSourceLinks(result);
+              for (const link of skillLinks) {
+                if (!aggregatedSkillLinks.includes(link)) aggregatedSkillLinks.push(link);
+              }
 
               // Add the result to history
               this.history.push({ 
                 role: "system", 
                 content: `RESULT FROM SKILL "${skillName}":\n\n${result}\n\nBased on this result, please continue your response to the user.` 
               });
+              await this.renderSkillResultBox(skillName, displayName, call.parameters, result);
 
-              // Re-render the "system" message for the user to see what happened (as a technical detail)
-              const resultBubble = this.messagesEl.createDiv("horme-msg horme-msg-assistant");
-              const details = resultBubble.createEl("details", { cls: "horme-reasoning-details" });
-              const summaryEl = details.createEl("summary", { cls: "horme-reasoning-summary" });
-              const summaryIcon = summaryEl.createSpan({ cls: "horme-skill-summary-icon" });
-              setIcon(summaryIcon, this.getSkillIcon(skillName));
-              summaryEl.appendText(` ${summaryText}`);
-              const body = details.createDiv("horme-reasoning-body");
-              body.textContent = result;
-              this.scrollToBottom();
+              const isTerminal = skill?.terminal === true;
+              if (isTerminal) {
+                // Render result as a proper assistant bubble — same as the forced execution path
+                const resultBubble = this.addMessageBubble("assistant", "");
+                const resultArea = resultBubble.querySelector(".horme-content-area") as HTMLElement;
+                if (resultArea) {
+                  resultArea.empty();
+                  await MarkdownRenderer.render(this.app, result, resultArea, initialSourcePath || "", this);
+                }
+                this.addAssistantActions(resultBubble, result);
+                this.renderSkillSourceLinks(resultBubble, skillLinks);
+                this.history.push({ role: "assistant", content: result });
+              }
+
+              if (this.shouldPromoteSkillFailure(result)) {
+                const failureBubble = this.addMessageBubble("assistant", "");
+                const failureArea = failureBubble.querySelector(".horme-content-area") as HTMLElement;
+                if (failureArea) {
+                  failureArea.empty();
+                  await MarkdownRenderer.render(this.app, result, failureArea, initialSourcePath || "", this);
+                }
+                this.addAssistantActions(failureBubble, result);
+                this.renderSkillSourceLinks(failureBubble, skillLinks);
+                this.history.push({ role: "assistant", content: result });
+              }
             }
 
-            // Prepare the next turn in the loop
-            const nextMsgs: any[] = [];
-            const effectivePrompt = this.sessionSystemPromptOverride ?? await this.plugin.getEffectiveSystemPrompt();
-            if (effectivePrompt) nextMsgs.push({ role: "system", content: effectivePrompt });
-            
-            for (const m of this.history) {
-              nextMsgs.push({ role: m.role, content: m.content });
-            }
+            const hasTerminalSkill = skillCalls.some(c => {
+              const s = this.plugin.skillManager.getSkillById(c.skillId);
+              return s?.terminal === true;
+            });
 
-            // Recurse with depth guard
-            if (skillDepth >= HormeChatView.MAX_SKILL_DEPTH) {
-              new Notice("Horme: Maximum skill depth reached. Stopping skill loop.");
+            if (!hasTerminalSkill) {
+              // Prepare the next turn in the loop
+              const nextMsgs: any[] = [];
+              const effectivePrompt = this.sessionSystemPromptOverride ?? await this.plugin.getEffectiveSystemPrompt();
+              if (effectivePrompt) nextMsgs.push({ role: "system", content: effectivePrompt });
+              
+              for (const m of this.history) {
+                nextMsgs.push({ role: m.role, content: m.content });
+              }
+
+              // Recurse with depth guard
+              if (skillDepth >= HormeChatView.MAX_SKILL_DEPTH) {
+                new Notice("Horme: Maximum skill depth reached. Stopping skill loop.");
+              } else {
+                const nextLoading = this.showLoading();
+                await this.handleStreamingResponse(nextMsgs, model, nextLoading, initialSourcePath, false, skillDepth + 1, false, [], aggregatedSkillLinks);
+              }
             } else {
-              const nextLoading = this.showLoading();
-              await this.handleStreamingResponse(nextMsgs, model, nextLoading, initialSourcePath, false, skillDepth + 1, false, []);
+              // Terminal skills: save history and stop — no LLM synthesis needed
+              if (bubbleEl && aggregatedSkillLinks.length > 0) {
+                this.renderSkillSourceLinks(bubbleEl as HTMLElement, aggregatedSkillLinks);
+              }
+              await this.plugin.historyManager.append({
+                id: this.conversationId,
+                title: this.history.find(m => m.role === "user")?.content.slice(0, 60) || "Untitled chat",
+                timestamp: Date.now(),
+                messages: this.history
+              });
             }
             return;
+          }
+          if (bubbleEl && skillSourceLinks.length > 0) {
+            this.renderSkillSourceLinks(bubbleEl as HTMLElement, skillSourceLinks);
           }
 
           await this.plugin.historyManager.append({
@@ -1096,6 +1206,91 @@ export class HormeChatView extends ItemView {
       await this.app.vault.create(fileName, content);
       new Notice(`Saved as ${fileName}`);
     });
+  }
+
+  private addUserActions(content: string) {
+    const wrapper = this.messagesEl.createDiv("horme-save-wrapper horme-save-wrapper-user");
+    const copyBtn = wrapper.createEl("button", { cls: "horme-save-btn", text: "Copy" });
+    setIcon(copyBtn, "copy");
+    copyBtn.addEventListener("click", () => {
+      navigator.clipboard.writeText(content);
+      new Notice("Copied to clipboard");
+    });
+  }
+
+  private async renderSkillResultBox(skillId: string, displayName: string, params: any, result: string) {
+    const summaryText = this.formatSkillSummary(displayName, params);
+    const resultBubble = this.messagesEl.createDiv("horme-msg horme-msg-assistant");
+    const details = resultBubble.createEl("details", { cls: "horme-reasoning-details" });
+    const summaryEl = details.createEl("summary", { cls: "horme-reasoning-summary" });
+    const summaryIcon = summaryEl.createSpan({ cls: "horme-skill-summary-icon" });
+    setIcon(summaryIcon, this.getSkillIcon(skillId));
+    summaryEl.appendText(` ${summaryText}`);
+    const body = details.createDiv("horme-reasoning-body");
+    await MarkdownRenderer.render(this.app, result, body, "", this);
+    this.scrollToBottom();
+  }
+
+  private extractSourceLinks(text: string): string[] {
+    const links = new Set<string>();
+    const add = (raw: string) => {
+      const cleaned = raw.trim().replace(/[)\].,;:!?]+$/g, "");
+      if (!/^https?:\/\//i.test(cleaned)) return;
+      links.add(cleaned);
+    };
+
+    const markdownLinkRegex = /\[[^\]]+\]\((https?:\/\/[^)\s]+)\)/gi;
+    let match: RegExpExecArray | null;
+    while ((match = markdownLinkRegex.exec(text)) !== null) {
+      add(match[1]);
+    }
+
+    const rawUrlRegex = /(https?:\/\/[^\s<>"']+)/gi;
+    while ((match = rawUrlRegex.exec(text)) !== null) {
+      add(match[1]);
+    }
+
+    return Array.from(links);
+  }
+
+  private shouldPromoteSkillFailure(result: string): boolean {
+    const t = result.trim().toLowerCase();
+    if (!t) return false;
+    return (
+      t.startsWith("no ") ||
+      t.includes("no exact") ||
+      t.includes("no results found") ||
+      t.includes("returned no") ||
+      t.includes("not found") ||
+      t.includes("did you mean") ||
+      t.includes("failed") ||
+      t.includes("error:")
+    );
+  }
+
+  private renderSkillSourceLinks(bubbleEl: HTMLElement, links: string[]) {
+    if (links.length === 0) return;
+    const uniqueLinks = Array.from(new Set(links));
+    const sourcesEl = bubbleEl.createDiv("horme-sources-container horme-skill-sources-container");
+    sourcesEl.createSpan({ text: "Skill Sources:", cls: "horme-sources-label" });
+
+    const listEl = sourcesEl.createDiv("horme-sources-list");
+    for (const link of uniqueLinks) {
+      let label = link;
+      try {
+        label = new URL(link).hostname.replace(/^www\./, "");
+      } catch {
+        // Keep full URL if parsing fails.
+      }
+      const anchor = listEl.createEl("a", {
+        text: label,
+        href: link,
+        cls: "horme-source-pill horme-source-link-pill"
+      });
+      anchor.setAttr("target", "_blank");
+      anchor.setAttr("rel", "noopener noreferrer");
+      anchor.title = link;
+    }
   }
 
   private renderSources(bubbleEl: HTMLElement, paths: string[]) {
@@ -1212,12 +1407,13 @@ export class HormeChatView extends ItemView {
             await MarkdownRenderer.render(this.app, displayContent, bubble, "", this);
           }
           this.addAssistantActions(bubble, m.content);
-        } else {
-          const contentArea = bubble.querySelector(".horme-content-area") as HTMLElement;
-          if (contentArea) contentArea.textContent = m.content;
-        }
-      }
-    }
+	        } else {
+	          const contentArea = bubble.querySelector(".horme-content-area") as HTMLElement;
+	          if (contentArea) contentArea.textContent = m.content;
+	          this.addUserActions(m.content);
+	        }
+	      }
+	    }
     this.scrollToBottom();
   }
 

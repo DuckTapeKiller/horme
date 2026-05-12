@@ -1,10 +1,15 @@
 import { Notice, normalizePath } from "obsidian";
 import HormePlugin from "../../main";
-import { compressEmbedding, decompressEmbedding, cosineSimilarity } from "../utils/VectorUtils";
+import {
+  compressEmbedding,
+  cosineSimilarityFloatInt8,
+  decompressEmbeddingToInt8,
+  quantizeEmbeddingToInt8
+} from "../utils/VectorUtils";
 
 interface TagEntry {
   tag: string;
-  embedding: number[] | string; // number[] in memory, string (base64 int8) on disk
+  embedding: Int8Array | string; // Int8Array in memory, base64 string on disk
 }
 
 export class TagIndexer {
@@ -47,7 +52,11 @@ export class TagIndexer {
         // Decompress on load
         this.index = entries.map((e: any) => ({
           tag: e.tag,
-          embedding: typeof e.embedding === "string" ? decompressEmbedding(e.embedding) : e.embedding
+          embedding: typeof e.embedding === "string"
+            ? decompressEmbeddingToInt8(e.embedding)
+            : Array.isArray(e.embedding)
+              ? quantizeEmbeddingToInt8(e.embedding)
+              : new Int8Array()
         }));
       }
     } catch (e) {
@@ -64,7 +73,7 @@ export class TagIndexer {
 
       const serializedEntries = this.index.map(e => ({
         tag: e.tag,
-        embedding: typeof e.embedding === "string" ? e.embedding : compressEmbedding(e.embedding as number[])
+        embedding: typeof e.embedding === "string" ? e.embedding : compressEmbedding(e.embedding)
       }));
       const data = JSON.stringify({
         model: this.plugin.settings.ragEmbeddingModel,
@@ -73,6 +82,30 @@ export class TagIndexer {
       await adapter.write(this.indexPath, data);
     } catch (e) {
       this.plugin.diagnosticService.report("Tags", `Failed to save index: ${e.message}`);
+    }
+  }
+
+  async deleteIndex(): Promise<"deleted" | "missing"> {
+    const adapter = this.plugin.app.vault.adapter;
+    const hadInMemory = this.index.length > 0;
+    const hadOnDisk = await adapter.exists(this.indexPath);
+
+    this.index = [];
+    this.indexedModel = "";
+
+    try {
+      if (hadOnDisk) {
+        await adapter.remove(this.indexPath);
+      }
+      if (hadOnDisk || hadInMemory) {
+        this.plugin.diagnosticService.report("Tags", "Tag index deleted by user.", "info");
+        return "deleted";
+      }
+      this.plugin.diagnosticService.report("Tags", "Delete requested, but no tag index was found.", "info");
+      return "missing";
+    } catch (e) {
+      this.plugin.diagnosticService.report("Tags", `Failed to delete index: ${e.message}`);
+      throw e;
     }
   }
 
@@ -88,15 +121,43 @@ export class TagIndexer {
     
     for (const file of files) {
       const cache = this.plugin.app.metadataCache.getFileCache(file);
-      if (cache?.tags) {
+      let foundAny = false;
+
+      if (cache?.tags && cache.tags.length > 0) {
         cache.tags.forEach(t => allTags.add(t.tag.startsWith("#") ? t.tag.slice(1) : t.tag));
+        foundAny = true;
       }
       // Also check frontmatter tags
       if (cache?.frontmatter?.tags) {
         const fmTags = Array.isArray(cache.frontmatter.tags) ? cache.frontmatter.tags : [cache.frontmatter.tags];
         fmTags.forEach((t: any) => {
-           if (typeof t === "string") allTags.add(t.startsWith("#") ? t.slice(1) : t);
+           if (typeof t === "string") {
+             allTags.add(t.startsWith("#") ? t.slice(1) : t);
+             foundAny = true;
+           }
         });
+      }
+      if (cache?.frontmatter?.tag) {
+        const fmTags = Array.isArray(cache.frontmatter.tag) ? cache.frontmatter.tag : [cache.frontmatter.tag];
+        fmTags.forEach((t: any) => {
+           if (typeof t === "string") {
+             allTags.add(t.startsWith("#") ? t.slice(1) : t);
+             foundAny = true;
+           }
+        });
+      }
+
+      if (!foundAny) {
+        try {
+          const content = await this.plugin.app.vault.read(file);
+          const inlineTagRegex = /(^|\s)#([^\s#]+)/gm;
+          let match: RegExpExecArray | null;
+          while ((match = inlineTagRegex.exec(content)) !== null) {
+            allTags.add(match[2]);
+          }
+        } catch (e) {
+          // Silently skip unreadable files
+        }
       }
     }
 
@@ -118,7 +179,7 @@ export class TagIndexer {
         const embeddings = await this.plugin.embeddingService.getEmbeddings(humanizedBatch);
         for (let j = 0; j < batch.length; j++) {
           if (embeddings[j] && embeddings[j].length > 0) {
-            newIndex.push({ tag: batch[j], embedding: compressEmbedding(embeddings[j]) });
+            newIndex.push({ tag: batch[j], embedding: quantizeEmbeddingToInt8(embeddings[j]) });
           }
         }
       } catch (e) {
@@ -144,19 +205,19 @@ export class TagIndexer {
       // Note: No isLocalProviderActive() guard here because EmbeddingService 
       // always routes embeddings to Ollama, even when the chat provider is cloud.
       // This ensures tag suggestions work without leaking data to the cloud.
-      const queryEmbedding = await this.plugin.embeddingService.getEmbedding(
-        text.slice(0, 1500)
-      );
-      
-      const scored = this.index.map(entry => {
-        const emb = typeof entry.embedding === "string" 
-          ? decompressEmbedding(entry.embedding) 
-          : entry.embedding;
-        return {
-          tag: entry.tag,
-          score: cosineSimilarity(queryEmbedding, emb as number[])
-        };
-      });
+	      const queryEmbedding = await this.plugin.embeddingService.getEmbedding(
+	        text.slice(0, 1500)
+	      );
+	      
+	      const scored = this.index.map(entry => {
+	        const emb = typeof entry.embedding === "string"
+	          ? decompressEmbeddingToInt8(entry.embedding)
+	          : entry.embedding;
+	        return {
+	          tag: entry.tag,
+	          score: cosineSimilarityFloatInt8(queryEmbedding, emb)
+	        };
+	      });
 
       scored.sort((a, b) => b.score - a.score);
       return scored.slice(0, topN).map(s => s.tag);

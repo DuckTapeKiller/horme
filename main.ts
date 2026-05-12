@@ -70,14 +70,120 @@ export default class HormePlugin extends Plugin {
   grammarIndexer: GrammarIndexer;
   diagnosticService: DiagnosticService;
 
+  private indexDebounceMap = new Map<string, number>();
   private statusBarItem: HTMLElement | null = null;
   private settingsChangeListeners = new Set<() => void>();
   private _mobileProviderOverrideActive = false;
   private _originalProvider: AiProvider | null = null;
+  private _lastPersistedAiProvider: AiProvider | null = null;
 
   onSettingsChange(cb: () => void): () => void {
     this.settingsChangeListeners.add(cb);
     return () => this.settingsChangeListeners.delete(cb);
+  }
+
+  private isCloudProvider(p: AiProvider): boolean {
+    return p === "claude" || p === "gemini" || p === "openai" || p === "groq" || p === "openrouter";
+  }
+
+  private isLikelyOllamaEmbeddingModel(tag: any): boolean {
+    const name = String(tag?.name || "").toLowerCase();
+    const family = String(tag?.details?.family || "").toLowerCase();
+    return name.includes("embed") || name.includes("embedding") || family.includes("bert") || family.includes("embed");
+  }
+
+  private pickAutoOllamaDefaultModel(tagsModels: any[]): string | null {
+    const candidates = (tagsModels || []).filter((m) => m?.name && !this.isLikelyOllamaEmbeddingModel(m));
+    if (candidates.length === 0) return null;
+
+    const currentBase = (this.settings.defaultModel || "").trim().split(":")[0].toLowerCase();
+    const byRecency = (a: any, b: any) =>
+      (Date.parse(String(b?.modified_at || "")) || 0) - (Date.parse(String(a?.modified_at || "")) || 0);
+
+    // 1) Try to keep the same base name (e.g., "llama3" → "llama3.1:8b")
+    if (currentBase) {
+      const baseMatches = candidates.filter((m) => String(m.name).toLowerCase().startsWith(currentBase));
+      if (baseMatches.length) {
+        baseMatches.sort(byRecency);
+        return String(baseMatches[0].name);
+      }
+    }
+
+    // 2) Prefer common general chat families if present
+    const preferredPrefixes = ["llama3", "llama", "qwen", "gemma", "mistral", "phi", "deepseek", "mixtral"];
+    for (const pref of preferredPrefixes) {
+      const matches = candidates.filter((m) => String(m.name).toLowerCase().startsWith(pref));
+      if (matches.length) {
+        matches.sort(byRecency);
+        return String(matches[0].name);
+      }
+    }
+
+    // 3) Fall back to the most recently modified non-embedding model
+    candidates.sort(byRecency);
+    return String(candidates[0].name);
+  }
+
+  private async fetchOllamaTagsModels(): Promise<any[]> {
+    const url = `${this.settings.ollamaBaseUrl.replace(/\/$/, "")}/api/tags`;
+    let tagsModels: any[] = [];
+
+    try {
+      const res = await requestUrl({ url, throw: false });
+      if (res.status === 200) tagsModels = res.json?.models || [];
+    } catch {
+      // fall through to fetch() below
+    }
+
+    if (tagsModels.length === 0) {
+      try {
+        const res = await fetch(url);
+        if (res.ok) {
+          const json = await res.json();
+          tagsModels = json?.models || [];
+        }
+      } catch {
+        // ignore — caller decides how to handle an empty list
+      }
+    }
+
+    return tagsModels;
+  }
+
+  /**
+   * Ensures `settings.defaultModel` is a valid local Ollama *chat* model.
+   * This is used not only when Ollama is the active chat provider, but also
+   * for any local-only sub-features that rely on Ollama (e.g., tag translation).
+   *
+   * Returns the selected model name, or null if no Ollama models are available.
+   */
+  async ensureOllamaDefaultModel(): Promise<string | null> {
+    const tagsModels = await this.fetchOllamaTagsModels();
+    const fetchedModels = tagsModels.map((m: any) => m.name).filter(Boolean);
+    if (fetchedModels.length === 0) return null;
+
+    await this.maybeAutodetectOllamaDefaultModel(tagsModels, fetchedModels);
+    const selected = (this.settings.defaultModel || "").trim();
+    return selected ? selected : null;
+  }
+
+  private async maybeAutodetectOllamaDefaultModel(tagsModels: any[], fetchedNames: string[]) {
+    const current = (this.settings.defaultModel || "").trim();
+    if (current && fetchedNames.includes(current)) return;
+
+    const picked = this.pickAutoOllamaDefaultModel(tagsModels);
+    if (!picked) return;
+
+    const prev = current;
+    this.settings.defaultModel = picked;
+    await this.saveSettings();
+
+    if (prev) {
+      this.diagnosticService?.report("Ollama", `Default model "${prev}" not found. Auto-selected "${picked}".`, "warning");
+      new Notice(`Horme: Ollama model "${prev}" not found. Switched to "${picked}".`);
+    } else {
+      this.diagnosticService?.report("Ollama", `Auto-selected default model "${picked}".`, "info");
+    }
   }
 
   async onload() {
@@ -186,24 +292,40 @@ export default class HormePlugin extends Plugin {
 
 
     // --- Vault Brain Auto-Pilot ---
-    const indexDebounceMap = new Map<string, number>();
     this.registerEvent(
       this.app.vault.on("modify", (file) => {
         if (!(file instanceof TFile) || !file.path.endsWith(".md")) return;
         
         // Debounce 2 seconds per file
-        if (indexDebounceMap.has(file.path)) window.clearTimeout(indexDebounceMap.get(file.path));
+        if (this.indexDebounceMap.has(file.path)) window.clearTimeout(this.indexDebounceMap.get(file.path));
         const timeout = window.setTimeout(async () => {
           await this.vaultIndexer.enqueueIndex(file);
-          indexDebounceMap.delete(file.path);
+          this.indexDebounceMap.delete(file.path);
         }, 2000);
-        indexDebounceMap.set(file.path, timeout);
+        this.indexDebounceMap.set(file.path, timeout);
       })
     );
 
     this.registerEvent(
       this.app.vault.on("create", (file) => {
         if (file instanceof TFile && file.path.endsWith(".md")) {
+          this.vaultIndexer.enqueueIndex(file);
+        }
+      })
+    );
+
+    this.registerEvent(
+      this.app.vault.on("delete", (file) => {
+        if (file instanceof TFile && file.path.endsWith(".md")) {
+          this.vaultIndexer.removeEntriesForPath(file.path);
+        }
+      })
+    );
+
+    this.registerEvent(
+      this.app.vault.on("rename", (file, oldPath) => {
+        if (file instanceof TFile && file.path.endsWith(".md")) {
+          this.vaultIndexer.removeEntriesForPath(oldPath);
           this.vaultIndexer.enqueueIndex(file);
         }
       })
@@ -298,6 +420,8 @@ export default class HormePlugin extends Plugin {
 
   onunload() {
     URL.revokeObjectURL(this.workerUrl);
+    for (const handle of this.indexDebounceMap.values()) window.clearTimeout(handle);
+    this.indexDebounceMap.clear();
     this.vaultIndexer?.flush();
     this.historyManager?.flush();
   }
@@ -737,11 +861,17 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
   async fetchModels(): Promise<string[]> {
     const provider = this.settings.aiProvider;
     try {
-      const fetchedModels = provider === "ollama" ? 
-        (await (await fetch(`${this.settings.ollamaBaseUrl}/api/tags`)).json()).models?.map((m: any) => m.name) || [] :
-        provider === "lmstudio" ?
-        (await requestUrl({ url: `${this.settings.lmStudioUrl}/v1/models` })).json?.data?.map((m: any) => m.id) || [] :
-        PROVIDER_MODELS[provider] || [];
+      let fetchedModels: string[] = [];
+
+      if (provider === "ollama") {
+        const tagsModels = await this.fetchOllamaTagsModels();
+        fetchedModels = tagsModels.map((m: any) => m.name).filter(Boolean);
+        await this.maybeAutodetectOllamaDefaultModel(tagsModels, fetchedModels);
+      } else if (provider === "lmstudio") {
+        fetchedModels = (await requestUrl({ url: `${this.settings.lmStudioUrl}/v1/models` })).json?.data?.map((m: any) => m.id) || [];
+      } else {
+        fetchedModels = PROVIDER_MODELS[provider] || [];
+      }
       
       this.models = fetchedModels;
       return fetchedModels;
@@ -756,7 +886,11 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
   async checkConnection(): Promise<boolean> {
     const p = this.settings.aiProvider;
     try {
-      if (p === "ollama") return (await fetch(`${this.settings.ollamaBaseUrl}/api/tags`)).ok;
+      if (p === "ollama") {
+        const url = `${this.settings.ollamaBaseUrl.replace(/\/$/, "")}/api/tags`;
+        const res = await requestUrl({ url, throw: false });
+        return res.status === 200;
+      }
       if (p === "lmstudio") return (await requestUrl({ url: `${this.settings.lmStudioUrl}/v1/models` })).status === 200;
       
       // Live Cloud Provider Check
@@ -838,8 +972,8 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
       }
     }
     
-    // Always append the mandatory Spanish quotation rule
-    prompt += "\n\nWhen responding in Spanish, you must exclusively use angled quotation marks (« ») instead of standard double quotes (\" \"), except when writing code.";
+    // Always append mandatory quotation rules by language
+    prompt += "\n\nQuotation marks by language: If responding in Spanish, use angled quotation marks (« ») for normal quotations and do not use standard double quotes (\" \") except where technically required (code, commands, file paths, JSON/YAML, programming syntax) or for inner quotations nested within « ». If responding in English, use standard double quotes (\" \") for normal quotations and do not use « ». Preserve code and technical syntax exactly as required.";
     
     return prompt;
   }
@@ -894,8 +1028,30 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
     }
   }
 
-  async loadSettings() { this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData()); }
+  async loadSettings() {
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    // Track the provider last saved to disk so we can apply privacy guards on change.
+    this._lastPersistedAiProvider = this.settings.aiProvider;
+  }
   async saveSettings() {
+    // Privacy guard: privacy warnings are provider-specific.
+    // If the user switches to a different *cloud* provider, force the warning flags back to false
+    // so they must acknowledge again before any note/document content leaves the device.
+    const providerToPersist =
+      (this._mobileProviderOverrideActive && this._originalProvider !== null)
+        ? this._originalProvider
+        : this.settings.aiProvider;
+
+    if (
+      this._lastPersistedAiProvider &&
+      providerToPersist !== this._lastPersistedAiProvider &&
+      this.isCloudProvider(providerToPersist)
+    ) {
+      this.settings.contextCloudWarningShown = false;
+      this.settings.contextNotesCloudWarningShown = false;
+      this.settings.documentCloudWarningShown = false;
+    }
+
     // If mobile override is active, temporarily restore the original provider
     // before persisting so the override never contaminates saved data.
     if (this._mobileProviderOverrideActive && this._originalProvider !== null) {
@@ -906,6 +1062,7 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
     } else {
       await this.saveData(this.settings);
     }
+    this._lastPersistedAiProvider = providerToPersist;
     this.settingsChangeListeners.forEach(cb => cb());
     this.skillManager?.loadCustomSkills();
   }

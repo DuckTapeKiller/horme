@@ -4,6 +4,7 @@ export class GenericConfirmModal extends Modal {
   private message: string;
   private onConfirm: () => void;
   private onCancel?: () => void;
+  private resolved = false;
 
   constructor(app: App, message: string, onConfirm: () => void, onCancel?: () => void) {
     super(app);
@@ -23,6 +24,7 @@ export class GenericConfirmModal extends Modal {
           .setButtonText("Confirm")
           .setWarning()
           .onClick(() => {
+            this.resolved = true;
             this.close();
             this.onConfirm();
           })
@@ -31,6 +33,7 @@ export class GenericConfirmModal extends Modal {
         btn
           .setButtonText("Cancel")
           .onClick(() => {
+            this.resolved = true;
             this.close();
             if (this.onCancel) this.onCancel();
           })
@@ -38,6 +41,10 @@ export class GenericConfirmModal extends Modal {
   }
 
   onClose() {
+    // Treat "dismiss" (Esc / outside click / X) as cancel for safety-critical prompts.
+    if (!this.resolved && this.onCancel) {
+      try { this.onCancel(); } catch { /* no-op */ }
+    }
     this.contentEl.empty();
   }
 }

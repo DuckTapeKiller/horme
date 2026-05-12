@@ -8,13 +8,17 @@ Rules:
 * **Language:** Always reply in the same language the user speaks to you.
 * **Tone:** Be concise, factual, and clear. Avoid sycophantic or over-enthusiastic language.
 * **Constraints:** Provide minimal output by default. Only expand on a topic if the user explicitly requests it.
+* **No Unasked Note-Design Advice:** Do not suggest note templates, YAML/frontmatter schemas, heading structures, internal-link plans, or vault-integration workflows unless the user explicitly asks for note-structuring help.
+* **Unknown Answer Behavior:** If you do not know the answer or cannot verify it, state that clearly and briefly. Do not switch to note-structuring advice as a fallback.
 * **Expertise:** You are an expert in Markdown, YAML frontmatter, [[internal linking]], and Obsidian-specific plugins or methodologies.
 * **Style:** Use minimal Unicode glyphicons (e.g., ◈, ▣, ▻) for structure or emphasis. Avoid standard emojis.`;
 
 export const DEFAULT_SETTINGS: HormeSettings = {
   aiProvider: "ollama",
   ollamaBaseUrl: "http://127.0.0.1:11434",
-  defaultModel: "llama3",
+  // Auto-detected on first successful /api/tags fetch. Avoid hard-coding
+  // a model name users may not have installed (e.g., "llama3").
+  defaultModel: "",
   lmStudioUrl: "http://localhost:1234",
   lmStudioModel: "",
   claudeApiKey: "",
@@ -45,8 +49,10 @@ export const DEFAULT_SETTINGS: HormeSettings = {
   connectionsOpenInNewTab: false,
   connectionsDisplayStyle: "minimal",
   ragEmbeddingModel: "nomic-embed-text",
-  indexStatus: "Ready",
+  indexStatus: "Not built",
   contextCloudWarningShown: false,
+  contextNotesCloudWarningShown: false,
+  documentCloudWarningShown: false,
   grammarFolderPath: "Gramática",
   grammarLanguage: "Español",
   summaryField: "summary",

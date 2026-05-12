@@ -1,11 +1,17 @@
 import { TFile, Notice, TFolder, normalizePath } from "obsidian";
 import HormePlugin from "../../main";
-import { compressEmbedding, decompressEmbedding, cosineSimilarity, getModelPrefixes } from "../utils/VectorUtils";
+import {
+  compressEmbedding,
+  cosineSimilarityFloatInt8,
+  decompressEmbeddingToInt8,
+  getModelPrefixes,
+  quantizeEmbeddingToInt8
+} from "../utils/VectorUtils";
 
 export interface GrammarChunk {
   path: string;
   content: string;
-  embedding: number[] | string; // number[] in memory, string (base64 int8) on disk
+  embedding: Int8Array | string; // Int8Array in memory, base64 string on disk
 }
 
 
@@ -47,7 +53,11 @@ export class GrammarIndexer {
         // Decompress on load
         this.chunks = rawChunks.map((c: any) => ({
           ...c,
-          embedding: typeof c.embedding === "string" ? decompressEmbedding(c.embedding) : c.embedding
+          embedding: typeof c.embedding === "string"
+            ? decompressEmbeddingToInt8(c.embedding)
+            : Array.isArray(c.embedding)
+              ? quantizeEmbeddingToInt8(c.embedding)
+              : new Int8Array()
         }));
         
         console.log(`Horme: Loaded ${this.chunks.length} grammar vectors.`);
@@ -101,7 +111,7 @@ export class GrammarIndexer {
                 this.chunks.push({
                   path: file.path,
                   content: validChunks[j].text,
-                  embedding: embeddings[j]
+                  embedding: quantizeEmbeddingToInt8(embeddings[j])
                 });
               }
             }
@@ -135,7 +145,7 @@ export class GrammarIndexer {
       // Compress on save, store with model metadata
       const serialized = this.chunks.map(c => ({
         ...c,
-        embedding: typeof c.embedding === "string" ? c.embedding : compressEmbedding(c.embedding as number[])
+        embedding: typeof c.embedding === "string" ? c.embedding : compressEmbedding(c.embedding)
       }));
 
       const data = JSON.stringify({
@@ -147,6 +157,30 @@ export class GrammarIndexer {
       console.log(`Horme Grammar: SUCCESS. Index saved to: ${this.indexPath}`);
     } catch (e) {
       this.plugin.diagnosticService.report("Grammar", `Failed to save index: ${e.message}`);
+    }
+  }
+
+  async deleteIndex(): Promise<"deleted" | "missing"> {
+    const adapter = this.plugin.app.vault.adapter;
+    const hadInMemory = this.chunks.length > 0;
+    const hadOnDisk = await adapter.exists(this.indexPath);
+
+    this.chunks = [];
+    this.indexedModel = "";
+
+    try {
+      if (hadOnDisk) {
+        await adapter.remove(this.indexPath);
+      }
+      if (hadOnDisk || hadInMemory) {
+        this.plugin.diagnosticService.report("Grammar", "Grammar index deleted by user.", "info");
+        return "deleted";
+      }
+      this.plugin.diagnosticService.report("Grammar", "Delete requested, but no grammar index was found.", "info");
+      return "missing";
+    } catch (e) {
+      this.plugin.diagnosticService.report("Grammar", `Failed to delete index: ${e.message}`);
+      throw e;
     }
   }
 
@@ -171,7 +205,10 @@ export class GrammarIndexer {
       // Cosine similarity ranking
       const scored = this.chunks.map(chunk => ({
         ...chunk,
-        score: cosineSimilarity(queryEmbedding, chunk.embedding as number[])
+        score: cosineSimilarityFloatInt8(
+          queryEmbedding,
+          typeof chunk.embedding === "string" ? decompressEmbeddingToInt8(chunk.embedding) : chunk.embedding
+        )
       }));
 
       scored.sort((a, b) => b.score - a.score);

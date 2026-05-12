@@ -505,6 +505,21 @@ export class HormeSettingTab extends PluginSettingTab {
              await this.plugin.grammarIndexer.rebuildIndex();
              new Notice("✅ Grammar Index Rebuilt");
            });
+      })
+      .addButton(btn => {
+        btn.setButtonText("Delete Index")
+          .setWarning()
+          .onClick(() => {
+            new GenericConfirmModal(
+              this.app,
+              "Delete the Grammar Index from memory and disk? You can rebuild it later.",
+              async () => {
+                const result = await this.plugin.grammarIndexer.deleteIndex();
+                new Notice(result === "deleted" ? "Grammar Index deleted." : "No Grammar Index detected.");
+                this.displayPreserveScroll();
+              }
+            ).open();
+          });
       });
 
     // --- Frontmatter Summary ---
@@ -552,6 +567,21 @@ export class HormeSettingTab extends PluginSettingTab {
              await this.plugin.tagIndexer.rebuildTagIndex();
              new Notice("✅ Tag Index Ready");
            });
+      })
+      .addButton(btn => {
+        btn.setButtonText("Delete Index")
+          .setWarning()
+          .onClick(() => {
+            new GenericConfirmModal(
+              this.app,
+              "Delete the Tag Index from memory and disk? You can rebuild it later.",
+              async () => {
+                const result = await this.plugin.tagIndexer.deleteIndex();
+                new Notice(result === "deleted" ? "Tag Index deleted." : "No Tag Index detected.");
+                this.displayPreserveScroll();
+              }
+            ).open();
+          });
       });
 
     // --- Connections Feature ---
@@ -755,7 +785,7 @@ export class HormeSettingTab extends PluginSettingTab {
 
         new Setting(ragSection)
           .setName("Tag Translation Provider")
-          .setDesc("The local provider to use for tag translation.")
+          .setDesc("Provider used for tag translation during indexing. This is independent of the Chat Provider.")
           .addDropdown(drp => drp
             .addOption("ollama", "Ollama")
             .addOption("lmstudio", "LM Studio")
@@ -770,7 +800,7 @@ export class HormeSettingTab extends PluginSettingTab {
         this.buildModelCombo(
           new Setting(ragSection)
             .setName("Tag Translation Model")
-            .setDesc("Optional: Specific model for translations. If empty, uses the active Chat Model (as long as it's local)."),
+            .setDesc("Required for tag shadowing: this exact model is used for tag translation during indexing (it will not switch if you change chat providers/models)."),
           "horme-tag-trans-models",
           async () => {
             if (this.plugin.settings.tagTranslationProvider === "lmstudio") return [];
@@ -787,6 +817,16 @@ export class HormeSettingTab extends PluginSettingTab {
             this.displayPreserveScroll();
           }
         );
+
+        if (!this.plugin.settings.tagTranslationModel.trim()) {
+          const warn = ragSection.createDiv("horme-settings-warning");
+          warn.textContent = "⚠️ Tag shadowing is enabled but Tag Translation Model is empty. Tags will not be translated until you set a model.";
+          warn.style.color = "var(--text-error)";
+          warn.style.padding = "10px";
+          warn.style.marginTop = "8px";
+          warn.style.border = "1px solid var(--background-modifier-border)";
+          warn.style.borderRadius = "var(--radius-s)";
+        }
       }
 
       new Setting(ragSection)
@@ -799,10 +839,46 @@ export class HormeSettingTab extends PluginSettingTab {
                await this.plugin.vaultIndexer.rebuildIndex();
                this.displayPreserveScroll();
              });
+        })
+        .addButton(btn => {
+          btn.setButtonText("Delete Vault Index")
+            .setWarning()
+            .onClick(() => {
+              new GenericConfirmModal(
+                this.app,
+                "Delete the Vault Index from memory and disk? This removes all index shards until you rebuild.",
+                async () => {
+                  const result = await this.plugin.vaultIndexer.deleteIndex();
+                  if (result === "deleted") new Notice("Vault Index deleted.");
+                  else if (result === "missing") new Notice("No Vault Index detected.");
+                  this.displayPreserveScroll();
+                }
+              ).open();
+            });
         });
 
       const rebuildNotice = ragSection.createDiv("horme-settings-muted");
       rebuildNotice.textContent = "Recommended: A full rebuild is required to enable bilingual tag support for existing notes.";
+    } else {
+      new Setting(ragSection)
+        .setName("Index Control")
+        .setDesc(`Vault Index: ${this.plugin.settings.indexStatus}`)
+        .addButton(btn => {
+          btn.setButtonText("Delete Vault Index")
+            .setWarning()
+            .onClick(() => {
+              new GenericConfirmModal(
+                this.app,
+                "Delete the Vault Index from memory and disk? This removes all index shards until you rebuild.",
+                async () => {
+                  const result = await this.plugin.vaultIndexer.deleteIndex();
+                  if (result === "deleted") new Notice("Vault Index deleted.");
+                  else if (result === "missing") new Notice("No Vault Index detected.");
+                  this.displayPreserveScroll();
+                }
+              ).open();
+            });
+        });
     }
 
     // --- Custom Skills ---

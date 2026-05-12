@@ -9,6 +9,26 @@ export class OllamaProvider implements AiProvider {
     this.temperature = temperature;
   }
 
+  private async readOllamaErrorDetail(response: Response): Promise<string> {
+    let text = "";
+    try {
+      text = (await response.text()) ?? "";
+    } catch {
+      return "";
+    }
+
+    const trimmed = text.trim();
+    if (!trimmed) return "";
+
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed?.error) return String(parsed.error);
+    } catch {
+      // Not JSON (e.g., "404 page not found") — keep raw text.
+    }
+    return trimmed;
+  }
+
   async generate(prompt: string, system: string, model: string): Promise<string> {
     const url = `${this.baseUrl}/api/generate`;
     const response = await fetch(url, {
@@ -22,7 +42,10 @@ export class OllamaProvider implements AiProvider {
         options: { temperature: this.temperature, num_predict: 2048 },
       }),
     });
-    if (!response.ok) throw new Error(`Ollama error: ${response.status}`);
+    if (!response.ok) {
+      const detail = await this.readOllamaErrorDetail(response);
+      throw new Error(`Ollama error: ${response.status}${detail ? ` - ${detail}` : ""}`);
+    }
     const data = await response.json();
     if (!data.response && data.error) throw new Error(`Ollama: ${data.error}`);
     return data.response ?? "";
@@ -40,8 +63,12 @@ export class OllamaProvider implements AiProvider {
         options: { temperature: this.temperature },
       }),
     });
-    if (!response.ok) throw new Error(`Ollama chat error: ${response.status}`);
+    if (!response.ok) {
+      const detail = await this.readOllamaErrorDetail(response);
+      throw new Error(`Ollama chat error: ${response.status}${detail ? ` - ${detail}` : ""}`);
+    }
     const data = await response.json();
+    if (!data.message?.content && data.error) throw new Error(`Ollama: ${data.error}`);
     return data.message?.content ?? "";
   }
 
@@ -58,7 +85,10 @@ export class OllamaProvider implements AiProvider {
       }),
       signal
     });
-    if (!response.ok || !response.body) throw new Error(`Ollama stream error: ${response.status}`);
+    if (!response.ok || !response.body) {
+      const detail = await this.readOllamaErrorDetail(response);
+      throw new Error(`Ollama stream error: ${response.status}${detail ? ` - ${detail}` : ""}`);
+    }
     return response.body.getReader();
   }
 }

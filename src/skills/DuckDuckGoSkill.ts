@@ -5,6 +5,7 @@ export class DuckDuckGoSkill implements Skill {
   id = "ddg_search";
   name = "DuckDuckGo Instant Answer";
   description = "Searches DuckDuckGo for instant answers, quick facts, and topic summaries. Useful for recent events, technical specs, and claims not covered by Wikipedia.";
+  terminal = true;
   
   parameters: SkillParameter[] = [
     {

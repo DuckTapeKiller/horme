@@ -5,6 +5,7 @@ export class WiktionarySkill implements Skill {
   id = "wiktionary";
   name = "Wiktionary Lookup";
   description = "Looks up word definitions, etymology, usage notes, and conjugation details from Wiktionary. Supports multiple languages.";
+  terminal = true;
   
   parameters: SkillParameter[] = [
     {

@@ -5,6 +5,7 @@ export class WikipediaSkill implements Skill {
   id = "wikipedia";
   name = "Wikipedia Search";
   description = "Searches Wikipedia for factual information, detailed article sections, and verification of claims. Supports multiple languages.";
+  terminal = true;
   
   parameters: SkillParameter[] = [
     {

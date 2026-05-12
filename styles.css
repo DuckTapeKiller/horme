@@ -618,6 +618,12 @@ body.is-mobile .workspace-drawer.horme-keyboard-open .horme-empty {
   gap: 6px;
 }
 
+.horme-save-wrapper-user {
+  align-self: flex-end;
+  padding-left: 0;
+  padding-right: 4px;
+}
+
 /* ── Mobile Keyboard Fix ── */
 body.is-mobile .workspace-drawer.horme-keyboard-open .workspace-drawer-header,
 body.is-mobile .workspace-drawer.horme-keyboard-open .workspace-drawer-tab-options {
@@ -1180,6 +1186,12 @@ body.is-mobile .horme-select {
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
+.horme-source-link-pill {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+}
+
 /* ── Intelligence Dashboard ── */
 .horme-diag-grid {
   display: grid;
@@ -1200,12 +1212,6 @@ body.is-mobile .horme-select {
   position: relative;
   overflow: hidden;
   transition: transform 0.2s ease, border-color 0.2s ease;
-}
-
-.horme-diag-card:hover {
-  transform: translateY(-2px);
-  border-color: var(--text-accent);
-  border-radius: var(--radius-s);
 }
 
 .horme-diag-card-header {
@@ -1326,10 +1332,10 @@ body.is-mobile .horme-select {
 }
 
 .horme-diag-entry-source {
-  color: var(--text-accent);
+  color: #a277ff;
   font-weight: bold;
   white-space: nowrap;
-  opacity: 0.8;
+  opacity: 1;
 }
 
 .horme-diag-entry-msg {
@@ -1709,4 +1715,3 @@ body.is-mobile .horme-select {
   margin-top: 2rem;
   font-style: italic;
 }
-

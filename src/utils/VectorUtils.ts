@@ -3,32 +3,68 @@
  * Maps float [-1, 1] → Int8 [-127, 127] and stores as base64.
  */
 
-export function compressEmbedding(embedding: number[]): string {
-    const int8 = new Int8Array(embedding.length);
-    for (let i = 0; i < embedding.length; i++) {
-        const clamped = Math.max(-1, Math.min(1, embedding[i]));
-        int8[i] = Math.round(clamped * 127);
+function bytesToBase64(bytes: Uint8Array): string {
+  const anyBytes = bytes as any;
+  if (typeof anyBytes.toBase64 === "function") {
+    try {
+      return anyBytes.toBase64();
+    } catch {
+      // fall through
     }
-    const bytes = new Uint8Array(int8.buffer);
-    let binary = "";
-    for (let i = 0; i < bytes.length; i++) {
-        binary += String.fromCharCode(bytes[i]);
+  }
+
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
+function base64ToBytes(b64: string): Uint8Array {
+  const anyU8 = Uint8Array as any;
+  if (typeof anyU8.fromBase64 === "function") {
+    try {
+      return anyU8.fromBase64(b64);
+    } catch {
+      // fall through
     }
-    return btoa(binary);
+  }
+
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+export function quantizeEmbeddingToInt8(embedding: number[]): Int8Array {
+  const int8 = new Int8Array(embedding.length);
+  for (let i = 0; i < embedding.length; i++) {
+    const clamped = Math.max(-1, Math.min(1, embedding[i]));
+    int8[i] = Math.round(clamped * 127);
+  }
+  return int8;
+}
+
+export function compressEmbedding(embedding: number[] | Int8Array): string {
+  const int8 = embedding instanceof Int8Array ? embedding : quantizeEmbeddingToInt8(embedding);
+  const bytes = new Uint8Array(int8.buffer, int8.byteOffset, int8.byteLength);
+  return bytesToBase64(bytes);
+}
+
+export function decompressEmbeddingToInt8(b64: string): Int8Array {
+  const bytes = base64ToBytes(b64);
+  return new Int8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 }
 
 export function decompressEmbedding(b64: string): number[] {
-    const binary = atob(b64);
-    const uint8 = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-        uint8[i] = binary.charCodeAt(i);
-    }
-    const int8 = new Int8Array(uint8.buffer);
-    const result = new Array<number>(int8.length);
-    for (let i = 0; i < int8.length; i++) {
-        result[i] = int8[i] / 127;
-    }
-    return result;
+  const int8 = decompressEmbeddingToInt8(b64);
+  const result = new Array<number>(int8.length);
+  for (let i = 0; i < int8.length; i++) {
+    result[i] = int8[i] / 127;
+  }
+  return result;
 }
 
 /**
@@ -51,6 +87,54 @@ export function cosineSimilarity(a: number[], b: number[]): number {
 
     const denom = Math.sqrt(normA) * Math.sqrt(normB);
     return denom === 0 ? 0 : dot / denom;
+}
+
+/**
+ * Cosine similarity for float query embedding vs. quantized Int8 doc embedding.
+ * NOTE: This is mathematically equivalent to using (int8/127) floats because the scale cancels.
+ */
+export function cosineSimilarityFloatInt8(a: number[], b: Int8Array): number {
+  const len = Math.min(a.length, b.length);
+  if (len === 0) return 0;
+
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
+
+  for (let i = 0; i < len; i++) {
+    const ai = a[i];
+    const bi = b[i];
+    dot += ai * bi;
+    normA += ai * ai;
+    normB += bi * bi;
+  }
+
+  const denom = Math.sqrt(normA) * Math.sqrt(normB);
+  return denom === 0 ? 0 : dot / denom;
+}
+
+/**
+ * Cosine similarity for two quantized Int8 embeddings.
+ * NOTE: Scale cancels, so this matches cosine on (int8/127) float vectors.
+ */
+export function cosineSimilarityInt8(a: Int8Array, b: Int8Array): number {
+  const len = Math.min(a.length, b.length);
+  if (len === 0) return 0;
+
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
+
+  for (let i = 0; i < len; i++) {
+    const ai = a[i];
+    const bi = b[i];
+    dot += ai * bi;
+    normA += ai * ai;
+    normB += bi * bi;
+  }
+
+  const denom = Math.sqrt(normA) * Math.sqrt(normB);
+  return denom === 0 ? 0 : dot / denom;
 }
 
 /**

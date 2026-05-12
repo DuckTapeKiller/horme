@@ -4,6 +4,7 @@ export class DateCalculatorSkill implements Skill {
   id = "date_calc";
   name = "Date & Time Calculator";
   description = "Computes time differences between dates, verifies day-of-week for historical dates, and checks chronological consistency. Pure computation — no internet required.";
+  terminal = true;
   
   parameters: SkillParameter[] = [
     {

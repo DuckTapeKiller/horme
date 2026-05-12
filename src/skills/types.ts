@@ -11,6 +11,7 @@ export interface Skill {
   description: string;
   parameters: SkillParameter[];
   instructions: string;
+  terminal?: boolean;
   execute(params: any): Promise<string>;
 }
 
