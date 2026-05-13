@@ -7,6 +7,7 @@ import {
   getModelPrefixes,
   quantizeEmbeddingToInt8
 } from "../utils/VectorUtils";
+import { asArray, asNumberArray, errorToMessage, getRecordProp, getStringProp } from "../utils/TypeGuards";
 
 export interface GrammarChunk {
   path: string;
@@ -34,14 +35,16 @@ export class GrammarIndexer {
       const adapter = this.plugin.app.vault.adapter;
       if (await adapter.exists(this.indexPath)) {
         const data = await adapter.read(this.indexPath);
-        const parsed = JSON.parse(data);
+        const parsed: unknown = JSON.parse(data);
 
         // Support both old (raw array) and new (object with model) formats
-        const isNewFormat = !Array.isArray(parsed) && parsed.model;
-        const rawChunks = isNewFormat ? parsed.chunks : (Array.isArray(parsed) ? parsed : []);
+        const isNewFormat = !Array.isArray(parsed) && Boolean(getStringProp(parsed, "model"));
+        const rawChunks = isNewFormat
+          ? (asArray(getRecordProp(parsed, "chunks")) ?? [])
+          : (Array.isArray(parsed) ? parsed : []);
 
         // Check model compatibility
-        this.indexedModel = isNewFormat ? parsed.model : "";
+        this.indexedModel = isNewFormat ? (getStringProp(parsed, "model") ?? "") : "";
         const currentModel = this.plugin.settings.ragEmbeddingModel;
         if (this.indexedModel && this.indexedModel !== currentModel) {
           console.log(`Horme Grammar: Model changed (${this.indexedModel} → ${currentModel}). Index cleared.`);
@@ -51,21 +54,31 @@ export class GrammarIndexer {
         }
 
         // Decompress on load
-        this.chunks = rawChunks.map((c: any) => ({
-          ...c,
-          embedding: typeof c.embedding === "string"
-            ? decompressEmbeddingToInt8(c.embedding)
-            : Array.isArray(c.embedding)
-              ? quantizeEmbeddingToInt8(c.embedding)
-              : new Int8Array()
-        }));
+        const chunks: GrammarChunk[] = [];
+        for (const c of rawChunks) {
+          const path = getStringProp(c, "path");
+          const content = getStringProp(c, "content");
+          if (!path || !content) continue;
+          const embeddingUnknown = getRecordProp(c, "embedding");
+          if (typeof embeddingUnknown === "string") {
+            chunks.push({ path, content, embedding: decompressEmbeddingToInt8(embeddingUnknown) });
+            continue;
+          }
+          const embeddingArr = asNumberArray(embeddingUnknown);
+          if (embeddingArr) {
+            chunks.push({ path, content, embedding: quantizeEmbeddingToInt8(embeddingArr) });
+            continue;
+          }
+          chunks.push({ path, content, embedding: new Int8Array() });
+        }
+        this.chunks = chunks;
         
         console.log(`Horme: Loaded ${this.chunks.length} grammar vectors.`);
       } else {
         console.log("Horme Grammar: No index found. Use 'Rebuild Grammar Index' in settings.");
       }
-    } catch (e) {
-      this.plugin.diagnosticService.report("Grammar", `Failed to load index: ${e.message}`);
+    } catch (e: unknown) {
+      this.plugin.diagnosticService.report("Grammar", `Failed to load index: ${errorToMessage(e)}`);
     }
   }
 
@@ -115,9 +128,9 @@ export class GrammarIndexer {
                 });
               }
             }
-          } catch (e) {
+          } catch (e: unknown) {
             errorCount += validChunks.length;
-            this.plugin.diagnosticService.report("Grammar", `Failed to index ${file.path}: ${e.message}`, "warning");
+            this.plugin.diagnosticService.report("Grammar", `Failed to index ${file.path}: ${errorToMessage(e)}`, "warning");
           }
         }
       }
@@ -155,8 +168,8 @@ export class GrammarIndexer {
       await adapter.write(this.indexPath, data);
       
       console.log(`Horme Grammar: SUCCESS. Index saved to: ${this.indexPath}`);
-    } catch (e) {
-      this.plugin.diagnosticService.report("Grammar", `Failed to save index: ${e.message}`);
+    } catch (e: unknown) {
+      this.plugin.diagnosticService.report("Grammar", `Failed to save index: ${errorToMessage(e)}`);
     }
   }
 
@@ -178,9 +191,9 @@ export class GrammarIndexer {
       }
       this.plugin.diagnosticService.report("Grammar", "Delete requested, but no grammar index was found.", "info");
       return "missing";
-    } catch (e) {
-      this.plugin.diagnosticService.report("Grammar", `Failed to delete index: ${e.message}`);
-      throw e;
+    } catch (e: unknown) {
+      this.plugin.diagnosticService.report("Grammar", `Failed to delete index: ${errorToMessage(e)}`);
+      throw e instanceof Error ? e : new Error(errorToMessage(e));
     }
   }
 
@@ -214,9 +227,9 @@ export class GrammarIndexer {
       scored.sort((a, b) => b.score - a.score);
       
       return scored.slice(0, 3).map(s => `[Manual: ${s.path}] (Relevance: ${s.score.toFixed(2)})\n${s.content}`);
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error("Grammar Search Error:", e);
-      this.plugin.diagnosticService.report("Grammar", `Search failed: ${e.message}`);
+      this.plugin.diagnosticService.report("Grammar", `Search failed: ${errorToMessage(e)}`);
       return [];
     }
   }

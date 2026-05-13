@@ -6,6 +6,7 @@ import {
   decompressEmbeddingToInt8,
   quantizeEmbeddingToInt8
 } from "../utils/VectorUtils";
+import { asArray, asNumberArray, errorToMessage, getRecordProp, getStringProp } from "../utils/TypeGuards";
 
 interface TagEntry {
   tag: string;
@@ -27,7 +28,7 @@ export class TagIndexer {
     this.plugin = plugin;
     const configDir = this.plugin.app.vault.configDir;
     this.indexPath = normalizePath(`${configDir}/plugins/${this.plugin.manifest.id}/Tags Index/tag-index.json`);
-    this.loadIndex();
+    void this.loadIndex();
   }
 
   async loadIndex() {
@@ -35,10 +36,10 @@ export class TagIndexer {
       const exists = await this.plugin.app.vault.adapter.exists(this.indexPath);
       if (exists) {
         const data = await this.plugin.app.vault.adapter.read(this.indexPath);
-        const parsed = JSON.parse(data);
+        const parsed: unknown = JSON.parse(data);
 
         // Check model compatibility
-        this.indexedModel = parsed.model || "";
+        this.indexedModel = getStringProp(parsed, "model") ?? "";
         const currentModel = this.plugin.settings.ragEmbeddingModel;
         if (this.indexedModel && this.indexedModel !== currentModel) {
           console.log(`Horme Tags: Model changed (${this.indexedModel} → ${currentModel}). Index cleared.`);
@@ -47,20 +48,29 @@ export class TagIndexer {
           return;
         }
 
-        const entries = parsed.entries || [];
+        const entries = asArray(getRecordProp(parsed, "entries")) ?? [];
         
         // Decompress on load
-        this.index = entries.map((e: any) => ({
-          tag: e.tag,
-          embedding: typeof e.embedding === "string"
-            ? decompressEmbeddingToInt8(e.embedding)
-            : Array.isArray(e.embedding)
-              ? quantizeEmbeddingToInt8(e.embedding)
-              : new Int8Array()
-        }));
+        const next: TagEntry[] = [];
+        for (const e of entries) {
+          const tag = getStringProp(e, "tag");
+          if (!tag) continue;
+          const embeddingUnknown = getRecordProp(e, "embedding");
+          if (typeof embeddingUnknown === "string") {
+            next.push({ tag, embedding: decompressEmbeddingToInt8(embeddingUnknown) });
+            continue;
+          }
+          const embeddingArr = asNumberArray(embeddingUnknown);
+          if (embeddingArr) {
+            next.push({ tag, embedding: quantizeEmbeddingToInt8(embeddingArr) });
+            continue;
+          }
+          next.push({ tag, embedding: new Int8Array() });
+        }
+        this.index = next;
       }
-    } catch (e) {
-      this.plugin.diagnosticService.report("Tags", `Failed to load index: ${e.message}`);
+    } catch (e: unknown) {
+      this.plugin.diagnosticService.report("Tags", `Failed to load index: ${errorToMessage(e)}`);
     }
   }
 
@@ -80,8 +90,8 @@ export class TagIndexer {
         entries: serializedEntries
       });
       await adapter.write(this.indexPath, data);
-    } catch (e) {
-      this.plugin.diagnosticService.report("Tags", `Failed to save index: ${e.message}`);
+    } catch (e: unknown) {
+      this.plugin.diagnosticService.report("Tags", `Failed to save index: ${errorToMessage(e)}`);
     }
   }
 
@@ -103,9 +113,9 @@ export class TagIndexer {
       }
       this.plugin.diagnosticService.report("Tags", "Delete requested, but no tag index was found.", "info");
       return "missing";
-    } catch (e) {
-      this.plugin.diagnosticService.report("Tags", `Failed to delete index: ${e.message}`);
-      throw e;
+    } catch (e: unknown) {
+      this.plugin.diagnosticService.report("Tags", `Failed to delete index: ${errorToMessage(e)}`);
+      throw e instanceof Error ? e : new Error(errorToMessage(e));
     }
   }
 
@@ -130,21 +140,21 @@ export class TagIndexer {
       // Also check frontmatter tags
       if (cache?.frontmatter?.tags) {
         const fmTags = Array.isArray(cache.frontmatter.tags) ? cache.frontmatter.tags : [cache.frontmatter.tags];
-        fmTags.forEach((t: any) => {
-           if (typeof t === "string") {
-             allTags.add(t.startsWith("#") ? t.slice(1) : t);
-             foundAny = true;
-           }
-        });
+        for (const t of fmTags) {
+          if (typeof t === "string") {
+            allTags.add(t.startsWith("#") ? t.slice(1) : t);
+            foundAny = true;
+          }
+        }
       }
       if (cache?.frontmatter?.tag) {
         const fmTags = Array.isArray(cache.frontmatter.tag) ? cache.frontmatter.tag : [cache.frontmatter.tag];
-        fmTags.forEach((t: any) => {
-           if (typeof t === "string") {
-             allTags.add(t.startsWith("#") ? t.slice(1) : t);
-             foundAny = true;
-           }
-        });
+        for (const t of fmTags) {
+          if (typeof t === "string") {
+            allTags.add(t.startsWith("#") ? t.slice(1) : t);
+            foundAny = true;
+          }
+        }
       }
 
       if (!foundAny) {
@@ -155,7 +165,7 @@ export class TagIndexer {
           while ((match = inlineTagRegex.exec(content)) !== null) {
             allTags.add(match[2]);
           }
-        } catch (e) {
+        } catch {
           // Silently skip unreadable files
         }
       }
@@ -182,8 +192,8 @@ export class TagIndexer {
             newIndex.push({ tag: batch[j], embedding: quantizeEmbeddingToInt8(embeddings[j]) });
           }
         }
-      } catch (e) {
-        this.plugin.diagnosticService.report("Tags", `Tag batch indexing failed: ${e.message}`, "warning");
+      } catch (e: unknown) {
+        this.plugin.diagnosticService.report("Tags", `Tag batch indexing failed: ${errorToMessage(e)}`, "warning");
       }
     }
 
@@ -221,9 +231,9 @@ export class TagIndexer {
 
       scored.sort((a, b) => b.score - a.score);
       return scored.slice(0, topN).map(s => s.tag);
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error("Horme: Semantic tag search failed", e);
-      this.plugin.diagnosticService.report("Tags", `Semantic search failed: ${e.message}`);
+      this.plugin.diagnosticService.report("Tags", `Semantic search failed: ${errorToMessage(e)}`);
       return [];
     }
   }

@@ -1,10 +1,8 @@
 import {
-  App,
   Editor,
   MarkdownRenderer,
   MarkdownView,
   Menu,
-  MenuItem,
   Notice,
   Plugin,
   WorkspaceLeaf,
@@ -13,6 +11,7 @@ import {
   TFolder,
   requestUrl,
   Platform,
+  Component,
 } from "obsidian";
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf";
 
@@ -38,6 +37,7 @@ import { DiagnosticService } from "./src/services/DiagnosticService";
 
 // Providers
 import { AiGateway } from "./src/providers/AiGateway";
+import { asArray, errorToMessage, getRecordProp, getStringProp } from "./src/utils/TypeGuards";
 
 // Views
 import { HormeChatView } from "./src/views/HormeChatView";
@@ -46,9 +46,15 @@ import { HormeSettingTab } from "./src/views/HormeSettingTab";
 
 // Constants & Types
 import { DEFAULT_SETTINGS, VIEW_TYPE, CONNECTIONS_VIEW_TYPE, ACTIONS, PROVIDER_MODELS, DEFAULT_SYSTEM_PROMPT } from "./src/constants";
-import { HormeSettings, SavedConversation, AiProvider } from "./src/types";
+import { HormeSettings, AiProvider } from "./src/types";
 
-declare var __PDF_WORKER_CODE__: string;
+declare const __PDF_WORKER_CODE__: string;
+
+interface OllamaTagsModel {
+  name: string;
+  modified_at?: string;
+  details?: { family?: string };
+}
 
 export default class HormePlugin extends Plugin {
   settings: HormeSettings;
@@ -86,26 +92,26 @@ export default class HormePlugin extends Plugin {
     return p === "claude" || p === "gemini" || p === "openai" || p === "groq" || p === "openrouter";
   }
 
-  private isLikelyOllamaEmbeddingModel(tag: any): boolean {
-    const name = String(tag?.name || "").toLowerCase();
-    const family = String(tag?.details?.family || "").toLowerCase();
+  private isLikelyOllamaEmbeddingModel(tag: OllamaTagsModel): boolean {
+    const name = tag.name.toLowerCase();
+    const family = (tag.details?.family ?? "").toLowerCase();
     return name.includes("embed") || name.includes("embedding") || family.includes("bert") || family.includes("embed");
   }
 
-  private pickAutoOllamaDefaultModel(tagsModels: any[]): string | null {
-    const candidates = (tagsModels || []).filter((m) => m?.name && !this.isLikelyOllamaEmbeddingModel(m));
+  private pickAutoOllamaDefaultModel(tagsModels: OllamaTagsModel[]): string | null {
+    const candidates = (tagsModels || []).filter((m) => m.name && !this.isLikelyOllamaEmbeddingModel(m));
     if (candidates.length === 0) return null;
 
     const currentBase = (this.settings.defaultModel || "").trim().split(":")[0].toLowerCase();
-    const byRecency = (a: any, b: any) =>
-      (Date.parse(String(b?.modified_at || "")) || 0) - (Date.parse(String(a?.modified_at || "")) || 0);
+    const byRecency = (a: OllamaTagsModel, b: OllamaTagsModel) =>
+      (Date.parse(b.modified_at ?? "") || 0) - (Date.parse(a.modified_at ?? "") || 0);
 
     // 1) Try to keep the same base name (e.g., "llama3" → "llama3.1:8b")
     if (currentBase) {
-      const baseMatches = candidates.filter((m) => String(m.name).toLowerCase().startsWith(currentBase));
+      const baseMatches = candidates.filter((m) => m.name.toLowerCase().startsWith(currentBase));
       if (baseMatches.length) {
         baseMatches.sort(byRecency);
-        return String(baseMatches[0].name);
+        return baseMatches[0].name;
       }
     }
 
@@ -115,39 +121,42 @@ export default class HormePlugin extends Plugin {
       const matches = candidates.filter((m) => String(m.name).toLowerCase().startsWith(pref));
       if (matches.length) {
         matches.sort(byRecency);
-        return String(matches[0].name);
+        return matches[0].name;
       }
     }
 
     // 3) Fall back to the most recently modified non-embedding model
     candidates.sort(byRecency);
-    return String(candidates[0].name);
+    return candidates[0].name;
   }
 
-  private async fetchOllamaTagsModels(): Promise<any[]> {
+  private async fetchOllamaTagsModels(): Promise<OllamaTagsModel[]> {
     const url = `${this.settings.ollamaBaseUrl.replace(/\/$/, "")}/api/tags`;
-    let tagsModels: any[] = [];
-
     try {
       const res = await requestUrl({ url, throw: false });
-      if (res.status === 200) tagsModels = res.json?.models || [];
-    } catch {
-      // fall through to fetch() below
-    }
+      if (res.status !== 200) return [];
+      const json: unknown = res.json;
+      const modelsUnknown = getRecordProp(json, "models");
+      const models = asArray(modelsUnknown) ?? [];
 
-    if (tagsModels.length === 0) {
-      try {
-        const res = await fetch(url);
-        if (res.ok) {
-          const json = await res.json();
-          tagsModels = json?.models || [];
-        }
-      } catch {
-        // ignore — caller decides how to handle an empty list
+      const parsed: OllamaTagsModel[] = [];
+      for (const m of models) {
+        const name = getStringProp(m, "name");
+        if (!name) continue;
+        const modified_at = getStringProp(m, "modified_at");
+        const detailsUnknown = getRecordProp(m, "details");
+        const family = getStringProp(detailsUnknown, "family");
+        parsed.push({
+          name,
+          modified_at,
+          details: family ? { family } : undefined,
+        });
       }
+      return parsed;
+    } catch {
+      // ignore — caller decides how to handle an empty list
     }
-
-    return tagsModels;
+    return [];
   }
 
   /**
@@ -159,7 +168,7 @@ export default class HormePlugin extends Plugin {
    */
   async ensureOllamaDefaultModel(): Promise<string | null> {
     const tagsModels = await this.fetchOllamaTagsModels();
-    const fetchedModels = tagsModels.map((m: any) => m.name).filter(Boolean);
+    const fetchedModels = tagsModels.map((m) => m.name).filter(Boolean);
     if (fetchedModels.length === 0) return null;
 
     await this.maybeAutodetectOllamaDefaultModel(tagsModels, fetchedModels);
@@ -167,7 +176,7 @@ export default class HormePlugin extends Plugin {
     return selected ? selected : null;
   }
 
-  private async maybeAutodetectOllamaDefaultModel(tagsModels: any[], fetchedNames: string[]) {
+  private async maybeAutodetectOllamaDefaultModel(tagsModels: OllamaTagsModel[], fetchedNames: string[]) {
     const current = (this.settings.defaultModel || "").trim();
     if (current && fetchedNames.includes(current)) return;
 
@@ -208,7 +217,7 @@ export default class HormePlugin extends Plugin {
     // PDF extraction worker setup
     const workerBlob = new Blob([__PDF_WORKER_CODE__], { type: 'application/javascript' });
     this.workerUrl = URL.createObjectURL(workerBlob);
-    (pdfjsLib as any).GlobalWorkerOptions.workerSrc = this.workerUrl;
+    (pdfjsLib as unknown as { GlobalWorkerOptions: { workerSrc: string } }).GlobalWorkerOptions.workerSrc = this.workerUrl;
 
     // Initialize Services
     this.diagnosticService = new DiagnosticService(this);
@@ -226,19 +235,23 @@ export default class HormePlugin extends Plugin {
     this.registerView(VIEW_TYPE, (leaf) => new HormeChatView(leaf, this));
     this.registerView(CONNECTIONS_VIEW_TYPE, (leaf) => new HormeConnectionsView(leaf, this));
 
-    this.addRibbonIcon("cone", "Open Horme chat", () => this.activateChat());
-    this.addRibbonIcon("cable", "Open Horme connections", () => this.activateConnections());
+    this.addRibbonIcon("cone", "Open Horme chat", () => {
+      void this.activateChat().catch(e => this.handleError(e));
+    });
+    this.addRibbonIcon("cable", "Open Horme connections", () => {
+      void this.activateConnections().catch(e => this.handleError(e));
+    });
 
     this.addCommand({
       id: "open-chat",
       name: "Open chat panel",
-      callback: () => this.activateChat(),
+      callback: () => { void this.activateChat().catch(e => this.handleError(e)); },
     });
 
     this.addCommand({
       id: "open-connections",
       name: "Open connections panel",
-      callback: () => this.activateConnections(),
+      callback: () => { void this.activateConnections().catch(e => this.handleError(e)); },
     });
 
     // Register text actions
@@ -252,7 +265,7 @@ export default class HormePlugin extends Plugin {
             new Notice("Horme: Select some text first.");
             return;
           }
-          this.runAction(editor, sel, a.prompt, a.id);
+          void this.runAction(editor, sel, a.prompt, a.id).catch(e => this.handleError(e));
         },
       });
     }
@@ -266,7 +279,7 @@ export default class HormePlugin extends Plugin {
         if (!sel) { new Notice("Horme: Select some text first."); return; }
         new RewriteModal(this.app, (tone) => {
           const prompt = `Rewrite the following text in a ${tone} tone. Preserve the original meaning. Return only the rewritten text.`;
-          this.runAction(editor, sel, prompt, "rewrite");
+          void this.runAction(editor, sel, prompt, "rewrite").catch(e => this.handleError(e));
         }).open();
       },
     });
@@ -275,7 +288,7 @@ export default class HormePlugin extends Plugin {
     this.addCommand({
       id: "generate-summary",
       name: "Generate frontmatter summary",
-      callback: () => this.generateFrontmatterSummary(),
+      callback: () => { void this.generateFrontmatterSummary().catch(e => this.handleError(e)); },
     });
 
     this.registerEvent(
@@ -284,7 +297,7 @@ export default class HormePlugin extends Plugin {
         if (!sel) return;
         menu.addItem((item) => {
           item.setTitle("Horme").setIcon("cone");
-          const sub: Menu = (item as any).setSubmenu();
+          const sub = (item as unknown as { setSubmenu: () => Menu }).setSubmenu();
           this.buildSubmenu(sub, editor, sel);
         });
       })
@@ -297,10 +310,12 @@ export default class HormePlugin extends Plugin {
         if (!(file instanceof TFile) || !file.path.endsWith(".md")) return;
         
         // Debounce 2 seconds per file
-        if (this.indexDebounceMap.has(file.path)) window.clearTimeout(this.indexDebounceMap.get(file.path));
-        const timeout = window.setTimeout(async () => {
-          await this.vaultIndexer.enqueueIndex(file);
-          this.indexDebounceMap.delete(file.path);
+        const existing = this.indexDebounceMap.get(file.path);
+        if (existing !== undefined) window.clearTimeout(existing);
+        const timeout = window.setTimeout(() => {
+          void this.vaultIndexer.enqueueIndex(file)
+            .catch(e => this.diagnosticService.report("Vault Brain", `Auto-index failed: ${e instanceof Error ? e.message : String(e)}`, "warning"))
+            .finally(() => this.indexDebounceMap.delete(file.path));
         }, 2000);
         this.indexDebounceMap.set(file.path, timeout);
       })
@@ -309,7 +324,7 @@ export default class HormePlugin extends Plugin {
     this.registerEvent(
       this.app.vault.on("create", (file) => {
         if (file instanceof TFile && file.path.endsWith(".md")) {
-          this.vaultIndexer.enqueueIndex(file);
+          void this.vaultIndexer.enqueueIndex(file).catch(e => this.handleError(e));
         }
       })
     );
@@ -326,7 +341,7 @@ export default class HormePlugin extends Plugin {
       this.app.vault.on("rename", (file, oldPath) => {
         if (file instanceof TFile && file.path.endsWith(".md")) {
           this.vaultIndexer.removeEntriesForPath(oldPath);
-          this.vaultIndexer.enqueueIndex(file);
+          void this.vaultIndexer.enqueueIndex(file).catch(e => this.handleError(e));
         }
       })
     );
@@ -337,7 +352,7 @@ export default class HormePlugin extends Plugin {
     await this.grammarIndexer.loadIndex();
     
     this.statusBarItem = this.addStatusBarItem();
-    this.statusBarItem.style.display = "none";
+    this.statusBarItem.setCssProps({ display: "none" });
 
     this.models = await this.fetchModels();
 
@@ -353,7 +368,7 @@ export default class HormePlugin extends Plugin {
                      (this.lastActiveMarkdownLeaf?.view instanceof MarkdownView ? this.lastActiveMarkdownLeaf.view : null);
         const hasFile = Boolean(view?.file);
         if (checking) return hasFile;
-        if (hasFile) this.suggestTagsForActiveNote();
+        if (hasFile) void this.suggestTagsForActiveNote().catch(e => this.handleError(e));
         return true;
       },
     });
@@ -365,7 +380,7 @@ export default class HormePlugin extends Plugin {
         const view = this.app.workspace.getActiveViewOfType(MarkdownView) || 
                      (this.lastActiveMarkdownLeaf?.view instanceof MarkdownView ? this.lastActiveMarkdownLeaf.view : null);
         if (view) {
-          if (!checking) this.convertActiveNoteToDocx(view);
+          if (!checking) void this.convertActiveNoteToDocx(view);
           return true;
         }
         return false;
@@ -379,7 +394,7 @@ export default class HormePlugin extends Plugin {
         const view = this.app.workspace.getActiveViewOfType(MarkdownView) || 
                      (this.lastActiveMarkdownLeaf?.view instanceof MarkdownView ? this.lastActiveMarkdownLeaf.view : null);
         if (view) {
-          if (!checking) this.convertActiveNoteToPdf(view);
+          if (!checking) void this.convertActiveNoteToPdf(view);
           return true;
         }
         return false;
@@ -389,13 +404,13 @@ export default class HormePlugin extends Plugin {
     this.registerEvent(
       this.app.workspace.on("file-menu", (menu: Menu, file: TAbstractFile) => {
         if (file instanceof TFile && (file.extension === "md" || file.extension === "pdf")) {
-          menu.addItem((item) => {
-            item.setTitle("Horme: Convert document format").setIcon("refresh-cw")
-              .onClick(() => this.startFileConversion(file));
-          });
-        }
-      })
-    );
+              menu.addItem((item) => {
+                item.setTitle("Horme: Convert document format").setIcon("refresh-cw")
+                  .onClick(() => { void this.startFileConversion(file); });
+              });
+            }
+          })
+        );
 
     // LIVE NOTE TRACKING: Ensure Horme always knows which note is active for Tagging/Context
     this.registerEvent(
@@ -407,9 +422,9 @@ export default class HormePlugin extends Plugin {
           if (this.settings.connectionsEnabled) {
             const connLeaves = this.app.workspace.getLeavesOfType(CONNECTIONS_VIEW_TYPE);
             if (connLeaves.length > 0) {
-              const connView = connLeaves[0].view as any;
+              const connView = connLeaves[0].view as unknown as { updateConnections?: (path: string) => unknown };
               if (leaf.view.file && typeof connView.updateConnections === "function") {
-                connView.updateConnections(leaf.view.file.path);
+                void connView.updateConnections(leaf.view.file.path);
               }
             }
           }
@@ -422,42 +437,43 @@ export default class HormePlugin extends Plugin {
     URL.revokeObjectURL(this.workerUrl);
     for (const handle of this.indexDebounceMap.values()) window.clearTimeout(handle);
     this.indexDebounceMap.clear();
-    this.vaultIndexer?.flush();
-    this.historyManager?.flush();
+    void this.vaultIndexer?.flush();
+    void this.historyManager?.flush();
   }
 
   /* ── Conversion Handlers ── */
 
-  private async convertActiveNoteToDocx(view: MarkdownView) {
+  private async convertActiveNoteToDocx(view: MarkdownView): Promise<void> {
     const file = view.file;
     if (!file) return;
     try {
       const buffer = await this.docxService.generateBuffer(view.getViewData());
       await this.saveBinaryFile(file.name.replace(/\.md$/, ".docx"), buffer);
       new Notice(`Note converted to DOCX successfully.`);
-    } catch (err: any) {
+    } catch (err: unknown) {
       this.handleError(err);
     }
   }
 
-  private async convertActiveNoteToPdf(view: MarkdownView) {
+  private async convertActiveNoteToPdf(view: MarkdownView): Promise<void> {
     const file = view.file;
     if (!file) return;
     try {
       await this.saveAsPdf(view.getViewData(), file.name);
       new Notice(`Note converted to PDF successfully.`);
-    } catch (err: any) {
+    } catch (err: unknown) {
       this.handleError(err);
     }
   }
 
-  async startFileConversion(file: TFile | File) {
+  async startFileConversion(file: TFile | File): Promise<void> {
     const fileName = file.name;
     const extension = file instanceof TFile ? file.extension : fileName.split(".").pop()?.toLowerCase();
 
-    const modal = new ConversionModal(this.app, fileName, extension === "md" ? "md" : "pdf", async (targetFormat) => {
+    const modal = new ConversionModal(this.app, fileName, extension === "md" ? "md" : "pdf", (targetFormat) => {
       modal.setStarted();
-      try {
+      void (async () => {
+        try {
         if (extension === "pdf") {
           const rawText = await this.pdfService.extractText(file, (p, s) => modal.updateProgress(p, s));
           if (rawText) {
@@ -499,10 +515,11 @@ Your Goal: Reconstruct the document into clean, professional Markdown.
         }
         new Notice(`${fileName} converted successfully.`);
         modal.close();
-      } catch (err: any) {
-        this.handleError(err);
-        modal.close();
-      }
+        } catch (err: unknown) {
+          this.handleError(err);
+          modal.close();
+        }
+      })();
     });
     modal.open();
   }
@@ -525,18 +542,27 @@ Your Goal: Reconstruct the document into clean, professional Markdown.
 
   private async saveAsPdf(markdown: string, originalName: string) {
     const html2pdf = (await import("html2pdf.js")).default;
-    const div = document.createElement("div");
-    div.style.cssText = `font-family: Inter, sans-serif; font-size: 11pt; padding: 20mm; width: 210mm; background: #fff;`;
-    await MarkdownRenderer.render(this.app, markdown, div, "", this);
-    document.body.appendChild(div);
+    const div = activeDocument.createElement("div");
+    div.setCssProps({
+      fontFamily: "Inter, sans-serif",
+      fontSize: "11pt",
+      padding: "20mm",
+      width: "210mm",
+      background: "#fff"
+    });
+    const comp = new Component();
+    comp.load();
+    await MarkdownRenderer.render(this.app, markdown, div, "", comp);
+    activeDocument.body.appendChild(div);
     try {
-      const blob: Blob = await (html2pdf() as any).from(div).set({
+      const blob: Blob = await html2pdf().from(div).set({
         margin: 10, filename: originalName.replace(/\.md$/, ".pdf"),
         jsPDF: { unit: "mm", format: "a4", orientation: "portrait" }
       }).output("blob");
       await this.saveBinaryFile(originalName.replace(/\.md$/, ".pdf"), await blob.arrayBuffer());
     } finally {
-      document.body.removeChild(div);
+      activeDocument.body.removeChild(div);
+      comp.unload();
     }
   }
 
@@ -580,12 +606,19 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
       
       if (!suggested.length) { new Notice("Horme: No valid tags generated."); return; }
 
-      new ConfirmReplaceModal(this.app, "Add these tags?", suggested.map(t => `#${t}`).join("\n"), async (edited) => {
-        const finalTags = edited.split("\n").map(t => t.trim().replace(/^#/, "")).filter(Boolean);
-        await this.tagService.applyTags(file, finalTags);
-        new Notice("Horme: Tags updated ✓");
-      }).open();
-    } catch (e) {
+      new ConfirmReplaceModal(
+        this.app,
+        "Add these tags?",
+        suggested.map(t => `#${t}`).join("\n"),
+        (edited) => {
+          void (async () => {
+            const finalTags = edited.split("\n").map(t => t.trim().replace(/^#/, "")).filter(Boolean);
+            await this.tagService.applyTags(file, finalTags);
+            new Notice("Horme: Tags updated ✓");
+          })().catch(err => this.handleError(err));
+        }
+      ).open();
+    } catch (e: unknown) {
       this.handleError(e);
     }
   }
@@ -593,7 +626,7 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
   async loadAllowedTags(): Promise<string[]> {
     const path = this.settings.tagsFilePath.trim();
     if (!path) {
-      const tagMap = (this.app.metadataCache as any).getTags?.() || {};
+      const tagMap = (this.app.metadataCache as unknown as { getTags?: () => Record<string, unknown> }).getTags?.() ?? {};
       return Object.keys(tagMap).map(t => t.replace(/^#/, "").toLowerCase());
     }
     const file = this.app.vault.getAbstractFileByPath(path);
@@ -694,7 +727,7 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
         // Loop continues to feed the result back to the model
         new Notice("Horme: Processing skill results...");
       }
-    } catch (e) {
+    } catch (e: unknown) {
       this.handleError(e);
     }
   }
@@ -754,12 +787,18 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
 
         if (existingMatch) {
           const oldSummary = existingMatch[0].replace(`${field}:`, "").trim().replace(/^["'']|["'']$/g, "");
-          new GenericConfirmModal(this.app, `Overwrite existing ${field}?\n\nOld: ${oldSummary}\n\nNew: ${summary}`, async () => {
-            const updatedFm = fmBlock.replace(fieldRegex, () => fieldValue);
-            const finalContent = `---\n${updatedFm}\n---\n${afterFm}`;
-            await this.app.vault.modify(file, finalContent);
-            new Notice(`Horme: Summary updated in "${field}" field.`);
-          }).open();
+          new GenericConfirmModal(
+            this.app,
+            `Overwrite existing ${field}?\n\nOld: ${oldSummary}\n\nNew: ${summary}`,
+            () => {
+              void (async () => {
+                const updatedFm = fmBlock.replace(fieldRegex, () => fieldValue);
+                const finalContent = `---\n${updatedFm}\n---\n${afterFm}`;
+                await this.app.vault.modify(file, finalContent);
+                new Notice(`Horme: Summary updated in "${field}" field.`);
+              })().catch(e => this.handleError(e));
+            }
+          ).open();
           return;
         } else {
           // Field doesn't exist yet — append it to the existing frontmatter block
@@ -773,9 +812,9 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
 
       await this.app.vault.modify(file, newContent);
       new Notice(`Horme: Summary added to "${field}" field.`);
-    } catch (e) {
+    } catch (e: unknown) {
       console.error("Horme: Summary generation error", e);
-      this.diagnosticService.report("Summary", `Generation failed: ${e.message}`);
+      this.diagnosticService.report("Summary", `Generation failed: ${errorToMessage(e)}`);
       new Notice("Horme: Failed to generate summary.");
     }
   }
@@ -783,20 +822,24 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
   private buildSubmenu(menu: Menu, editor: Editor, sel: string) {
     for (const a of ACTIONS) {
       menu.addItem(item => {
-        item.setTitle(a.title).onClick(() => this.runAction(editor, sel, a.prompt, a.id));
+        item.setTitle(a.title).onClick(() => {
+          void this.runAction(editor, sel, a.prompt, a.id).catch(e => this.handleError(e));
+        });
       });
     }
     menu.addItem(item => {
       item.setTitle("Rewrite").onClick(() => {
         new RewriteModal(this.app, (tone) => {
           const prompt = `Rewrite the following text in a ${tone} tone. Preserve the original meaning. Return only the rewritten text.`;
-          this.runAction(editor, sel, prompt, "rewrite");
+          void this.runAction(editor, sel, prompt, "rewrite").catch(e => this.handleError(e));
         }).open();
       });
     });
     menu.addItem(item => {
       item.setTitle("Translate").onClick(() => {
-        new TranslateModal(this.app, (lang) => this.runAction(editor, sel, `Translate to ${lang}:`, "translate")).open();
+        new TranslateModal(this.app, (lang) => {
+          void this.runAction(editor, sel, `Translate to ${lang}:`, "translate").catch(e => this.handleError(e));
+        }).open();
       });
     });
   }
@@ -865,19 +908,26 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
 
       if (provider === "ollama") {
         const tagsModels = await this.fetchOllamaTagsModels();
-        fetchedModels = tagsModels.map((m: any) => m.name).filter(Boolean);
+        fetchedModels = tagsModels.map((m) => m.name).filter(Boolean);
         await this.maybeAutodetectOllamaDefaultModel(tagsModels, fetchedModels);
       } else if (provider === "lmstudio") {
-        fetchedModels = (await requestUrl({ url: `${this.settings.lmStudioUrl}/v1/models` })).json?.data?.map((m: any) => m.id) || [];
+        const res = await requestUrl({ url: `${this.settings.lmStudioUrl}/v1/models`, throw: false });
+        if (res.status === 200) {
+          const json: unknown = res.json;
+          const dataArr = asArray(getRecordProp(json, "data")) ?? [];
+          fetchedModels = dataArr
+            .map((m) => getStringProp(m, "id"))
+            .filter((m): m is string => Boolean(m));
+        }
       } else {
         fetchedModels = PROVIDER_MODELS[provider] || [];
       }
       
       this.models = fetchedModels;
       return fetchedModels;
-    } catch (e) {
+    } catch (e: unknown) {
       console.error("Horme: Failed to fetch models", e);
-      this.diagnosticService.report("Provider", `Failed to fetch models: ${e.message}`, "warning");
+      this.diagnosticService.report("Provider", `Failed to fetch models: ${errorToMessage(e)}`, "warning");
       this.models = PROVIDER_MODELS[provider] || [];
       return this.models;
     }
@@ -944,10 +994,10 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
     } catch { return false; }
   }
 
-  handleError(e: any, context?: string) {
+  handleError(e: unknown, context?: string) {
     console.error("Horme Error:", e);
     const title = context || "Plugin Error";
-    const message = e.message || String(e) || "An unknown error occurred.";
+    const message = errorToMessage(e) || "An unknown error occurred.";
     
     // Log to Intelligence Hub
     this.diagnosticService.report(title, message, "error");
@@ -965,9 +1015,9 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
         try {
           const content = await this.app.vault.read(file);
           if (content.trim()) prompt = content;
-        } catch (e: any) {
+        } catch (e: unknown) {
           console.error("Horme: Failed to read system prompt note", e);
-          this.diagnosticService.report("System Prompt", `Failed to read prompt note: ${e.message}`, "warning");
+          this.diagnosticService.report("System Prompt", `Failed to read prompt note: ${errorToMessage(e)}`, "warning");
         }
       }
     }
@@ -1010,21 +1060,20 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
         prompt: content.trim()
       });
       seenPaths.add(file.path);
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error(`Horme: Failed to read preset note ${file.path}`, e);
-      this.diagnosticService.report("Presets", `Failed to read preset: ${file.path} — ${e.message}`, "warning");
+      this.diagnosticService.report("Presets", `Failed to read preset: ${file.path} — ${errorToMessage(e)}`, "warning");
     }
   }
 
   setIndexingStatus(text: string | null) {
     if (!this.statusBarItem) return;
     if (text === null) {
-      this.statusBarItem.style.display = "none";
-      this.statusBarItem.textContent = "";
+      this.statusBarItem.setCssProps({ display: "none" });
     } else {
-      this.statusBarItem.style.display = "";
+      this.statusBarItem.setCssProps({ display: "" });
       this.statusBarItem.textContent = `● ${text}`;
-      this.statusBarItem.style.color = "var(--text-success)";
+      this.statusBarItem.setCssProps({ color: "var(--text-success)" });
     }
   }
 

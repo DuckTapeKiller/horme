@@ -1,5 +1,6 @@
 import { requestUrl } from "obsidian";
 import { Skill, SkillParameter } from "./types";
+import { asArray, errorToMessage, getRecordProp, getStringProp, isRecord } from "../utils/TypeGuards";
 
 export class WikipediaSkill implements Skill {
   id = "wikipedia";
@@ -24,56 +25,70 @@ export class WikipediaSkill implements Skill {
 
   instructions = `To use this skill, output exactly: <call:wikipedia>{"query": "your search term", "language": "en"}</call>. The "language" parameter is optional (defaults to "en"); use "es" for Spanish Wikipedia, "fr" for French, etc. Use this whenever the user asks for a factual verification, when you need to confirm a historical, scientific, or geographic detail, or when fact-checking claims.`;
 
-  async execute(params: { query: string; language?: string }): Promise<string> {
+  async execute(params: unknown): Promise<string> {
     try {
-      const { query, language } = params;
+      const query = getStringProp(params, "query");
+      if (!query) return `Invalid parameters for ${this.name}: expected {"query": string, "language"?: string}.`;
+      const language = getStringProp(params, "language");
       const lang = (language || "en").toLowerCase().slice(0, 2);
       const wikiBase = `https://${lang}.wikipedia.org`;
       
       // 1. Search for the most relevant page
       const searchUrl = `${wikiBase}/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&srlimit=3&format=json&origin=*`;
       const searchRes = await requestUrl({ url: searchUrl });
-      const searchData = searchRes.json;
+      const searchData: unknown = searchRes.json;
       
-      if (!searchData.query?.search || searchData.query.search.length === 0) {
+      const queryObj = getRecordProp(searchData, "query");
+      const searchArr = asArray(getRecordProp(queryObj, "search")) ?? [];
+      if (searchArr.length === 0) {
         return `No Wikipedia (${lang}) results found for "${query}".`;
       }
 
-      const bestMatch = searchData.query.search[0];
-      const pageTitle = bestMatch.title;
+      const bestMatch = searchArr[0];
+      const pageTitle = getStringProp(bestMatch, "title");
+      if (!pageTitle) return `No Wikipedia (${lang}) results found for "${query}".`;
 
       // 2. Fetch the summary for context
       const summaryUrl = `${wikiBase}/api/rest_v1/page/summary/${encodeURIComponent(pageTitle.replace(/ /g, "_"))}`;
       const summaryRes = await requestUrl({ url: summaryUrl });
-      const summaryData = summaryRes.json;
+      const summaryData: unknown = summaryRes.json;
 
       let output = `## Wikipedia: ${pageTitle} (${lang})\n\n`;
 
-      if (summaryData.extract) {
-        output += `**Summary:** ${summaryData.extract}\n\n`;
+      const extractSummary = getStringProp(summaryData, "extract");
+      if (extractSummary) {
+        output += `**Summary:** ${extractSummary}\n\n`;
       }
 
       // 3. Fetch relevant sections from the full article for deeper fact-checking
       const sectionsUrl = `${wikiBase}/w/api.php?action=parse&page=${encodeURIComponent(pageTitle)}&prop=sections&format=json&origin=*`;
       try {
         const sectionsRes = await requestUrl({ url: sectionsUrl });
-        const sectionsData = sectionsRes.json;
+        const sectionsData: unknown = sectionsRes.json;
         
-        if (sectionsData.parse?.sections) {
+        const parseObj = getRecordProp(sectionsData, "parse");
+        const sections = asArray(getRecordProp(parseObj, "sections")) ?? [];
+        if (sections.length > 0) {
           // Find sections most relevant to the query (top-level sections only, max 3)
-          const topSections = sectionsData.parse.sections
-            .filter((s: any) => s.toclevel <= 2 && s.line.length > 0)
+          const topSections = sections
+            .filter((s) => {
+              const level = (getRecordProp(s, "toclevel"));
+              const line = getStringProp(s, "line") ?? "";
+              return typeof level === "number" && level <= 2 && line.length > 0;
+            })
             .slice(0, 6);
 
           if (topSections.length > 0) {
             // Fetch plain text extract of the page with section info
             const extractUrl = `${wikiBase}/w/api.php?action=query&titles=${encodeURIComponent(pageTitle)}&prop=extracts&exintro=0&explaintext=1&exsectionformat=plain&exchars=3000&format=json&origin=*`;
             const extractRes = await requestUrl({ url: extractUrl });
-            const pages = extractRes.json.query?.pages;
+            const extractJson: unknown = extractRes.json;
+            const pages = getRecordProp(getRecordProp(extractJson, "query"), "pages");
             
-            if (pages) {
+            if (isRecord(pages)) {
               const pageId = Object.keys(pages)[0];
-              const fullExtract = pages[pageId]?.extract;
+              const pageObj = pages[pageId];
+              const fullExtract = getStringProp(pageObj, "extract");
               
               if (fullExtract) {
                 // Find query-relevant portions of the extract
@@ -90,8 +105,11 @@ export class WikipediaSkill implements Skill {
       }
 
       // 4. Source URL
-      if (summaryData.content_urls?.desktop?.page) {
-        output += `\n<!-- ${summaryData.content_urls.desktop.page} -->`;
+      const contentUrls = getRecordProp(summaryData, "content_urls");
+      const desktop = getRecordProp(contentUrls, "desktop");
+      const pageUrl = getStringProp(desktop, "page");
+      if (pageUrl) {
+        output += `\n<!-- ${pageUrl} -->`;
       }
 
       // Cap total output
@@ -100,10 +118,10 @@ export class WikipediaSkill implements Skill {
       }
 
       return output;
-    } catch (e) {
+    } catch (e: unknown) {
 
       console.error("Horme Wikipedia Skill Error:", e);
-      throw e;
+      throw new Error(errorToMessage(e));
     }
   }
 

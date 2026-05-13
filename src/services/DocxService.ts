@@ -9,7 +9,7 @@ export class DocxService {
       }],
     });
 
-    return await Packer.toBuffer(doc) as Buffer;
+    return await Packer.toBuffer(doc);
   }
 
   private markdownToDocxParagraphs(markdown: string): Paragraph[] {
@@ -31,7 +31,7 @@ export class DocxService {
         continue;
       }
       
-      const listMatch = line.match(/^[\-\*]\s+(.*)$/);
+      const listMatch = line.match(/^[-*]\s+(.*)$/);
       if (listMatch) {
         paragraphs.push(new Paragraph({
           children: this.parseInlineStyles(listMatch[1]),

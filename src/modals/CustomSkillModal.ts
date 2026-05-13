@@ -52,7 +52,7 @@ export class CustomSkillModal extends Modal {
         .setValue(this.method)
         .onChange(v => {
           this.method = v as "GET" | "POST";
-          bodySetting.settingEl.style.display = v === "POST" ? "" : "none";
+          bodySetting.settingEl.setCssProps({ display: v === "POST" ? "" : "none" });
         })
       );
 
@@ -61,7 +61,7 @@ export class CustomSkillModal extends Modal {
       .setDesc("Use {{query}} where the user's input should go.")
       .addText(t => {
         t.setPlaceholder("https://api.example.com/search?q={{query}}");
-        t.inputEl.style.width = "100%";
+        t.inputEl.setCssProps({ width: "100%" });
         t.onChange(v => { this.url = v.trim(); });
       });
     urlSetting.settingEl.addClass("horme-modal-vertical-setting");
@@ -72,8 +72,8 @@ export class CustomSkillModal extends Modal {
       .addTextArea(t => {
         t.setPlaceholder("Authorization: Bearer sk-...\nX-Custom: value");
         t.inputEl.rows = 3;
-        t.inputEl.style.width = "100%";
-        t.inputEl.style.resize = "vertical";
+        t.inputEl.setCssProps({ width: "100%" });
+        t.inputEl.setCssProps({ resize: "vertical" });
         t.onChange(v => { this.headersRaw = v; });
       });
     headersSetting.settingEl.addClass("horme-modal-vertical-setting");
@@ -84,19 +84,19 @@ export class CustomSkillModal extends Modal {
       .addTextArea(t => {
         t.setPlaceholder('{"q": "{{query}}", "source": "en", "target": "fr"}');
         t.inputEl.rows = 4;
-        t.inputEl.style.width = "100%";
-        t.inputEl.style.resize = "vertical";
+        t.inputEl.setCssProps({ width: "100%" });
+        t.inputEl.setCssProps({ resize: "vertical" });
         t.onChange(v => { this.body = v; });
       });
     bodySetting.settingEl.addClass("horme-modal-vertical-setting");
-    bodySetting.settingEl.style.display = this.method === "POST" ? "" : "none";
+    bodySetting.settingEl.setCssProps({ display: this.method === "POST" ? "" : "none" });
 
     new Setting(contentEl)
       .setName("Response Path")
       .setDesc("Dot-path to extract data from JSON response (e.g. results[0].text). Leave empty to use full response.")
       .addText(t => {
         t.setPlaceholder("data.items[0].content");
-        t.inputEl.style.width = "100%";
+        t.inputEl.setCssProps({ width: "100%" });
         t.onChange(v => { this.responsePath = v.trim(); });
       });
 

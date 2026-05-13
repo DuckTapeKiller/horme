@@ -1,15 +1,15 @@
-import { ItemView, WorkspaceLeaf, MarkdownRenderer, MarkdownView, setIcon, Notice, TFile } from "obsidian";
+import { ItemView, WorkspaceLeaf, MarkdownRenderer, MarkdownView, setIcon, Notice, TFile, type EventRef } from "obsidian";
 import HormePlugin from "../../main";
 import { VIEW_TYPE } from "../constants";
 import { ChatMessage, SavedConversation } from "../types";
 import { NotePickerModal } from "../modals/NotePickerModal";
-import { RewriteModal } from "../modals/RewriteModal";
 import { GenericConfirmModal } from "../modals/GenericConfirmModal";
 
 export class HormeChatView extends ItemView {
   plugin: HormePlugin;
   private history: ChatMessage[] = [];
   private messagesEl!: HTMLElement;
+  private loadingOverlay!: HTMLElement;
   private inputEl!: HTMLTextAreaElement;
   private sendBtn!: HTMLButtonElement;
   private modelSelect!: HTMLSelectElement;
@@ -25,14 +25,14 @@ export class HormeChatView extends ItemView {
 
   private activeReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
   private activeAbortController: AbortController | null = null;
-  private lastMsgs: Array<{ role: string; content: string }> | null = null;
+  private lastMsgs: ChatMessage[] | null = null;
   private lastModel: string | null = null;
   private conversationId: string = this.generateId();
   private uploadedDocContent: string | null = null;
   private uploadedDocName: string | null = null;
   private uploadedImages: string[] = [];
   private uploadedAudio: string | null = null;
-  private leafChangeRef: any | null = null;
+  private leafChangeRef: EventRef | null = null;
   private rollingRAGContext: string[] = [];
   private selectedContextNotes: TFile[] = [];
   private contextNotesLabel!: HTMLElement;
@@ -42,20 +42,20 @@ export class HormeChatView extends ItemView {
   private skillsMenuEl: HTMLElement | null = null;
  
   private async pickImage() {
-    const fileInput = document.createElement("input");
+    const fileInput = activeDocument.createElement("input");
     fileInput.type = "file";
     fileInput.accept = "image/*";
-    fileInput.style.display = "none";
-    document.body.appendChild(fileInput);
+    fileInput.setCssProps({ display: "none" });
+    activeDocument.body.appendChild(fileInput);
 
     const cleanup = () => {
       fileInput.remove();
       window.removeEventListener("focus", onWindowFocus);
     };
-    const onWindowFocus = () => setTimeout(cleanup, 500);
+    const onWindowFocus = () => window.setTimeout(cleanup, 500);
     window.addEventListener("focus", onWindowFocus, { once: true });
 
-    fileInput.addEventListener("change", async () => {
+    fileInput.addEventListener("change", () => {
       window.removeEventListener("focus", onWindowFocus);
       const file = fileInput.files?.[0];
       if (!file) { fileInput.remove(); return; }
@@ -190,19 +190,19 @@ export class HormeChatView extends ItemView {
     this.containerEl.querySelector(".horme-skill-pill")?.remove();
 
     const inputWrapper = this.inputEl.parentElement!;
-    const pill = document.createElement("div");
+    const pill = activeDocument.createElement("div");
     pill.className = "horme-skill-pill";
 
-    const iconEl = document.createElement("span");
+    const iconEl = activeDocument.createElement("span");
     iconEl.className = "horme-skill-pill-icon";
     setIcon(iconEl, this.getSkillIcon(skillId));
     pill.appendChild(iconEl);
 
-    const label = document.createElement("span");
+    const label = activeDocument.createElement("span");
     label.textContent = skillName;
     pill.appendChild(label);
 
-    const dismiss = document.createElement("button");
+    const dismiss = activeDocument.createElement("button");
     dismiss.className = "horme-skill-pill-dismiss";
     dismiss.textContent = "×";
     dismiss.title = "Disarm skill";
@@ -243,7 +243,7 @@ export class HormeChatView extends ItemView {
         else if (p === "openrouter") this.plugin.settings.openRouterModel = v;
         else if (p === "lmstudio")   this.plugin.settings.lmStudioModel = v;
         else                         this.plugin.settings.defaultModel = v;
-        this.plugin.saveSettings();
+        void this.plugin.saveSettings().catch(e => this.plugin.handleError(e, "Settings"));
       });
 
       this.presetSelect = selectsWrap.createEl("select", { cls: "horme-select horme-preset-select" });
@@ -255,7 +255,9 @@ export class HormeChatView extends ItemView {
       const refreshBtn = row0.createEl("button", { cls: "horme-header-btn" });
       refreshBtn.classList.add("horme-icon-btn");
       setIcon(refreshBtn, "refresh-cw");
-      refreshBtn.addEventListener("click", () => this.refreshModels());
+      refreshBtn.addEventListener("click", () => {
+        void this.refreshModels().catch(e => this.plugin.handleError(e, "Models"));
+      });
 
       const row1 = header.createDiv("horme-header-row horme-header-row-actions");
       const row1Left = row1.createDiv("horme-header-actions-left");
@@ -263,10 +265,14 @@ export class HormeChatView extends ItemView {
 
 
       const tagBtn = row1Left.createEl("button", { cls: "horme-header-btn", text: "Tags" });
-      tagBtn.addEventListener("click", () => this.plugin.suggestTagsForActiveNote());
+      tagBtn.addEventListener("click", () => {
+        void this.plugin.suggestTagsForActiveNote().catch(e => this.plugin.handleError(e, "Tags"));
+      });
 
       const summaryBtn = row1Left.createEl("button", { cls: "horme-header-btn", text: "Summary" });
-      summaryBtn.addEventListener("click", () => this.plugin.generateFrontmatterSummary());
+      summaryBtn.addEventListener("click", () => {
+        void this.plugin.generateFrontmatterSummary().catch(e => this.plugin.handleError(e, "Summary"));
+      });
 
       // Skills dropdown trigger button
       const skillsBtn = row1Left.createEl("button", {
@@ -295,8 +301,10 @@ export class HormeChatView extends ItemView {
           // Ensure it doesn't overflow the left edge
           left = Math.max(4, left); // 4px margin
 
-          this.skillsMenuEl!.style.top = `${rect.bottom - containerRect.top + 4}px`;
-          this.skillsMenuEl!.style.left = `${left}px`;
+          this.skillsMenuEl!.setCssProps({
+            top: `${rect.bottom - containerRect.top + 4}px`,
+            left: `${left}px`,
+          });
         } else {
           this.skillsMenuEl!.classList.add("horme-skills-menu-hidden");
         }
@@ -306,15 +314,19 @@ export class HormeChatView extends ItemView {
       this.documentClickHandler = () => {
         this.skillsMenuEl?.classList.add("horme-skills-menu-hidden");
       };
-      document.addEventListener("click", this.documentClickHandler);
+      activeDocument.addEventListener("click", this.documentClickHandler);
 
       const historyBtn = row1Right.createEl("button", { cls: "horme-header-btn horme-icon-btn" });
       setIcon(historyBtn, "history");
-      historyBtn.addEventListener("click", () => this.toggleHistoryPanel());
+      historyBtn.addEventListener("click", () => {
+        void this.toggleHistoryPanel().catch(e => this.plugin.handleError(e));
+      });
 
       const exportBtn = row1Right.createEl("button", { cls: "horme-header-btn horme-icon-btn" });
       setIcon(exportBtn, "download");
-      exportBtn.addEventListener("click", () => this.exportConversation());
+      exportBtn.addEventListener("click", () => {
+        void this.exportConversation().catch(e => this.plugin.handleError(e));
+      });
 
       const row2 = header.createDiv("horme-header-row");
       const label = row2.createEl("label", { cls: "horme-context-toggle" });
@@ -322,7 +334,7 @@ export class HormeChatView extends ItemView {
       label.createSpan({ text: "Use current note as context" });
 
       const vbLabel = row2.createEl("label", { cls: "horme-context-toggle" });
-      vbLabel.style.marginLeft = "12px";
+      vbLabel.setCssProps({ marginLeft: "12px" });
       this.vaultBrainToggle = vbLabel.createEl("input", { type: "checkbox" });
       this.vaultBrainToggle.checked = true;
       vbLabel.createSpan({ text: "Use Vault Brain" });
@@ -353,37 +365,47 @@ export class HormeChatView extends ItemView {
         }).open();
       });
       const clearBtn = row3.createEl("button", { cls: "horme-header-btn", text: "Clear" });
-      clearBtn.addEventListener("click", () => this.clearChat());
+      clearBtn.addEventListener("click", () => {
+        void this.clearChat().catch(e => this.plugin.handleError(e));
+      });
       this.contextNotesLabel = header.createDiv("horme-context-note-label");
-      this.contextToggle.addEventListener("change", async () => {
-        if (
-          this.contextToggle.checked &&
-          !this.plugin.isLocalProviderActive() &&
-          !this.plugin.settings.contextCloudWarningShown
-        ) {
-          const provider = this.plugin.settings.aiProvider.toUpperCase();
-          new GenericConfirmModal(
-            this.app,
-            `Privacy notice: Your current note's full text will be sent to ${provider}, a cloud provider. The content will leave your device. Do you want to continue?`,
-            async () => {
-              this.plugin.settings.contextCloudWarningShown = true;
-              await this.plugin.saveSettings();
-              this.updateContextNoteLabel();
-            },
-            () => {
-              this.contextToggle.checked = false;
-              this.updateContextNoteLabel();
-            }
-          ).open();
-        } else {
-          this.updateContextNoteLabel();
-        }
+      this.contextToggle.addEventListener("change", () => {
+        void (async () => {
+          if (
+            this.contextToggle.checked &&
+            !this.plugin.isLocalProviderActive() &&
+            !this.plugin.settings.contextCloudWarningShown
+          ) {
+            const provider = this.plugin.settings.aiProvider.toUpperCase();
+            new GenericConfirmModal(
+              this.app,
+              `Privacy notice: Your current note's full text will be sent to ${provider}, a cloud provider. The content will leave your device. Do you want to continue?`,
+              () => {
+                void (async () => {
+                  this.plugin.settings.contextCloudWarningShown = true;
+                  await this.plugin.saveSettings();
+                  this.updateContextNoteLabel();
+                })();
+              },
+              () => {
+                this.contextToggle.checked = false;
+                this.updateContextNoteLabel();
+              }
+            ).open();
+          } else {
+            this.updateContextNoteLabel();
+          }
+        })().catch(e => this.plugin.handleError(e));
       });
 
       this.leafChangeRef = this.app.workspace.on("active-leaf-change", () => this.updateContextNoteLabel());
       this.registerEvent(this.leafChangeRef);
 
       /* Messages */
+      this.loadingOverlay = this.containerEl.createDiv("horme-loading-overlay");
+      this.loadingOverlay.setCssProps({ display: "none" });
+
+      this.loadingOverlay.createDiv("horme-spinner");
       this.messagesEl = content.createDiv("horme-messages");
       this.renderEmpty();
 
@@ -399,7 +421,7 @@ export class HormeChatView extends ItemView {
       this.inputEl.addEventListener("keydown", (e) => {
         if (e.key === "Enter" && !e.shiftKey) {
           e.preventDefault();
-          this.sendMessage();
+          void this.sendMessage().catch(err => this.plugin.handleError(err, "Chat"));
         }
       });
 
@@ -408,15 +430,15 @@ export class HormeChatView extends ItemView {
       const uploadBtn = actionRow.createEl("button", { cls: "horme-upload-btn" });
       setIcon(uploadBtn, "paperclip");
       uploadBtn.title = "Upload document";
-      uploadBtn.addEventListener("click", (e) => {
-        this.pickDocument();
+      uploadBtn.addEventListener("click", () => {
+        void this.pickDocument().catch(err => this.plugin.handleError(err, "Upload"));
       });
 
       const imageBtn = actionRow.createEl("button", { cls: "horme-image-btn" });
       setIcon(imageBtn, "image");
       imageBtn.title = "Upload image";
-      imageBtn.addEventListener("click", (e) => {
-        this.pickImage();
+      imageBtn.addEventListener("click", () => {
+        void this.pickImage().catch(err => this.plugin.handleError(err, "Upload"));
       });
 
       actionRow.createDiv("horme-input-spacer");
@@ -425,13 +447,15 @@ export class HormeChatView extends ItemView {
       setIcon(this.sendBtn, "send");
       this.sendBtn.addEventListener("pointerdown", (e) => {
         e.preventDefault();
-        if (this.isGenerating) this.stopGeneration();
-        else this.sendMessage();
+        if (this.isGenerating) void this.stopGeneration();
+        else void this.sendMessage().catch(err => this.plugin.handleError(err, "Chat"));
       });
 
-      this.unregisterSettingsListener = this.plugin.onSettingsChange(async () => {
-        if (this.presetSelect) await this.refreshPresets();
-        await this.updateVaultBrainToggle();
+      this.unregisterSettingsListener = this.plugin.onSettingsChange(() => {
+        void (async () => {
+          if (this.presetSelect) await this.refreshPresets();
+          await this.updateVaultBrainToggle();
+        })();
       });
 
       await this.refreshModels();
@@ -440,19 +464,19 @@ export class HormeChatView extends ItemView {
       const getDrawer = () => this.containerEl.closest('.workspace-drawer') as HTMLElement | null;
       this.inputEl.addEventListener("focus", () => {
         getDrawer()?.classList.add('horme-keyboard-open');
-        setTimeout(() => {
+        window.setTimeout(() => {
           this.inputEl.scrollIntoView({ behavior: "smooth", block: "end" });
           this.scrollToBottom();
         }, 300);
       });
       this.inputEl.addEventListener("blur", () => {
-        setTimeout(() => {
+        window.setTimeout(() => {
           getDrawer()?.classList.remove('horme-keyboard-open');
         }, 100);
       });
 
       this.updateConnectionStatus();
-    } catch (e) {
+    } catch (e: unknown) {
       this.plugin.handleError(e, "Chat Interface");
     }
   }
@@ -463,7 +487,7 @@ export class HormeChatView extends ItemView {
     this.unregisterSettingsListener?.();
     // Clean up global listener to prevent leak on repeated open/close
     if (this.documentClickHandler) {
-      document.removeEventListener("click", this.documentClickHandler);
+      activeDocument.removeEventListener("click", this.documentClickHandler);
       this.documentClickHandler = null;
     }
     this.contentEl.empty();
@@ -472,10 +496,10 @@ export class HormeChatView extends ItemView {
   private updateContextNoteLabel() {
     if (!this.contextToggle.checked) {
       this.contextNoteLabel.empty();
-      this.contextNoteLabel.style.display = "none";
+      this.contextNoteLabel.setCssProps({ display: "none" });
       return;
     }
-    this.contextNoteLabel.style.display = "";
+    this.contextNoteLabel.setCssProps({ display: "" });
     const mdLeaf = this.plugin.lastActiveMarkdownLeaf;
     const mdView = mdLeaf?.view instanceof MarkdownView ? mdLeaf.view : null;
     if (mdView && mdView.file) {
@@ -491,31 +515,37 @@ export class HormeChatView extends ItemView {
       && (this.plugin.isLocalProviderActive() || this.plugin.settings.allowCloudRAG);
     const hasIndex = canUseBySettings ? await this.plugin.vaultIndexer.hasBuiltIndex() : false;
     const canUse = canUseBySettings && hasIndex;
-    this.vaultBrainLabel.style.display = canUse ? "" : "none";
+    this.vaultBrainLabel.setCssProps({ display: canUse ? "" : "none" });
     if (!canUse) this.vaultBrainToggle.checked = false;
   }
 
   private updateContextNotesLabel() {
     this.contextNotesLabel.empty();
     if (this.selectedContextNotes.length === 0) {
-      this.contextNotesLabel.style.display = "none";
+      this.contextNotesLabel.setCssProps({ display: "none" });
       return;
     }
-    this.contextNotesLabel.style.display = "block";
-    this.contextNotesLabel.style.fontSize = "11px";
-    this.contextNotesLabel.style.lineHeight = "1.6";
-    this.contextNotesLabel.style.opacity = "0.8";
+    this.contextNotesLabel.setCssProps({ display: "block" });
+    this.contextNotesLabel.setCssProps({
+      fontSize: "11px",
+      lineHeight: "1.6",
+      opacity: "0.8"
+    });
 
     for (const file of this.selectedContextNotes) {
       const row = this.contextNotesLabel.createDiv();
-      row.style.display = "flex";
-      row.style.alignItems = "center";
-      row.style.gap = "4px";
+      row.setCssProps({
+        display: "flex",
+        alignItems: "center",
+        gap: "4px"
+      });
 
       const removeBtn = row.createEl("span", { text: "\u00d7" });
-      removeBtn.style.cursor = "pointer";
-      removeBtn.style.opacity = "0.6";
-      removeBtn.style.fontWeight = "bold";
+      removeBtn.setCssProps({
+        cursor: "pointer",
+        opacity: "0.6",
+        fontWeight: "bold",
+      });
       removeBtn.addEventListener("click", () => {
         this.selectedContextNotes = this.selectedContextNotes.filter(f => f.path !== file.path);
         this.updateContextNotesLabel();
@@ -577,7 +607,7 @@ export class HormeChatView extends ItemView {
       this.activeAbortController = null;
     }
     if (this.activeReader) {
-      try { await this.activeReader.cancel(); } catch { }
+      try { await this.activeReader.cancel(); } catch { /* ignore */ }
       this.activeReader = null;
     }
     this.isGenerating = false;
@@ -586,42 +616,45 @@ export class HormeChatView extends ItemView {
   }
 
   private async pickDocument() {
-    const fileInput = document.createElement("input");
+    const fileInput = activeDocument.createElement("input");
     fileInput.type = "file";
     fileInput.accept = ".pdf,.txt,.md";
-    fileInput.style.display = "none";
-    document.body.appendChild(fileInput);
+    fileInput.setCssProps({ display: "none" });
+    activeDocument.body.appendChild(fileInput);
 
     const cleanup = () => {
       fileInput.remove();
       window.removeEventListener("focus", onWindowFocus);
     };
-    const onWindowFocus = () => setTimeout(cleanup, 500);
+    const onWindowFocus = () => window.setTimeout(cleanup, 500);
     window.addEventListener("focus", onWindowFocus, { once: true });
 
-    fileInput.addEventListener("change", async () => {
-      window.removeEventListener("focus", onWindowFocus);
-      const file = fileInput.files?.[0];
-      if (!file) { fileInput.remove(); return; }
+    fileInput.addEventListener("change", () => {
+      void (async () => {
+        window.removeEventListener("focus", onWindowFocus);
+        const file = fileInput.files?.[0];
+        if (!file) { fileInput.remove(); return; }
 
-      try {
-        const text = file.name.toLowerCase().endsWith(".pdf")
-          ? await this.plugin.pdfService.extractText(file)
-          : await file.text();
+        try {
+          const text = file.name.toLowerCase().endsWith(".pdf")
+            ? await this.plugin.pdfService.extractText(file)
+            : await file.text();
 
-        this.uploadedDocContent = text;
-        this.uploadedDocName = file.name;
+          this.uploadedDocContent = text;
+          this.uploadedDocName = file.name;
 
-        if (!this.history.length) this.messagesEl.empty();
-        const notice = this.messagesEl.createDiv("horme-doc-notice");
-        notice.textContent = `📎 ${file.name} loaded as context`;
-        this.scrollToBottom();
-        new Notice(`📎 ${file.name} loaded as context`);
-      } catch (err: any) {
-        new Notice(`Error loading document: ${err.message || err}`);
-      } finally {
-        fileInput.remove();
-      }
+          if (!this.history.length) this.messagesEl.empty();
+          const notice = this.messagesEl.createDiv("horme-doc-notice");
+          notice.textContent = `📎 ${file.name} loaded as context`;
+          this.scrollToBottom();
+          new Notice(`📎 ${file.name} loaded as context`);
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          new Notice(`Error loading document: ${msg}`);
+        } finally {
+          fileInput.remove();
+        }
+      })();
     });
     fileInput.click();
   }
@@ -693,7 +726,7 @@ export class HormeChatView extends ItemView {
         });
         this.scrollToBottom();
 
-      } catch (e: any) {
+      } catch (e: unknown) {
         loadingEl.remove();
         this.plugin.handleError(e);
       }
@@ -702,7 +735,7 @@ export class HormeChatView extends ItemView {
     }
     // ── End forced skill execution ───────────────────────────────────────────
 
-    let msgs: Array<{ role: string; content: string }>;
+    let msgs: ChatMessage[];
     let model: string;
     let ragWasInjected = false;
     
@@ -867,7 +900,7 @@ export class HormeChatView extends ItemView {
 
       msgs = [];
       const isFirstMessage = this.history.length === 1;
-      const currentMsg: any = { role: "user", content: text };
+      const currentMsg: ChatMessage = { role: "user", content: text };
       
       if (this.uploadedImages.length > 0) {
         if (!this.plugin.isLocalProviderActive()) {
@@ -909,20 +942,19 @@ export class HormeChatView extends ItemView {
     setIcon(this.sendBtn, "square");
     this.sendBtn.classList.add("horme-stop-btn");
     const loadingEl = this.showLoading();
-    this.handleStreamingResponse(msgs, model, loadingEl, initialSourcePath, ragWasInjected, 0, false, currentSources, [])
+    this.handleStreamingResponse(msgs, model, loadingEl, initialSourcePath, ragWasInjected, 0, currentSources, [])
       .catch(e => this.plugin.handleError(e));
   }
 
   private static readonly MAX_SKILL_DEPTH = 5;
 
   private async handleStreamingResponse(
-    msgs: any[],
+    msgs: ChatMessage[],
     model: string,
     loadingEl: HTMLElement | null,
     initialSourcePath: string | null,
     suppressVaultSkill: boolean,
     skillDepth: number,
-    suppressRAG = false,
     sources: string[] = [],
     skillSourceLinks: string[] = []
   ) {
@@ -1066,7 +1098,7 @@ export class HormeChatView extends ItemView {
               const skillLoading = this.showLoading(displayName);
               const loadingSpan = skillLoading.querySelector("span");
               if (loadingSpan) {
-                const iconEl = document.createElement("span");
+                const iconEl = activeDocument.createElement("span");
                 iconEl.className = "horme-skill-loading-icon";
                 setIcon(iconEl, this.getSkillIcon(skillName));
                 loadingSpan.insertBefore(iconEl, loadingSpan.firstChild);
@@ -1109,7 +1141,7 @@ export class HormeChatView extends ItemView {
 
             if (!hasTerminalSkill) {
               // Prepare the next turn in the loop
-              const nextMsgs: any[] = [];
+              const nextMsgs: ChatMessage[] = [];
               const effectivePrompt = this.sessionSystemPromptOverride ?? await this.plugin.getEffectiveSystemPrompt();
               if (effectivePrompt) nextMsgs.push({ role: "system", content: effectivePrompt });
               
@@ -1122,7 +1154,7 @@ export class HormeChatView extends ItemView {
                 new Notice("Horme: Maximum skill depth reached. Stopping skill loop.");
               } else {
                 const nextLoading = this.showLoading();
-                await this.handleStreamingResponse(nextMsgs, model, nextLoading, initialSourcePath, false, skillDepth + 1, false, [], aggregatedSkillLinks);
+                await this.handleStreamingResponse(nextMsgs, model, nextLoading, initialSourcePath, false, skillDepth + 1, [], aggregatedSkillLinks);
               }
             } else {
               // Terminal skills: save history and stop — no LLM synthesis needed
@@ -1149,8 +1181,8 @@ export class HormeChatView extends ItemView {
             messages: this.history
           });
       }
-    } catch (e: any) {
-      if (e.name === "AbortError") {
+    } catch (e: unknown) {
+      if (e instanceof DOMException && e.name === "AbortError") {
         new Notice("Generation stopped.");
       } else {
         if (loadingEl) loadingEl.remove();
@@ -1171,8 +1203,9 @@ export class HormeChatView extends ItemView {
     const copyBtn = wrapper.createEl("button", { cls: "horme-save-btn", text: "Copy" });
     setIcon(copyBtn, "copy");
     copyBtn.addEventListener("click", () => {
-      navigator.clipboard.writeText(content);
-      new Notice("Copied to clipboard");
+      void navigator.clipboard.writeText(content)
+        .then(() => new Notice("Copied to clipboard"))
+        .catch(e => this.plugin.handleError(e, "Clipboard"));
     });
 
     const regenBtn = wrapper.createEl("button", { cls: "horme-save-btn", text: "Regenerate" });
@@ -1180,21 +1213,23 @@ export class HormeChatView extends ItemView {
     regenBtn.addEventListener("click", () => {
       bubbleEl.remove();
       wrapper.remove();
-      this.sendMessage(true);
+      void this.sendMessage(true).catch(e => this.plugin.handleError(e, "Chat"));
     });
 
     const saveBtn = wrapper.createEl("button", { cls: "horme-save-btn", text: "Save as note" });
     setIcon(saveBtn, "file-plus");
-    saveBtn.addEventListener("click", async () => {
-      const folder = this.plugin.settings.exportFolder.trim() || "HORME";
-      if (!(await this.app.vault.adapter.exists(folder))) await this.app.vault.createFolder(folder);
-      const baseName = this.uploadedDocName ? this.uploadedDocName.replace(/\.[^.]+$/, "") : "Horme response";
-      let fileName = `${folder}/${baseName}.md`;
-      if (await this.app.vault.adapter.exists(fileName)) {
-        fileName = `${folder}/${baseName} ${new Date().getTime()}.md`;
-      }
-      await this.app.vault.create(fileName, content);
-      new Notice(`Saved as ${fileName}`);
+    saveBtn.addEventListener("click", () => {
+      void (async () => {
+        const folder = this.plugin.settings.exportFolder.trim() || "HORME";
+        if (!(await this.app.vault.adapter.exists(folder))) await this.app.vault.createFolder(folder);
+        const baseName = this.uploadedDocName ? this.uploadedDocName.replace(/\.[^.]+$/, "") : "Horme response";
+        let fileName = `${folder}/${baseName}.md`;
+        if (await this.app.vault.adapter.exists(fileName)) {
+          fileName = `${folder}/${baseName} ${new Date().getTime()}.md`;
+        }
+        await this.app.vault.create(fileName, content);
+        new Notice(`Saved as ${fileName}`);
+      })().catch(e => this.plugin.handleError(e));
     });
   }
 
@@ -1203,12 +1238,13 @@ export class HormeChatView extends ItemView {
     const copyBtn = wrapper.createEl("button", { cls: "horme-save-btn", text: "Copy" });
     setIcon(copyBtn, "copy");
     copyBtn.addEventListener("click", () => {
-      navigator.clipboard.writeText(content);
-      new Notice("Copied to clipboard");
+      void navigator.clipboard.writeText(content)
+        .then(() => new Notice("Copied to clipboard"))
+        .catch(e => this.plugin.handleError(e, "Clipboard"));
     });
   }
 
-  private async renderSkillResultBox(skillId: string, displayName: string, params: any, result: string) {
+  private async renderSkillResultBox(skillId: string, displayName: string, params: unknown, result: string) {
     const summaryText = this.formatSkillSummary(displayName, params);
     const resultBubble = this.messagesEl.createDiv("horme-msg horme-msg-assistant");
     const details = resultBubble.createEl("details", { cls: "horme-reasoning-details" });
@@ -1294,14 +1330,16 @@ export class HormeChatView extends ItemView {
       const filename = path.split("/").pop() || path;
       const pill = listEl.createEl("span", { text: filename, cls: "horme-source-pill" });
       pill.title = path;
-      pill.addEventListener("click", async () => {
-        const abstractFile = this.app.vault.getAbstractFileByPath(path);
-        if (abstractFile instanceof TFile) {
-          const leaf = this.app.workspace.getLeaf(true);
-          await leaf.openFile(abstractFile);
-        } else {
-          new Notice(`Source not found: ${path}`);
-        }
+      pill.addEventListener("click", () => {
+        void (async () => {
+          const abstractFile = this.app.vault.getAbstractFileByPath(path);
+          if (abstractFile instanceof TFile) {
+            const leaf = this.app.workspace.getLeaf(true);
+            await leaf.openFile(abstractFile);
+          } else {
+            new Notice(`Source not found: ${path}`);
+          }
+        })();
       });
     });
   }
@@ -1416,15 +1454,21 @@ export class HormeChatView extends ItemView {
     const backBtn = header.createEl("button", { text: "Close", cls: "horme-history-back" });
     backBtn.addEventListener("click", () => {
       this.showingHistory = false;
-      this.renderChatView();
+      void this.renderChatView().catch(e => this.plugin.handleError(e));
     });
 
     const deleteAllBtn = header.createEl("button", { text: "Delete all", cls: "horme-history-delete-all mod-warning" });
     deleteAllBtn.addEventListener("click", () => {
-      new GenericConfirmModal(this.app, "Are you sure you want to delete ALL chat history? This cannot be undone.", async () => {
-        await this.plugin.historyManager.deleteAll();
-        await this.renderHistoryView();
-      }).open();
+      new GenericConfirmModal(
+        this.app,
+        "Are you sure you want to delete ALL chat history? This cannot be undone.",
+        () => {
+          void (async () => {
+            await this.plugin.historyManager.deleteAll();
+            await this.renderHistoryView();
+          })().catch(e => this.plugin.handleError(e));
+        }
+      ).open();
     });
 
     const list = panel.createDiv("horme-history-list");
@@ -1435,17 +1479,25 @@ export class HormeChatView extends ItemView {
       const info = item.createDiv("horme-history-item-info");
       info.createDiv({ cls: "horme-history-item-title", text: c.title });
       info.createDiv({ cls: "horme-history-item-date", text: new Date(c.timestamp).toLocaleString() });
-      info.addEventListener("click", () => this.loadConversation(c));
+      info.addEventListener("click", () => {
+        void this.loadConversation(c).catch(e => this.plugin.handleError(e));
+      });
 
       const delBtn = item.createDiv("horme-history-item-delete");
       setIcon(delBtn, "trash-2");
       delBtn.title = "Delete conversation";
       delBtn.addEventListener("click", (e) => {
         e.stopPropagation();
-        new GenericConfirmModal(this.app, "Delete this conversation?", async () => {
-          await this.plugin.historyManager.delete(c.id);
-          await this.renderHistoryView();
-        }).open();
+        new GenericConfirmModal(
+          this.app,
+          "Delete this conversation?",
+          () => {
+            void (async () => {
+              await this.plugin.historyManager.delete(c.id);
+              await this.renderHistoryView();
+            })().catch(err => this.plugin.handleError(err));
+          }
+        ).open();
       });
     }
   }
@@ -1453,7 +1505,7 @@ export class HormeChatView extends ItemView {
   private async loadConversation(convo: SavedConversation) {
     this.showingHistory = false;
     this.conversationId = convo.id;
-    this.history = convo.messages.map(m => ({ role: m.role as any, content: m.content }));
+    this.history = convo.messages.map(m => ({ role: m.role, content: m.content, images: m.images, audio: m.audio }));
     this.lastMsgs = null;
     this.lastModel = null;
     await this.renderChatView();
@@ -1461,8 +1513,8 @@ export class HormeChatView extends ItemView {
 
   private scrollToBottom() { this.messagesEl.scrollTop = this.messagesEl.scrollHeight; }
   private autoGrow() {
-    this.inputEl.style.height = "auto";
-    this.inputEl.style.height = Math.min(this.inputEl.scrollHeight, 140) + "px";
+    this.inputEl.setCssProps({ height: "auto" });
+    this.inputEl.setCssProps({ height: `${Math.min(this.inputEl.scrollHeight, 140)}px` });
   }
 
   /**
@@ -1487,11 +1539,15 @@ export class HormeChatView extends ItemView {
     uk: "Ukrainian", ro: "Romanian", hu: "Hungarian", ca: "Catalan",
   };
 
-  private formatSkillSummary(skillName: string, params: any): string {
+  private formatSkillSummary(skillName: string, params: unknown): string {
     // Add language detail for skills that use it (Wikipedia, Wiktionary)
-    if (params?.language) {
-      const code = String(params.language).toLowerCase().slice(0, 2);
-      const langName = HormeChatView.LANG_NAMES[code] || params.language.toUpperCase();
+    const language =
+      (typeof params === "object" && params !== null && typeof (params as Record<string, unknown>)["language"] === "string")
+        ? ((params as Record<string, unknown>)["language"] as string)
+        : null;
+    if (language) {
+      const code = language.toLowerCase().slice(0, 2);
+      const langName = HormeChatView.LANG_NAMES[code] || language.toUpperCase();
       return `Skill used: ${skillName} (${langName})`;
     }
     return `Skill used: ${skillName}`;
@@ -1503,16 +1559,37 @@ export class HormeChatView extends ItemView {
     try {
       // The upstream brace-counting parser already extracts clean JSON objects,
       // so no SSE "data: " prefix stripping is needed here.
-      const data = JSON.parse(raw);
-      const content = data.message?.content || 
-                    data.choices?.[0]?.delta?.content || 
-                    data.delta?.text ||
-                    data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-      
-      const reasoning = data.choices?.[0]?.delta?.reasoning_content || 
-                        data.message?.reasoning || "";
+      const data: unknown = JSON.parse(raw);
+
+      const content =
+        this.getStringAtPath(data, ["message", "content"]) ??
+        this.getStringAtPath(data, ["choices", 0, "delta", "content"]) ??
+        this.getStringAtPath(data, ["delta", "text"]) ??
+        this.getStringAtPath(data, ["candidates", 0, "content", "parts", 0, "text"]) ??
+        "";
+
+      const reasoning =
+        this.getStringAtPath(data, ["choices", 0, "delta", "reasoning_content"]) ??
+        this.getStringAtPath(data, ["message", "reasoning"]) ??
+        "";
 
       if (content || reasoning) onContent(content, reasoning);
-    } catch { }
+    } catch {
+      // Ignore malformed partial chunks.
+    }
+  }
+
+  private getStringAtPath(obj: unknown, path: Array<string | number>): string | undefined {
+    let cur: unknown = obj;
+    for (const key of path) {
+      if (typeof key === "number") {
+        if (!Array.isArray(cur)) return undefined;
+        cur = cur[key];
+        continue;
+      }
+      if (typeof cur !== "object" || cur === null) return undefined;
+      cur = (cur as Record<string, unknown>)[key];
+    }
+    return typeof cur === "string" ? cur : undefined;
   }
 }

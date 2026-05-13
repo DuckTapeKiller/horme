@@ -11,6 +11,7 @@ import {
 } from "../utils/VectorUtils";
 import { OllamaProvider } from "../providers/OllamaProvider";
 import { LmStudioProvider } from "../providers/LmStudioProvider";
+import { asArray, asNumberArray, errorToMessage, getNumberProp, getRecordProp, getStringProp } from "../utils/TypeGuards";
 
 interface IndexEntry {
   path: string;
@@ -88,7 +89,7 @@ export class VaultIndexer {
     const configDir = this.plugin.app.vault.configDir;
     this.indexPath = normalizePath(`${configDir}/plugins/${this.plugin.manifest.id}/Vault Index/vault-index.json`);
     console.log(`Horme Brain: Initializing index at ${this.indexPath}`);
-    this.loadIndex();
+    void this.loadIndex();
 
     // Wipe index if embedding model changes while plugin is running
     this.plugin.onSettingsChange(() => {
@@ -97,9 +98,9 @@ export class VaultIndexer {
         console.log(`Horme Brain: Model changed to ${current}. Clearing in-memory index and shard files.`);
         this.clearIndex();
         this.indexedModel = current;
-        this.deleteAllShards().catch(e =>
-          this.plugin.diagnosticService.report("Vault Brain", `Failed to delete stale shard files: ${e.message}`)
-        );
+        this.deleteAllShards().catch((e: unknown) => {
+          this.plugin.diagnosticService.report("Vault Brain", `Failed to delete stale shard files: ${errorToMessage(e)}`);
+        });
         new Notice("Vault Brain: Embedding model changed. Index cleared — please rebuild.");
       }
     });
@@ -126,22 +127,15 @@ export class VaultIndexer {
       if (await this.plugin.app.vault.adapter.exists(this.indexPath)) {
         console.log("Horme Brain: Migrating from monolithic to sharded index...");
         const data = await this.plugin.app.vault.adapter.read(this.indexPath);
-        const parsed = JSON.parse(data);
+        const parsed: unknown = JSON.parse(data);
 
         if (Array.isArray(parsed)) {
           // Very old format — wipe
           this.clearIndex();
           this.indexedModel = "";
         } else {
-	          this.indexedModel = parsed.model || "";
-	          this.index = (parsed.entries || []).map((e: any) => ({
-	            ...e,
-	            embedding: typeof e.embedding === "string"
-	              ? decompressEmbeddingToInt8(e.embedding)
-	              : Array.isArray(e.embedding)
-	                ? quantizeEmbeddingToInt8(e.embedding)
-	                : new Int8Array()
-	          }));
+          this.indexedModel = getStringProp(parsed, "model") ?? "";
+          this.index = this.parseEntries(getRecordProp(parsed, "entries"));
           this.rebuildPathIndex();
           const currentModel = this.plugin.settings.ragEmbeddingModel;
           if (this.indexedModel !== currentModel) {
@@ -158,12 +152,48 @@ export class VaultIndexer {
       }
 
       console.log("Horme Brain: No existing index found.");
-    } catch (e) {
-      this.plugin.diagnosticService.report("Vault Brain", `Critical load failure: ${e.message}`);
+    } catch (e: unknown) {
+      this.plugin.diagnosticService.report("Vault Brain", `Critical load failure: ${errorToMessage(e)}`);
       this.clearIndex();
     } finally {
       this.isLoaded = true;
     }
+  }
+
+  private parseEntries(entriesUnknown: unknown): IndexEntry[] {
+    const entries = asArray(entriesUnknown) ?? [];
+    const out: IndexEntry[] = [];
+    for (const e of entries) {
+      const path = getStringProp(e, "path");
+      const chunkStart = getNumberProp(e, "chunkStart");
+      const chunkEnd = getNumberProp(e, "chunkEnd");
+      const mtime = getNumberProp(e, "mtime");
+      if (!path || chunkStart === undefined || chunkEnd === undefined || mtime === undefined) continue;
+
+      const embeddingUnknown = getRecordProp(e, "embedding");
+      let embedding: Int8Array | string = new Int8Array();
+      if (typeof embeddingUnknown === "string") embedding = decompressEmbeddingToInt8(embeddingUnknown);
+      else {
+        const embArr = asNumberArray(embeddingUnknown);
+        if (embArr) embedding = quantizeEmbeddingToInt8(embArr);
+      }
+
+      const summaryText = getStringProp(e, "summaryText");
+      const tagsText = getStringProp(e, "tagsText");
+      const headingPath = getStringProp(e, "headingPath");
+
+      out.push({
+        path,
+        chunkStart,
+        chunkEnd,
+        embedding,
+        mtime,
+        ...(summaryText ? { summaryText } : {}),
+        ...(tagsText ? { tagsText } : {}),
+        ...(headingPath ? { headingPath } : {}),
+      });
+    }
+    return out;
   }
 
   private async loadShardedIndex(): Promise<void> {
@@ -176,11 +206,11 @@ export class VaultIndexer {
 
       try {
         const data = await this.plugin.app.vault.adapter.read(path);
-        const parsed = JSON.parse(data);
+        const parsed: unknown = JSON.parse(data);
 
         // Validate model on the first shard only
         if (shardIndex === 0) {
-          this.indexedModel = parsed.model || "";
+          this.indexedModel = getStringProp(parsed, "model") ?? "";
           const currentModel = this.plugin.settings.ragEmbeddingModel;
           if (this.indexedModel !== currentModel) {
             console.log(`Horme Brain: Embedding model changed (${this.indexedModel} → ${currentModel}). Wiping all shards.`);
@@ -191,18 +221,11 @@ export class VaultIndexer {
           }
         }
 
-	        const decompressed = (parsed.entries || []).map((e: any) => ({
-	          ...e,
-	          embedding: typeof e.embedding === "string"
-	            ? decompressEmbeddingToInt8(e.embedding)
-	            : Array.isArray(e.embedding)
-	              ? quantizeEmbeddingToInt8(e.embedding)
-	              : new Int8Array()
-	        }));
+        const decompressed = this.parseEntries(getRecordProp(parsed, "entries"));
         // Use a safe concat to avoid "Maximum call stack size exceeded" errors on large vaults
         this.index = this.index.concat(decompressed);
-      } catch (e) {
-        this.plugin.diagnosticService.report("Vault Brain", `Failed to read index shard ${shardIndex}: ${e.message}`);
+      } catch (e: unknown) {
+        this.plugin.diagnosticService.report("Vault Brain", `Failed to read index shard ${shardIndex}: ${errorToMessage(e)}`);
         break;
       }
 
@@ -261,8 +284,8 @@ export class VaultIndexer {
       }
 
       this.indexedModel = currentModel;
-    } catch (e) {
-      this.plugin.diagnosticService.report("Vault Brain", `Critical save failure: ${e.message}`);
+    } catch (e: unknown) {
+      this.plugin.diagnosticService.report("Vault Brain", `Critical save failure: ${errorToMessage(e)}`);
       new HormeErrorModal(
         this.plugin.app,
         "Vault Brain: Index save failed",
@@ -287,9 +310,10 @@ export class VaultIndexer {
       if (await adapter.exists(shard0Path)) {
         try {
           const raw = await adapter.read(shard0Path);
-          const parsed = JSON.parse(raw);
-          if (parsed?.model && parsed.model !== currentModel) return false;
-          return Array.isArray(parsed?.entries);
+          const parsed: unknown = JSON.parse(raw);
+          const model = getStringProp(parsed, "model");
+          if (model && model !== currentModel) return false;
+          return Array.isArray(getRecordProp(parsed, "entries"));
         } catch {
           return false;
         }
@@ -298,10 +322,11 @@ export class VaultIndexer {
       if (await adapter.exists(this.indexPath)) {
         try {
           const raw = await adapter.read(this.indexPath);
-          const parsed = JSON.parse(raw);
+          const parsed: unknown = JSON.parse(raw);
           if (Array.isArray(parsed)) return parsed.length > 0;
-          if (parsed?.model && parsed.model !== currentModel) return false;
-          return Array.isArray(parsed?.entries);
+          const model = getStringProp(parsed, "model");
+          if (model && model !== currentModel) return false;
+          return Array.isArray(getRecordProp(parsed, "entries"));
         } catch {
           return false;
         }
@@ -357,9 +382,9 @@ export class VaultIndexer {
       }
       this.plugin.diagnosticService.report("Vault Brain", "Delete requested, but no vault index was found.", "info");
       return "missing";
-    } catch (e) {
-      this.plugin.diagnosticService.report("Vault Brain", `Failed to delete index: ${e.message}`);
-      throw e;
+    } catch (e: unknown) {
+      this.plugin.diagnosticService.report("Vault Brain", `Failed to delete index: ${errorToMessage(e)}`);
+      throw e instanceof Error ? e : new Error(errorToMessage(e));
     }
   }
 
@@ -372,12 +397,12 @@ export class VaultIndexer {
     if (!this.isIndexing && !this.isProcessingQueue) return;
     console.log("Horme Brain: Obsidian closing mid-index — flushing progress...");
     this.plugin.settings.indexStatus = "Interrupted — resume rebuild to continue";
-    this.plugin.saveSettings();
+    void this.plugin.saveSettings().catch(e => this.plugin.handleError(e, "Vault Brain"));
     this.saveIndex()
       .then(() => console.log("Horme Brain: Emergency flush complete."))
-      .catch(e => {
+      .catch((e: unknown) => {
         console.error("Horme Brain: Emergency flush failed.", e);
-        this.plugin.diagnosticService.report("Vault Brain", `Emergency flush failed: ${e.message}`);
+        this.plugin.diagnosticService.report("Vault Brain", `Emergency flush failed: ${errorToMessage(e)}`);
       });
   }
 
@@ -536,12 +561,12 @@ export class VaultIndexer {
       const bilingual = `${spanishTags}, ${translatedTags}`;
       this.tagTranslationCache.set(spanishTags, bilingual);
       return bilingual;
-    } catch (e) {
+    } catch (e: unknown) {
       // Factual Fallback: report the specific error to the dashboard but continue indexing
       this.plugin.diagnosticService.report(
         "Vault Brain", 
         `Tag translation failed (Model: ${this.plugin.settings.tagTranslationModel || "(empty)"}). ` +
-        `Falling back to original tags. Error: ${e.message}`,
+        `Falling back to original tags. Error: ${errorToMessage(e)}`,
         "warning"
       );
       this.tagTranslationCache.set(spanishTags, spanishTags);
@@ -624,9 +649,9 @@ export class VaultIndexer {
     let updatedCount = 0;
     let consecutiveErrors = 0;
     
-    this.plugin.settings.indexStatus = `Indexing (0/${total})...`;
-    this.plugin.saveSettings();
-    this.plugin.setIndexingStatus(`Indexing 0 / ${total}`);
+	    this.plugin.settings.indexStatus = `Indexing (0/${total})...`;
+	    await this.plugin.saveSettings();
+	    this.plugin.setIndexingStatus(`Indexing 0 / ${total}`);
 
     for (let i = 0; i < total; i++) {
       const file = files[i];
@@ -714,9 +739,9 @@ export class VaultIndexer {
         if (updatedCount % 50 === 0) {
           await this.saveIndex();
         }
-      } catch (e) {
-        this.plugin.diagnosticService.report("Vault Brain", `Note skipped: ${file.path} (${e.message})`, "warning");
-        consecutiveErrors++;
+	      } catch (e: unknown) {
+	        this.plugin.diagnosticService.report("Vault Brain", `Note skipped: ${file.path} (${errorToMessage(e)})`, "warning");
+	        consecutiveErrors++;
         // (e.g. one bad file) should not stop the entire rebuild.
         if (consecutiveErrors > 15) {
           new HormeErrorModal(
@@ -742,17 +767,17 @@ export class VaultIndexer {
     } else {
       new Notice(`Vault Brain: Successfully indexed ${updatedCount} files.`);
     }
-  } catch (e) {
-    this.plugin.diagnosticService.report("Vault Brain", `Fatal indexing error: ${e.message}`);
-    new HormeErrorModal(
-      this.plugin.app,
-      "Vault Brain: Fatal indexing error",
-      "Indexing stopped due to an unexpected error. Your partial progress has been saved and the next rebuild will resume from where it left off.",
-      String(e)
-    ).open();
-  } finally {
-    this.isIndexing = false;
-  }
+	  } catch (e: unknown) {
+	    this.plugin.diagnosticService.report("Vault Brain", `Fatal indexing error: ${errorToMessage(e)}`);
+	    new HormeErrorModal(
+	      this.plugin.app,
+	      "Vault Brain: Fatal indexing error",
+	      "Indexing stopped due to an unexpected error. Your partial progress has been saved and the next rebuild will resume from where it left off.",
+	      errorToMessage(e)
+	    ).open();
+	  } finally {
+	    this.isIndexing = false;
+	  }
 }
 
   private indexingQueue: TFile[] = [];
@@ -788,7 +813,7 @@ export class VaultIndexer {
     if (!this.isLoaded) {
       const deadline = Date.now() + 5000;
       while (!this.isLoaded && Date.now() < deadline) {
-        await new Promise(r => setTimeout(r, 100));
+        await new Promise<void>(r => window.setTimeout(r, 100));
       }
       if (!this.isLoaded) {
         console.warn("Horme Brain: Index not yet loaded after timeout, proceeding with queue anyway.");
@@ -811,7 +836,7 @@ export class VaultIndexer {
           // Yield to the UI thread between files — prevents typing lag.
           // indexFile() no longer calls saveIndex() internally, so the only
           // blocking JSON.stringify happens once below when the queue drains.
-          await new Promise(r => setTimeout(r, 50));
+          await new Promise<void>(r => window.setTimeout(r, 50));
         }
       }
 
@@ -896,8 +921,8 @@ export class VaultIndexer {
         // It is called once by processQueue() when the queue drains,
         // to avoid blocking the UI thread with repeated JSON.stringify calls.
       }
-    } catch (e) {
-      this.plugin.diagnosticService.report("Vault Brain", `Auto-index failed for ${file.path}: ${e.message}`, "warning");
+    } catch (e: unknown) {
+      this.plugin.diagnosticService.report("Vault Brain", `Auto-index failed for ${file.path}: ${errorToMessage(e)}`, "warning");
     }
   }
 
@@ -919,7 +944,7 @@ export class VaultIndexer {
     if (!this.isLoaded) {
       const deadline = Date.now() + 5000;
       while (!this.isLoaded && Date.now() < deadline) {
-        await new Promise(r => setTimeout(r, 100));
+        await new Promise<void>(r => window.setTimeout(r, 100));
       }
       if (!this.isLoaded) {
         this.plugin.diagnosticService.report("Horme Brain", "Index not yet loaded, skipping search.", "warning");
@@ -962,12 +987,12 @@ export class VaultIndexer {
         if (keyTerms && keyTerms !== embeddingQuery) {
           secondaryEmbedding = await this.plugin.embeddingService.getEmbedding(`${qPrefix}${keyTerms}`);
         }
-	      } catch (embErr) {
-	        // Embedding failed (Ollama down, model not loaded, long-text timeout, etc.)
-	        // Log and continue with vector scores zeroed out — keyword bonus alone will
-	        // Still surface obvious matches like the exact-title case.
-	        this.plugin.diagnosticService.report("Search", "Embedding failed. Falling back to keyword search.", "warning");
-	      }
+		      } catch {
+		        // Embedding failed (Ollama down, model not loaded, long-text timeout, etc.)
+		        // Log and continue with vector scores zeroed out — keyword bonus alone will
+		        // Still surface obvious matches like the exact-title case.
+		        this.plugin.diagnosticService.report("Search", "Embedding failed. Falling back to keyword search.", "warning");
+		      }
 
 	      const MIN_SIMILARITY = 0.10; // Lowered: keyword-only searches can still score ~0.25+
 
@@ -1075,12 +1100,12 @@ export class VaultIndexer {
 	      }
 
 	      return results;
-	    } catch (e) {
-	      console.error("Horme: Search failed", e);
-	      this.plugin.diagnosticService.report("Search", `Search failed: ${e.message}`);
-	      return [];
-	    }
-  }
+		    } catch (e: unknown) {
+		      console.error("Horme: Search failed", e);
+		      this.plugin.diagnosticService.report("Search", `Search failed: ${errorToMessage(e)}`);
+		      return [];
+		    }
+	  }
   /**
    * Retrieves semantically related notes for the active file.
    * Useful for the "Connections" side panel.

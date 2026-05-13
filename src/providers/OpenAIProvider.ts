@@ -1,5 +1,7 @@
 import { requestUrl } from "obsidian";
 import { AiProvider } from "./AiProvider";
+import { createAssistantContentReader } from "./StreamUtils";
+import { asArray, getRecordProp, getStringProp } from "../utils/TypeGuards";
 
 export class OpenAIProvider implements AiProvider {
   private apiKey: string;
@@ -8,6 +10,13 @@ export class OpenAIProvider implements AiProvider {
   constructor(apiKey: string, temperature: number) {
     this.apiKey = apiKey;
     this.temperature = temperature;
+  }
+
+  private extractContent(json: unknown): string {
+    const choices = asArray(getRecordProp(json, "choices")) ?? [];
+    const first = choices[0];
+    const message = getRecordProp(first, "message");
+    return getStringProp(message, "content") ?? "";
   }
 
   async generate(prompt: string, system: string, model: string): Promise<string> {
@@ -27,9 +36,11 @@ export class OpenAIProvider implements AiProvider {
         ],
         temperature: this.temperature,
         max_tokens: 2048
-      })
+      }),
+      throw: false,
     });
-    return res.json?.choices?.[0]?.message?.content || "";
+    if (res.status !== 200) throw new Error(`OpenAI error: ${res.status}`);
+    return this.extractContent(res.json as unknown);
   }
 
   async generateChat(msgs: Array<{ role: string; content: string }>, model: string): Promise<string> {
@@ -46,29 +57,14 @@ export class OpenAIProvider implements AiProvider {
         messages: msgs,
         temperature: this.temperature,
         max_tokens: 2048
-      })
+      }),
+      throw: false,
     });
-    return res.json?.choices?.[0]?.message?.content || "";
+    if (res.status !== 200) throw new Error(`OpenAI error: ${res.status}`);
+    return this.extractContent(res.json as unknown);
   }
   async stream(msgs: Array<{ role: string; content: string }>, model: string, signal?: AbortSignal): Promise<ReadableStreamDefaultReader<Uint8Array>> {
-    if (!this.apiKey) throw new Error("No OpenAI API Key");
-    
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${this.apiKey}`
-      },
-      body: JSON.stringify({
-        model,
-        messages: msgs,
-        temperature: this.temperature,
-        stream: true
-      }),
-      signal
-    });
-    
-    if (!response.ok || !response.body) throw new Error(`OpenAI stream error: ${response.status}`);
-    return response.body.getReader();
+    const full = await this.generateChat(msgs, model);
+    return createAssistantContentReader(full, signal);
   }
 }
