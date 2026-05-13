@@ -36,7 +36,7 @@ export class PdfService {
   async extractText(file: TFile | File, onProgress?: (p: number, s: string) => void): Promise<string> {
     const arrayBuffer = file instanceof TFile 
       ? await this.app.vault.readBinary(file)
-      : await (file as File).arrayBuffer();
+      : await file.arrayBuffer();
 
     const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer }) as unknown as PdfJsLoadingTask;
     let pdf: PdfJsDocument | null = null;

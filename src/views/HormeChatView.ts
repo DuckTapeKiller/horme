@@ -461,7 +461,7 @@ export class HormeChatView extends ItemView {
       await this.refreshModels();
       
       // Mobile keyboard fix: anchor input to keyboard
-      const getDrawer = () => this.containerEl.closest('.workspace-drawer') as HTMLElement | null;
+      const getDrawer = () => this.containerEl.closest(".workspace-drawer");
       this.inputEl.addEventListener("focus", () => {
         getDrawer()?.classList.add('horme-keyboard-open');
         window.setTimeout(() => {
@@ -571,14 +571,14 @@ export class HormeChatView extends ItemView {
     this.modelSelect.empty();
     if (!this.plugin.models || !this.plugin.models.length) {
       this.modelSelect.createEl("option", { text: "No models found", value: "" });
-      this.updateConnectionStatus();
+      await this.updateConnectionStatus();
       return;
     }
     this.plugin.models.forEach((m) => {
       const opt = this.modelSelect.createEl("option", { text: m, value: m });
       if (m === this.getCurrentProviderModel()) opt.selected = true;
     });
-    this.updateConnectionStatus();
+    await this.updateConnectionStatus();
     await this.updateVaultBrainToggle();
   }
 
@@ -930,7 +930,7 @@ export class HormeChatView extends ItemView {
           msgs.push({ role: m.role, content: m.content });
         }
         // Attach media to the latest user message in the payload
-        const lastMsg = msgs[msgs.length - 1] as ChatMessage;
+        const lastMsg = msgs[msgs.length - 1];
         if (currentMsg.images) lastMsg.images = currentMsg.images;
         if (currentMsg.audio) lastMsg.audio = currentMsg.audio;
       }

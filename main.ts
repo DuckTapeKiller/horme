@@ -503,7 +503,7 @@ Your Goal: Reconstruct the document into clean, professional Markdown.
             }
           }
         } else if (extension === "md") {
-          const content = file instanceof TFile ? await this.app.vault.read(file) : await (file as File).text();
+          const content = file instanceof TFile ? await this.app.vault.read(file) : await file.text();
           if (targetFormat === "pdf") {
             modal.updateProgress(0.5, "Generating PDF...");
             await this.saveAsPdf(content, fileName);
@@ -868,7 +868,7 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
       this.app.workspace.rightSplit.expand();
     }
     
-    this.app.workspace.revealLeaf(leaf);
+    await this.app.workspace.revealLeaf(leaf);
   }
 
   async activateConnections() {
@@ -891,13 +891,13 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
       this.app.workspace.rightSplit.expand();
     }
     
-    this.app.workspace.revealLeaf(leaf);
+    await this.app.workspace.revealLeaf(leaf);
     
     // Initial load
     const activeView = this.app.workspace.getActiveViewOfType(MarkdownView) || 
                        (this.lastActiveMarkdownLeaf?.view instanceof MarkdownView ? this.lastActiveMarkdownLeaf.view : null);
     if (activeView && activeView.file) {
-      (leaf.view as HormeConnectionsView).updateConnections(activeView.file.path);
+      await (leaf.view as HormeConnectionsView).updateConnections(activeView.file.path);
     }
   }
 
@@ -1078,7 +1078,8 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
   }
 
   async loadSettings() {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    const loaded: unknown = await this.loadData();
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, (loaded && typeof loaded === "object") ? loaded : {});
     // Track the provider last saved to disk so we can apply privacy guards on change.
     this._lastPersistedAiProvider = this.settings.aiProvider;
   }

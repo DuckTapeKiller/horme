@@ -140,9 +140,9 @@ export function cosineSimilarityInt8(a: Int8Array, b: Int8Array): number {
 /**
  * Returns the correct query/document prefix for the active embedding model.
  */
-export function getModelPrefixes(model: string): { query: string; document: string } {
+export function getModelPrefixes(model: string): { query: string; doc: string } {
   const m = model.toLowerCase();
-  if (m.includes("nomic")) return { query: "search_query: ", document: "search_document: " };
-  if (m.includes("mxbai")) return { query: "Represent this sentence for searching relevant passages: ", document: "" };
-  return { query: "", document: "" };
+  if (m.includes("nomic")) return { query: "search_query: ", doc: "search_document: " };
+  if (m.includes("mxbai")) return { query: "Represent this sentence for searching relevant passages: ", doc: "" };
+  return { query: "", doc: "" };
 }

@@ -89,7 +89,10 @@ export class CustomSkill implements Skill {
       return `No data found at path "${this.responsePath}" in the response from ${this.name}.`;
     }
 
-    const output = typeof data === "object" ? JSON.stringify(data, null, 2) : String(data);
+    const output =
+      typeof data === "string" || typeof data === "number" || typeof data === "boolean"
+        ? String(data)
+        : JSON.stringify(data, null, 2);
 
     // Cap at 3000 chars to avoid context overflow
     if (output.length > 3000) {

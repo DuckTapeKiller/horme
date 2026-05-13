@@ -98,7 +98,7 @@ export class GrammarIndexer {
     const files = this.getFilesRecursively(folder);
     let totalChunks = 0;
     let errorCount = 0;
-    const { document: docPrefix } = getModelPrefixes(this.plugin.settings.ragEmbeddingModel);
+    const { doc: docPrefix } = getModelPrefixes(this.plugin.settings.ragEmbeddingModel);
     
     console.log(`Horme Grammar: Scanning ${files.length} files in "${folderPath}"...`);
 

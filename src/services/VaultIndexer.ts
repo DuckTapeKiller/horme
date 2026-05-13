@@ -608,7 +608,7 @@ export class VaultIndexer {
     if (autorMatch) parts.push("Autor: " + autorMatch[1].trim());
 
     return {
-      fullText: `${getModelPrefixes(this.plugin.settings.ragEmbeddingModel).document}${parts.join("\n")}`,
+      fullText: `${getModelPrefixes(this.plugin.settings.ragEmbeddingModel).doc}${parts.join("\n")}`,
       summaryOnly,
       tagsOnly
     };
@@ -684,7 +684,7 @@ export class VaultIndexer {
           // Build embedding texts with search_document prefix and heading context
           const embeddingTexts = validChunks.map(c => {
             const hp = this.getHeadingPathAtOffset(headings, c.start);
-            const docPrefix = getModelPrefixes(this.plugin.settings.ragEmbeddingModel).document;
+            const docPrefix = getModelPrefixes(this.plugin.settings.ragEmbeddingModel).doc;
             // Prepend bilingual tags to every chunk so the vector captures both languages.
             // Tags are brief (30–80 chars) and won't dilute the body content meaningfully.
             const tagLine = bilingualTags ? `Tags: ${bilingualTags}\n` : "";
@@ -800,7 +800,9 @@ export class VaultIndexer {
     if (!this.indexingQueue.some(f => f.path === file.path)) {
       this.indexingQueue.push(file);
     }
-    this.processQueue();
+    void this.processQueue().catch(e => {
+      this.plugin.diagnosticService.report("Vault Brain", `Queue processing failed: ${errorToMessage(e)}`, "warning");
+    });
   }
 
   private async processQueue() {
@@ -872,7 +874,7 @@ export class VaultIndexer {
 
         const embeddingTexts = validChunks.map(c => {
           const hp = this.getHeadingPathAtOffset(headings, c.start);
-          const docPrefix = getModelPrefixes(this.plugin.settings.ragEmbeddingModel).document;
+          const docPrefix = getModelPrefixes(this.plugin.settings.ragEmbeddingModel).doc;
           // Prepend bilingual tags to every chunk so the vector captures both languages.
           // Tags are brief (30–80 chars) and won't dilute the body content meaningfully.
           const tagLine = bilingualTags ? `Tags: ${bilingualTags}\n` : "";
