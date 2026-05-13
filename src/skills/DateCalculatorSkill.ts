@@ -1,4 +1,5 @@
 import { Skill, SkillParameter } from "./types";
+import { errorToMessage, getStringProp } from "../utils/TypeGuards";
 
 export class DateCalculatorSkill implements Skill {
   id = "date_calc";
@@ -35,9 +36,13 @@ export class DateCalculatorSkill implements Skill {
 
   instructions = `To use this skill, output exactly: <call:date_calc>{"operation": "difference", "date1": "1914-07-28", "date2": "1918-11-11"}</call>. Operations: "difference" (time between two dates), "day_of_week" (what day a date fell on), "add" (add time to a date, e.g. {"operation": "add", "date1": "2024-01-01", "amount": "90 days"}). Use this to verify historical claims about durations, dates, or chronological facts.`;
 
-  async execute(params: { operation: string; date1: string; date2?: string; amount?: string }): Promise<string> {
+  async execute(params: unknown): Promise<string> {
     try {
-      const { operation, date1, date2, amount } = params;
+      const operation = getStringProp(params, "operation");
+      const date1 = getStringProp(params, "date1");
+      const date2 = getStringProp(params, "date2");
+      const amount = getStringProp(params, "amount");
+      if (!operation || !date1) return `Invalid parameters for ${this.name}: expected {"operation": string, "date1": string, "date2"?: string, "amount"?: string}.`;
       
       const d1 = this.parseDate(date1);
       if (!d1) return `Invalid date format: "${date1}". Use YYYY-MM-DD.`;
@@ -52,10 +57,10 @@ export class DateCalculatorSkill implements Skill {
         default:
           return `Unknown operation: "${operation}". Use "difference", "day_of_week", or "add".`;
       }
-    } catch (e) {
+    } catch (e: unknown) {
 
       console.error("Horme Date Calculator Error:", e);
-      throw e;
+      throw new Error(errorToMessage(e));
     }
   }
 

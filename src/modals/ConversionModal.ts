@@ -47,25 +47,25 @@ export class ConversionModal extends Modal {
 
     // Progress section (hidden initially)
     this.progressEl = contentEl.createDiv("horme-progress-section");
-    this.progressEl.style.display = "none";
+    this.progressEl.setCssProps({ display: "none" });
 
     const progressContainer = this.progressEl.createDiv("horme-progress-container");
     this.progressBar = progressContainer.createDiv("horme-progress-bar");
-    this.progressBar.style.width = "0%";
+    this.progressBar.setCssProps({ width: "0%" });
 
     this.statusEl = this.progressEl.createDiv("horme-progress-status");
     this.statusEl.textContent = "Initializing...";
   }
 
   setStarted() {
-    this.configEl.style.display = "none";
-    this.progressEl.style.display = "flex";
+    this.configEl.setCssProps({ display: "none" });
+    this.progressEl.setCssProps({ display: "flex" });
     const btns = this.contentEl.querySelectorAll("button");
-    btns.forEach(b => (b as HTMLButtonElement).disabled = true);
+    btns.forEach(b => (b.disabled = true));
   }
 
   updateProgress(percent: number, status: string) {
-    this.progressBar.style.width = `${percent * 100}%`;
+    this.progressBar.setCssProps({ width: `${percent * 100}%` });
     this.statusEl.textContent = status;
   }
 

@@ -96,7 +96,7 @@ export class DiagnosticService {
 
       const isStale = (latestMtime > 0 && inMemoryCount === 0);
       return { name, id, status: isStale ? "stale" : "healthy", lastUpdate: latestMtime, entryCount: inMemoryCount, path: folderPath };
-    } catch (e) {
+    } catch {
       return { name, id, status: "error", lastUpdate: 0, entryCount: 0, path: folderPath };
     }
   }
@@ -113,7 +113,7 @@ export class DiagnosticService {
 
       const isStale = (mtime > 0 && inMemoryCount === 0);
       return { name, id, status: isStale ? "stale" : "healthy", lastUpdate: mtime, entryCount: inMemoryCount, path };
-    } catch (e) {
+    } catch {
       return { name, id, status: "error", lastUpdate: 0, entryCount: 0, path };
     }
   }

@@ -1,5 +1,30 @@
 import { App, TFile } from "obsidian";
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf";
+import { asNumberArray, isRecord } from "../utils/TypeGuards";
+
+interface PdfJsLoadingTask {
+  promise: Promise<PdfJsDocument>;
+  destroy?: () => void | Promise<void>;
+}
+
+interface PdfJsDocument {
+  numPages: number;
+  getPage: (pageNumber: number) => Promise<PdfJsPage>;
+  cleanup?: () => void;
+  destroy?: () => void | Promise<void>;
+}
+
+interface PdfJsPage {
+  getTextContent: () => Promise<{ items: unknown[] }>;
+  getViewport: (params: { scale: number }) => { width: number; height: number };
+  cleanup?: () => void;
+}
+
+interface PdfJsTextItem {
+  str: string;
+  transform: number[];
+  fontName?: string;
+}
 
 export class PdfService {
   private app: App;
@@ -11,10 +36,10 @@ export class PdfService {
   async extractText(file: TFile | File, onProgress?: (p: number, s: string) => void): Promise<string> {
     const arrayBuffer = file instanceof TFile 
       ? await this.app.vault.readBinary(file)
-      : await (file as File).arrayBuffer();
+      : await file.arrayBuffer();
 
-    const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
-    let pdf: any = null;
+    const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer }) as unknown as PdfJsLoadingTask;
+    let pdf: PdfJsDocument | null = null;
     try {
       pdf = await loadingTask.promise;
       const numPages = pdf.numPages;
@@ -48,22 +73,31 @@ export class PdfService {
         // no-op
       }
       try {
-        if (typeof (loadingTask as any).destroy === "function") await (loadingTask as any).destroy();
+        if (typeof loadingTask.destroy === "function") await loadingTask.destroy();
       } catch {
         // no-op
       }
     }
   }
 
-  private async extractStructuredText(page: any): Promise<string> {
+  private isTextItem(item: unknown): item is PdfJsTextItem {
+    if (!isRecord(item)) return false;
+    if (typeof item.str !== "string") return false;
+    const t = (item as Record<string, unknown>).transform;
+    const transform = asNumberArray(t);
+    if (!transform || transform.length < 6) return false;
+    return true;
+  }
+
+  private async extractStructuredText(page: PdfJsPage): Promise<string> {
     const content = await page.getTextContent();
     const viewport = page.getViewport({ scale: 1.0 });
     const pageWidth = viewport.width;
     const pageHeight = viewport.height;
 
     const items = content.items
-      .filter((item: any) => "str" in item && item.str.trim().length > 0)
-      .sort((a: any, b: any) => {
+      .filter((item): item is PdfJsTextItem => this.isTextItem(item) && item.str.trim().length > 0)
+      .sort((a, b) => {
         const yA = a.transform[5];
         const yB = b.transform[5];
         if (Math.abs(yA - yB) < 5) return a.transform[4] - b.transform[4];

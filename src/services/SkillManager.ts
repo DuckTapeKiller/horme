@@ -1,5 +1,4 @@
 import HormePlugin from "../../main";
-import { HormeSettings } from "../types";
 import { Skill, SkillCall } from "../skills/types";
 import { WikipediaSkill } from "../skills/WikipediaSkill";
 import { VaultLinkSkill } from "../skills/VaultLinkSkill";
@@ -9,6 +8,7 @@ import { WiktionarySkill } from "../skills/WiktionarySkill";
 import { DuckDuckGoSkill } from "../skills/DuckDuckGoSkill";
 import { DateCalculatorSkill } from "../skills/DateCalculatorSkill";
 import { CustomSkill } from "../skills/CustomSkill";
+import { CreateConceptNoteSkill } from "../skills/CreateConceptNoteSkill";
 
 export class SkillManager {
   private plugin: HormePlugin;
@@ -25,6 +25,7 @@ export class SkillManager {
     this.registerSkill(new WiktionarySkill());
     this.registerSkill(new DuckDuckGoSkill());
     this.registerSkill(new DateCalculatorSkill());
+    this.registerSkill(new CreateConceptNoteSkill(this.plugin.app, this.plugin));
     this.registerSkill(new VaultLinkSkill(this.plugin));
     this.registerSkill(new TaxonomySkill(this.plugin));
     this.registerSkill(new GrammarScholarSkill(this.plugin));
@@ -48,7 +49,14 @@ export class SkillManager {
       if ((suppressVaultSkill || vaultLocked) && skill.id === "vault_links") continue;
       instructions += `### Skill: ${skill.name} (id: ${skill.id})\n`;
       instructions += `Description: ${skill.description}\n`;
-      instructions += `Instructions: ${skill.instructions}\n\n`;
+      instructions += `Instructions: ${skill.instructions}\n`;
+      if (skill.parameters.length > 0) {
+        instructions += `Parameters (JSON):\n`;
+        for (const param of skill.parameters) {
+          instructions += `- ${param.name} (${param.type}): ${param.description}${param.required ? " (REQUIRED)" : ""}\n`;
+        }
+      }
+      instructions += `\n`;
     }
 
     return instructions;
@@ -63,9 +71,9 @@ export class SkillManager {
       const skillId = match[1];
       const paramsText = match[2];
       try {
-        const parameters = JSON.parse(paramsText);
+        const parameters: unknown = JSON.parse(paramsText);
         calls.push({ skillId, parameters });
-      } catch (e) {
+      } catch (e: unknown) {
         const msg = `Failed to parse parameters for skill ${skillId}. Invalid JSON.`;
         this.plugin.diagnosticService.report("Skill Parser", msg, "warning");
         console.error(msg, paramsText, e);
@@ -86,7 +94,7 @@ export class SkillManager {
     try {
       console.log(`Horme: Executing skill "${skill.name}" with params:`, call.parameters);
       return await skill.execute(call.parameters);
-    } catch (e) {
+    } catch (e: unknown) {
       const errorMessage = e instanceof Error ? e.message : String(e);
       // Log to Intelligence Dashboard with the skill name explicitly in the message
       this.plugin.diagnosticService.report(
@@ -126,12 +134,12 @@ export class SkillManager {
       }
       // Refresh the dropdown in any open chat views
       this.plugin.app.workspace.iterateAllLeaves(leaf => {
-        const view = leaf.view as any;
+        const view = leaf.view as unknown as { buildSkillsMenu?: () => void };
         if (typeof view.buildSkillsMenu === "function") {
           view.buildSkillsMenu();
         }
       });
-    } catch (e) {
+    } catch (e: unknown) {
       this.plugin.handleError(e, "Custom Skills Loader");
     }
   }

@@ -1,5 +1,6 @@
 import { Skill, SkillParameter } from "./types";
 import HormePlugin from "../../main";
+import { errorToMessage, getStringProp } from "../utils/TypeGuards";
 
 export class VaultLinkSkill implements Skill {
   id = "vault_links";
@@ -23,24 +24,27 @@ export class VaultLinkSkill implements Skill {
 
   instructions = `To use this skill, output exactly: <call:vault_links>{"context": "themes or text to link"}</call>. Use this to discover connections between current thoughts and existing knowledge in the vault.`;
 
-  async execute(params: { context: string }): Promise<string> {
+  async execute(params: unknown): Promise<string> {
     try {
+      const context = getStringProp(params, "context");
+      if (!context) return `Invalid parameters for ${this.name}: expected {"context": string}.`;
+
       // Privacy guard: refuse if vault search is locked
       const canAccess = this.plugin.isLocalProviderActive() || this.plugin.settings.allowCloudRAG;
       if (!this.plugin.settings.vaultBrainEnabled || !canAccess) {
         return "Vault search is not available with the current provider configuration.";
       }
 
-      const results = await this.plugin.vaultIndexer.search(params.context, 5);
+      const results = await this.plugin.vaultIndexer.search(context, 5);
       if (results.length === 0) {
         return "No strongly related notes found in the vault.";
       }
 
       return "Found the following related content in your vault:\n\n" + results.join("\n\n---\n\n");
-    } catch (e) {
+    } catch (e: unknown) {
 
       console.error("Horme Vault Link Skill Error:", e);
-      throw e;
+      throw new Error(errorToMessage(e));
     }
   }
 }

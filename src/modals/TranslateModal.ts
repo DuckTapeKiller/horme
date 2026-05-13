@@ -17,8 +17,10 @@ export class TranslateModal extends Modal {
       placeholder: "e.g. Spanish, French, Japanese",
     });
     input.addClass("horme-input");
-    input.style.width = "100%";
-    input.style.marginBottom = "12px";
+    input.setCssProps({
+      width: "100%",
+      marginBottom: "12px"
+    });
     input.focus();
 
     const btn = contentEl.createEl("button", { text: "Translate" });

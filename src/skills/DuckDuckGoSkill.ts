@@ -1,5 +1,6 @@
 import { requestUrl } from "obsidian";
 import { Skill, SkillParameter } from "./types";
+import { asArray, errorToMessage, getRecordProp, getStringProp } from "../utils/TypeGuards";
 
 export class DuckDuckGoSkill implements Skill {
   id = "ddg_search";
@@ -18,52 +19,65 @@ export class DuckDuckGoSkill implements Skill {
 
   instructions = `To use this skill, output exactly: <call:ddg_search>{"query": "your search query"}</call>. Use this as a complement to Wikipedia when you need to verify recent events, technical specifications, or niche topics that Wikipedia may not cover. This skill is also useful as a second opinion to cross-reference Wikipedia findings.`;
 
-  async execute(params: { query: string }): Promise<string> {
+  async execute(params: unknown): Promise<string> {
     try {
-      const { query } = params;
+      const query = getStringProp(params, "query");
+      if (!query) return `Invalid parameters for ${this.name}: expected {"query": string}.`;
       
       const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`;
       const res = await requestUrl({ url });
-      const data = res.json;
+      const data: unknown = res.json;
 
       let output = `## DuckDuckGo: "${query}"\n\n`;
       let hasContent = false;
 
       // Abstract (main answer)
-      if (data.Abstract && data.Abstract.trim().length > 0) {
-        output += `**Answer:** ${data.Abstract}\n`;
-        if (data.AbstractSource) output += `**Source:** ${data.AbstractSource}`;
-        if (data.AbstractURL) output += `\n<!-- ${data.AbstractURL} -->`;
+      const abstract = getStringProp(data, "Abstract");
+      if (abstract && abstract.trim().length > 0) {
+        output += `**Answer:** ${abstract}\n`;
+        const abstractSource = getStringProp(data, "AbstractSource");
+        if (abstractSource) output += `**Source:** ${abstractSource}`;
+        const abstractUrl = getStringProp(data, "AbstractURL");
+        if (abstractUrl) output += `\n<!-- ${abstractUrl} -->`;
         output += "\n\n";
         hasContent = true;
       }
 
       // Answer box (for direct factual answers like "How tall is...")
-      if (data.Answer && data.Answer.trim().length > 0) {
-        output += `**Direct Answer:** ${data.Answer}\n`;
-        if (data.AnswerType) output += `(Type: ${data.AnswerType})\n`;
+      const answer = getStringProp(data, "Answer");
+      if (answer && answer.trim().length > 0) {
+        output += `**Direct Answer:** ${answer}\n`;
+        const answerType = getStringProp(data, "AnswerType");
+        if (answerType) output += `(Type: ${answerType})\n`;
         output += "\n";
         hasContent = true;
       }
 
       // Definition
-      if (data.Definition && data.Definition.trim().length > 0) {
-        output += `**Definition:** ${data.Definition}\n`;
-        if (data.DefinitionSource) output += `Source: ${data.DefinitionSource}\n`;
+      const definition = getStringProp(data, "Definition");
+      if (definition && definition.trim().length > 0) {
+        output += `**Definition:** ${definition}\n`;
+        const definitionSource = getStringProp(data, "DefinitionSource");
+        if (definitionSource) output += `Source: ${definitionSource}\n`;
         output += "\n";
         hasContent = true;
       }
 
       // Related topics (up to 3)
-      if (data.RelatedTopics && data.RelatedTopics.length > 0) {
-        const topics = data.RelatedTopics
-          .filter((t: any) => t.Text && t.Text.trim().length > 0)
+      const relatedTopics = asArray(getRecordProp(data, "RelatedTopics")) ?? [];
+      if (relatedTopics.length > 0) {
+        const topics = relatedTopics
+          .filter((t) => {
+            const text = getStringProp(t, "Text");
+            return Boolean(text && text.trim().length > 0);
+          })
           .slice(0, 3);
         
         if (topics.length > 0) {
           output += "**Related:**\n";
           for (const topic of topics) {
-            output += `- ${topic.Text}\n`;
+            const text = getStringProp(topic, "Text");
+            if (text) output += `- ${text}\n`;
           }
           output += "\n";
           hasContent = true;
@@ -80,10 +94,10 @@ export class DuckDuckGoSkill implements Skill {
       }
 
       return output;
-    } catch (e) {
+    } catch (e: unknown) {
 
       console.error("Horme DuckDuckGo Skill Error:", e);
-      throw e;
+      throw new Error(errorToMessage(e));
     }
   }
 }

@@ -1,6 +1,7 @@
 import { Skill, SkillParameter } from "./types";
 import HormePlugin from "../../main";
 import { Notice } from "obsidian";
+import { errorToMessage, getStringProp } from "../utils/TypeGuards";
 
 export class GrammarScholarSkill implements Skill {
   id = "grammar_scholar";
@@ -32,14 +33,18 @@ export class GrammarScholarSkill implements Skill {
   Mandatory for checking non-obvious errors like false cognates, prepositional regimes, or orthotypography based on local manuals. 
   Do NOT use this for basic questions; use it for linguistic precision and following the user's local manuals.`;
 
-  async execute(params: { terms: string; context_sentence?: string }): Promise<string> {
+  async execute(params: unknown): Promise<string> {
     try {
+      const terms = getStringProp(params, "terms");
+      const contextSentence = getStringProp(params, "context_sentence");
+      if (!terms) return `Invalid parameters for ${this.name}: expected {"terms": string, "context_sentence"?: string}.`;
+
       // Combine term and sentence for a rich semantic query
-      const query = params.context_sentence ? `${params.terms}: ${params.context_sentence}` : params.terms;
+      const query = contextSentence ? `${terms}: ${contextSentence}` : terms;
       const results = await this.plugin.grammarIndexer.search(query);
       
       if (results.length === 0) {
-        return `No specific rules found in local manuals for "${params.terms}". Proceed with general linguistic knowledge.`;
+        return `No specific rules found in local manuals for "${terms}". Proceed with general linguistic knowledge.`;
       }
 
       new Notice("● Grammar Scholar: Consulted local manuals.");
@@ -51,10 +56,10 @@ export class GrammarScholarSkill implements Skill {
       }
 
       return joinedResults;
-    } catch (e) {
+    } catch (e: unknown) {
 
       console.error("Horme Grammar Scholar Skill Error:", e);
-      throw e;
+      throw new Error(errorToMessage(e));
     }
   }
 }

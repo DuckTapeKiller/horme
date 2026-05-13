@@ -4,10 +4,10 @@
  */
 
 function bytesToBase64(bytes: Uint8Array): string {
-  const anyBytes = bytes as any;
-  if (typeof anyBytes.toBase64 === "function") {
+  const maybeBytes = bytes as Uint8Array & { toBase64?: () => string };
+  if (typeof maybeBytes.toBase64 === "function") {
     try {
-      return anyBytes.toBase64();
+      return maybeBytes.toBase64();
     } catch {
       // fall through
     }
@@ -21,10 +21,10 @@ function bytesToBase64(bytes: Uint8Array): string {
 }
 
 function base64ToBytes(b64: string): Uint8Array {
-  const anyU8 = Uint8Array as any;
-  if (typeof anyU8.fromBase64 === "function") {
+  const maybeU8 = Uint8Array as Uint8ArrayConstructor & { fromBase64?: (input: string) => Uint8Array };
+  if (typeof maybeU8.fromBase64 === "function") {
     try {
-      return anyU8.fromBase64(b64);
+      return maybeU8.fromBase64(b64);
     } catch {
       // fall through
     }
@@ -140,9 +140,9 @@ export function cosineSimilarityInt8(a: Int8Array, b: Int8Array): number {
 /**
  * Returns the correct query/document prefix for the active embedding model.
  */
-export function getModelPrefixes(model: string): { query: string; document: string } {
+export function getModelPrefixes(model: string): { query: string; doc: string } {
   const m = model.toLowerCase();
-  if (m.includes("nomic")) return { query: "search_query: ", document: "search_document: " };
-  if (m.includes("mxbai")) return { query: "Represent this sentence for searching relevant passages: ", document: "" };
-  return { query: "", document: "" };
+  if (m.includes("nomic")) return { query: "search_query: ", doc: "search_document: " };
+  if (m.includes("mxbai")) return { query: "Represent this sentence for searching relevant passages: ", doc: "" };
+  return { query: "", doc: "" };
 }

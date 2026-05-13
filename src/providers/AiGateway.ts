@@ -1,5 +1,4 @@
 import HormePlugin from "../../main";
-import { HormeSettings } from "../types";
 import { AiProvider } from "./AiProvider";
 import { OllamaProvider } from "./OllamaProvider";
 import { LmStudioProvider } from "./LmStudioProvider";
@@ -46,17 +45,19 @@ export class AiGateway {
       ];
       try {
         return await provider.generateChat(msgs, model);
-      } catch (e) {
-        this.plugin.diagnosticService.report(`${this.plugin.settings.aiProvider}`, `Generation failed: ${e.message}`);
-        throw e;
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        this.plugin.diagnosticService.report(`${this.plugin.settings.aiProvider}`, `Generation failed: ${msg}`);
+        throw e instanceof Error ? e : new Error(msg);
       }
     }
 
     try {
       return await provider.generate(prompt, enhancedSystem, model);
-    } catch (e) {
-      this.plugin.diagnosticService.report(`${this.plugin.settings.aiProvider}`, `Generation failed: ${e.message}`);
-      throw e;
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.plugin.diagnosticService.report(`${this.plugin.settings.aiProvider}`, `Generation failed: ${msg}`);
+      throw e instanceof Error ? e : new Error(msg);
     }
   }
 
@@ -78,9 +79,10 @@ export class AiGateway {
 
     try {
       return await provider.stream(enhancedMsgs, model, signal);
-    } catch (e) {
-      this.plugin.diagnosticService.report(`${this.plugin.settings.aiProvider}`, `Streaming failed: ${e.message}`);
-      throw e;
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.plugin.diagnosticService.report(`${this.plugin.settings.aiProvider}`, `Streaming failed: ${msg}`);
+      throw e instanceof Error ? e : new Error(msg);
     }
   }
 

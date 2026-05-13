@@ -1,10 +1,16 @@
-import { App, PluginSettingTab, Setting, Notice, setIcon, requestUrl, MarkdownView, TFile, TFolder } from "obsidian";
+import { App, PluginSettingTab, Setting, Notice, setIcon, requestUrl } from "obsidian";
 import HormePlugin from "../../main";
-import { DEFAULT_SETTINGS, PROVIDER_MODELS } from "../constants";
+import { PROVIDER_MODELS } from "../constants";
 import { AiProvider } from "../types";
 import { FileSuggest, FolderSuggest, FileOrFolderSuggest } from "../utils/Suggest";
 import { GenericConfirmModal } from "../modals/GenericConfirmModal";
 import { CustomSkillModal } from "../modals/CustomSkillModal";
+import { asArray, getRecordProp, getStringProp } from "../utils/TypeGuards";
+
+type CloudProviderId = Exclude<AiProvider, "ollama" | "lmstudio">;
+type CloudApiKeyField = "claudeApiKey" | "geminiApiKey" | "openaiApiKey" | "groqApiKey" | "openRouterApiKey";
+type CloudModelField = "claudeModel" | "geminiModel" | "openaiModel" | "groqModel" | "openRouterModel";
+type CloudProviderConfig = { id: CloudProviderId; name: string; key: CloudApiKeyField; model: CloudModelField };
 
 export class HormeSettingTab extends PluginSettingTab {
   plugin: HormePlugin;
@@ -13,6 +19,18 @@ export class HormeSettingTab extends PluginSettingTab {
   constructor(app: App, plugin: HormePlugin) {
     super(app, plugin);
     this.plugin = plugin;
+  }
+
+  private isAiProvider(value: string): value is AiProvider {
+    return (
+      value === "ollama" ||
+      value === "lmstudio" ||
+      value === "claude" ||
+      value === "gemini" ||
+      value === "openai" ||
+      value === "groq" ||
+      value === "openrouter"
+    );
   }
 
   // ── Updated model suggestions ──────────────────────────────────────────────
@@ -88,10 +106,10 @@ export class HormeSettingTab extends PluginSettingTab {
   ): void {
     setting.addText(t => {
       t.setPlaceholder("Type or select a model…");
-      t.inputEl.style.width = "100%";
+      t.inputEl.setCssProps({ width: "100%" });
 
       // Attach the datalist for browser-native suggestion dropdown
-      const datalist = document.createElement("datalist");
+      const datalist = activeDocument.createElement("datalist");
       datalist.id = listId;
       t.inputEl.setAttribute("list", listId);
       t.inputEl.after(datalist);
@@ -103,29 +121,29 @@ export class HormeSettingTab extends PluginSettingTab {
       // because the user can always type a model name manually
       modelsFn().then(models => {
         models.forEach(m => {
-          const opt = document.createElement("option");
+          const opt = activeDocument.createElement("option");
           opt.value = m;
           datalist.appendChild(opt);
         });
       }).catch(() => { /* silent — user types the model name */ });
 
-      t.onChange(async v => {
+      t.onChange(v => {
         const trimmed = v.trim();
-        if (trimmed) await onSave(trimmed);
+        if (trimmed) void onSave(trimmed);
       });
     });
   }
 
-  private async displayPreserveScroll() {
-    const scroller = this.containerEl.closest(".vertical-tab-content") as HTMLElement | null;
-    const scrollTop = scroller?.scrollTop ?? 0;
-    await this.display();
-    requestAnimationFrame(() => {
-      if (scroller) scroller.scrollTop = scrollTop;
+  private displayPreserveScroll() {
+    const scroller = this.containerEl.closest(".vertical-tab-content");
+    const scrollTop = scroller instanceof HTMLElement ? scroller.scrollTop : 0;
+    this.display();
+    window.requestAnimationFrame(() => {
+      if (scroller instanceof HTMLElement) scroller.scrollTop = scrollTop;
     });
   }
 
-  async display() {
+  display(): void {
     const { containerEl } = this;
     containerEl.empty();
     
@@ -133,13 +151,12 @@ export class HormeSettingTab extends PluginSettingTab {
     const header = containerEl.createDiv("horme-settings-header");
     const iconWrap = header.createDiv("horme-settings-header-icon");
     setIcon(iconWrap, "cone");
-    header.createEl("h2", { text: "Horme Settings", cls: "horme-settings-title" });
+    new Setting(header).setName("Overview").setHeading();
 
     // SYSTEM DIAGNOSTICS & INTELLIGENCE (TOP & EXPANDED)
     const diagSection = containerEl.createDiv("horme-settings-section horme-diag-section");
-    diagSection.createEl("h3", { text: "◈ Intelligence Dashboard", cls: "horme-diag-title-header" });
-    
-    const summary = this.plugin.diagnosticService.getSummary();
+    new Setting(diagSection).setName("◈ Intelligence Dashboard").setHeading();
+    diagSection.addClass("horme-diag-title-header");
     
     // Dashboard Grid
     const grid = diagSection.createDiv("horme-diag-grid");
@@ -172,7 +189,8 @@ export class HormeSettingTab extends PluginSettingTab {
           entry.createSpan({ text: log.message, cls: "horme-diag-entry-msg" });
         });
       } else {
-        logContent.createDiv({ text: "> No issues detected. System healthy.", cls: "horme-diag-entry-msg" }).style.opacity = "0.4";
+        logContent.createDiv({ text: "> No issues detected. System healthy.", cls: "horme-diag-entry-msg" })
+          .setCssProps({ opacity: "0.4" });
       }
       updateSummary();
     };
@@ -200,7 +218,7 @@ export class HormeSettingTab extends PluginSettingTab {
           }
         });
         renderLogs();
-      } catch (e) {
+      } catch {
         grid.empty();
         grid.createEl("p", { text: "Failed to load health metrics.", cls: "horme-diag-empty" });
       }
@@ -211,36 +229,38 @@ export class HormeSettingTab extends PluginSettingTab {
     // Dedicated Refresh Button with Icon
     const refreshBtn = logTitleContainer.createEl("button", { cls: "horme-diag-refresh-btn", attr: { title: "Refresh Dashboard" } });
     setIcon(refreshBtn, "refresh-cw");
-    refreshBtn.addEventListener("click", async () => {
+    refreshBtn.addEventListener("click", () => {
       refreshBtn.addClass("is-spinning");
-      await refreshHealth();
-      setTimeout(() => refreshBtn.removeClass("is-spinning"), 600);
+      void refreshHealth().finally(() => {
+        window.setTimeout(() => refreshBtn.removeClass("is-spinning"), 600);
+      });
       new Notice("Dashboard refreshed.");
     });
 
     new Setting(diagSection)
       .setName("System Health")
       .setDesc("Monitor integrity of your local intelligence.")
-      .addButton(btn => btn.setButtonText("Verify Integrity").onClick(async () => { 
-        await refreshHealth(); 
-        new Notice("Integrity scan complete."); 
+      .addButton(btn => btn.setButtonText("Verify Integrity").onClick(() => {
+        void refreshHealth().then(() => new Notice("Integrity scan complete."));
       }))
-      .addButton(btn => btn.setButtonText("Clear Logs").onClick(async () => { 
-        this.plugin.diagnosticService.clear(); 
-        renderLogs(); 
+      .addButton(btn => btn.setButtonText("Clear Logs").onClick(() => {
+        this.plugin.diagnosticService.clear();
+        renderLogs();
       }))
-      .addButton(btn => btn.setButtonText("Copy Data").onClick(async () => {
-        const health = await this.plugin.diagnosticService.getIndexHealth();
-        const logs = this.plugin.diagnosticService.getLogs();
-        await navigator.clipboard.writeText(JSON.stringify({ timestamp: new Date().toISOString(), indexHealth: health, logs }, null, 2));
-        new Notice("Diagnostic bundle copied.");
+      .addButton(btn => btn.setButtonText("Copy Data").onClick(() => {
+        void (async () => {
+          const health = await this.plugin.diagnosticService.getIndexHealth();
+          const logs = this.plugin.diagnosticService.getLogs();
+          await navigator.clipboard.writeText(JSON.stringify({ timestamp: new Date().toISOString(), indexHealth: health, logs }, null, 2));
+          new Notice("Diagnostic bundle copied.");
+        })().catch(e => this.plugin.handleError(e, "Clipboard"));
       }));
 
     // Ensure the log wrapper stays at the bottom
     diagSection.appendChild(logWrapper);
 
     // Initial load
-    refreshHealth();
+    void refreshHealth();
     renderLogs();
 
     // AI PROVIDER
@@ -260,10 +280,13 @@ export class HormeSettingTab extends PluginSettingTab {
         dd.addOption("groq", "Groq (High Speed)");
         dd.addOption("openrouter", "OpenRouter (Free/Aggregator)");
         dd.setValue(this.plugin.settings.aiProvider);
-        dd.onChange(async (v) => {
-          this.plugin.settings.aiProvider = v as any;
-          await this.plugin.saveSettings();
-          this.display();
+        dd.onChange((v) => {
+          void (async () => {
+            if (!this.isAiProvider(v)) return;
+            this.plugin.settings.aiProvider = v;
+            await this.plugin.saveSettings();
+            this.display();
+          })();
         });
       });
 
@@ -273,17 +296,21 @@ export class HormeSettingTab extends PluginSettingTab {
     const ollamaSection = providersContainer.createEl("details", { cls: "horme-settings-section" });
     ollamaSection.open = true;
     ollamaSection.createEl("summary", { text: "◈ Ollama (Local)" });
-    new Setting(ollamaSection).setName("Ollama URL").addText(t => t.setValue(this.plugin.settings.ollamaBaseUrl).onChange(async v => {
-      this.plugin.settings.ollamaBaseUrl = v; await this.plugin.saveSettings();
+    new Setting(ollamaSection).setName("Ollama URL").addText(t => t.setValue(this.plugin.settings.ollamaBaseUrl).onChange(v => {
+      void (async () => {
+        this.plugin.settings.ollamaBaseUrl = v;
+        await this.plugin.saveSettings();
+      })();
     }));
     this.buildModelCombo(
       new Setting(ollamaSection).setName("Model")
         .setDesc("Select from running models or type a custom name."),
       "horme-ollama-models",
       async () => {
-        const res = await fetch(`${this.plugin.settings.ollamaBaseUrl}/api/tags`);
-        const data = await res.json();
-        return data.models?.map((m: any) => m.name) || [];
+        const res = await requestUrl({ url: `${this.plugin.settings.ollamaBaseUrl}/api/tags` });
+        const json: unknown = res.json;
+        const models = asArray(getRecordProp(json, "models")) ?? [];
+        return models.map(m => getStringProp(m, "name")).filter((m): m is string => Boolean(m));
       },
       this.plugin.settings.defaultModel,
       async v => { this.plugin.settings.defaultModel = v; await this.plugin.saveSettings(); }
@@ -293,8 +320,11 @@ export class HormeSettingTab extends PluginSettingTab {
     const lmstudioSection = providersContainer.createEl("details", { cls: "horme-settings-section" });
     lmstudioSection.open = true;
     lmstudioSection.createEl("summary", { text: "◈ LM Studio (Local)" });
-    new Setting(lmstudioSection).setName("LM Studio URL").addText(t => t.setValue(this.plugin.settings.lmStudioUrl).onChange(async v => {
-      this.plugin.settings.lmStudioUrl = v; await this.plugin.saveSettings();
+    new Setting(lmstudioSection).setName("LM Studio URL").addText(t => t.setValue(this.plugin.settings.lmStudioUrl).onChange(v => {
+      void (async () => {
+        this.plugin.settings.lmStudioUrl = v;
+        await this.plugin.saveSettings();
+      })();
     }));
     this.buildModelCombo(
       new Setting(lmstudioSection).setName("Model")
@@ -307,14 +337,16 @@ export class HormeSettingTab extends PluginSettingTab {
         // Use requestUrl (Obsidian's network layer) instead of fetch — avoids
         // CORS/policy blocks that affect fetch in Obsidian's desktop renderer.
         const res = await requestUrl({ url: `${url}/v1/models` });
-        return res.json?.data?.map((m: any) => m.id) || [];
+        const json: unknown = res.json;
+        const dataArr = asArray(getRecordProp(json, "data")) ?? [];
+        return dataArr.map(m => getStringProp(m, "id")).filter((m): m is string => Boolean(m));
       },
       this.plugin.settings.lmStudioModel,
       async v => { this.plugin.settings.lmStudioModel = v; await this.plugin.saveSettings(); }
     );
 
     // CLOUD PROVIDERS
-    const cloudProviders = [
+    const cloudProviders: CloudProviderConfig[] = [
       { id: "claude", name: "Anthropic Claude", key: "claudeApiKey", model: "claudeModel" },
       { id: "gemini", name: "Google Gemini", key: "geminiApiKey", model: "geminiModel" },
       { id: "openai", name: "OpenAI GPT", key: "openaiApiKey", model: "openaiModel" },
@@ -328,9 +360,11 @@ export class HormeSettingTab extends PluginSettingTab {
       section.createEl("summary", { text: `◈ ${cp.name}` });
       new Setting(section).setName("API Key").addText(t => {
         t.inputEl.type = "password";
-        t.setValue((this.plugin.settings as any)[cp.key]).onChange(async v => {
-          (this.plugin.settings as any)[cp.key] = v;
-          await this.plugin.saveSettings();
+        t.setValue(this.plugin.settings[cp.key]).onChange(v => {
+          void (async () => {
+            this.plugin.settings[cp.key] = v;
+            await this.plugin.saveSettings();
+          })();
         });
       });
       this.buildModelCombo(
@@ -338,8 +372,8 @@ export class HormeSettingTab extends PluginSettingTab {
           .setDesc("Select a suggestion or type any custom model ID."),
         `horme-${cp.id}-models`,
         async () => HormeSettingTab.UPDATED_MODELS[cp.id] ?? PROVIDER_MODELS[cp.id] ?? [],
-        (this.plugin.settings as any)[cp.model],
-        async v => { (this.plugin.settings as any)[cp.model] = v; await this.plugin.saveSettings(); }
+        this.plugin.settings[cp.model],
+        async v => { this.plugin.settings[cp.model] = v; await this.plugin.saveSettings(); }
       );
     }
 
@@ -350,13 +384,18 @@ export class HormeSettingTab extends PluginSettingTab {
     generalSection.createEl("summary", { text: "◈ General Settings" });
     const tempSetting = new Setting(generalSection).setName("Temperature")
       .setDesc(`Default: 0.3 | Current: ${this.plugin.settings.temperature}`);
-    tempSetting.addSlider(sl => sl.setLimits(0, 1, 0.1).setValue(this.plugin.settings.temperature).setDynamicTooltip().onChange(async v => {
-      this.plugin.settings.temperature = v;
-      tempSetting.setDesc(`Default: 0.3 | Current: ${v}`);
-      await this.plugin.saveSettings();
+    tempSetting.addSlider(sl => sl.setLimits(0, 1, 0.1).setValue(this.plugin.settings.temperature).setDynamicTooltip().onChange(v => {
+      void (async () => {
+        this.plugin.settings.temperature = v;
+        tempSetting.setDesc(`Default: 0.3 | Current: ${v}`);
+        await this.plugin.saveSettings();
+      })();
     }));
-    new Setting(generalSection).setName("Export folder").addText(t => t.setValue(this.plugin.settings.exportFolder).onChange(async v => {
-      this.plugin.settings.exportFolder = v.trim() || "HORME"; await this.plugin.saveSettings();
+    new Setting(generalSection).setName("Export folder").addText(t => t.setValue(this.plugin.settings.exportFolder).onChange(v => {
+      void (async () => {
+        this.plugin.settings.exportFolder = v.trim() || "HORME";
+        await this.plugin.saveSettings();
+      })();
     }));
 
     // SYSTEM PROMPT & PRESETS
@@ -372,9 +411,11 @@ export class HormeSettingTab extends PluginSettingTab {
         new FileSuggest(this.app, t.inputEl);
         t.setPlaceholder("path/to/note.md")
           .setValue(this.plugin.settings.systemPromptPath)
-          .onChange(async v => {
-            this.plugin.settings.systemPromptPath = v.trim();
-            await this.plugin.saveSettings();
+          .onChange(v => {
+            void (async () => {
+              this.plugin.settings.systemPromptPath = v.trim();
+              await this.plugin.saveSettings();
+            })();
           });
       });
 
@@ -388,17 +429,21 @@ export class HormeSettingTab extends PluginSettingTab {
           new FileOrFolderSuggest(this.app, t.inputEl);
           t.setPlaceholder("path/to/note_or_folder")
             .setValue(path)
-            .onChange(async v => {
-              this.plugin.settings.presetsPaths[i] = v.trim();
-              await this.plugin.saveSettings();
+            .onChange(v => {
+              void (async () => {
+                this.plugin.settings.presetsPaths[i] = v.trim();
+                await this.plugin.saveSettings();
+              })();
             });
         })
         .addButton(btn => {
           btn.setIcon("trash")
-             .onClick(async () => {
-               this.plugin.settings.presetsPaths.splice(i, 1);
-               await this.plugin.saveSettings();
-               this.displayPreserveScroll();
+             .onClick(() => {
+               void (async () => {
+                 this.plugin.settings.presetsPaths.splice(i, 1);
+                 await this.plugin.saveSettings();
+                 this.displayPreserveScroll();
+               })();
              });
         });
     });
@@ -407,10 +452,12 @@ export class HormeSettingTab extends PluginSettingTab {
       .addButton(btn => {
         btn.setButtonText("Add more presets")
            .setCta()
-           .onClick(async () => {
-             this.plugin.settings.presetsPaths.push("");
-             await this.plugin.saveSettings();
-             this.displayPreserveScroll();
+           .onClick(() => {
+             void (async () => {
+               this.plugin.settings.presetsPaths.push("");
+               await this.plugin.saveSettings();
+               this.displayPreserveScroll();
+             })();
            });
       });
 
@@ -423,10 +470,12 @@ export class HormeSettingTab extends PluginSettingTab {
     new Setting(platformSection)
       .setName("Enable Mobile Override")
       .setDesc("Automatically switch to a specific provider/model when on a mobile device.")
-      .addToggle(t => t.setValue(this.plugin.settings.useMobileOverride).onChange(async v => {
-        this.plugin.settings.useMobileOverride = v;
-        await this.plugin.saveSettings();
-        this.displayPreserveScroll();
+      .addToggle(t => t.setValue(this.plugin.settings.useMobileOverride).onChange(v => {
+        void (async () => {
+          this.plugin.settings.useMobileOverride = v;
+          await this.plugin.saveSettings();
+          this.displayPreserveScroll();
+        })();
       }));
 
     if (this.plugin.settings.useMobileOverride) {
@@ -441,10 +490,13 @@ export class HormeSettingTab extends PluginSettingTab {
           dd.addOption("groq", "Groq (High Speed)");
           dd.addOption("openrouter", "OpenRouter (Free/Aggregator)");
           dd.setValue(this.plugin.settings.mobileProvider);
-          dd.onChange(async v => {
-            this.plugin.settings.mobileProvider = v as any;
-            await this.plugin.saveSettings();
-            this.displayPreserveScroll();
+          dd.onChange(v => {
+            void (async () => {
+              if (!this.isAiProvider(v)) return;
+              this.plugin.settings.mobileProvider = v;
+              await this.plugin.saveSettings();
+              this.displayPreserveScroll();
+            })();
           });
         });
 
@@ -455,13 +507,16 @@ export class HormeSettingTab extends PluginSettingTab {
         async () => {
           const provider = this.plugin.settings.mobileProvider;
           if (provider === "ollama") {
-            const res = await fetch(`${this.plugin.settings.ollamaBaseUrl}/api/tags`);
-            const data = await res.json();
-            return data.models?.map((m: any) => m.name) || [];
+            const res = await requestUrl({ url: `${this.plugin.settings.ollamaBaseUrl}/api/tags`, throw: false });
+            const json: unknown = res.json;
+            const models = asArray(getRecordProp(json, "models")) ?? [];
+            return models.map(m => getStringProp(m, "name")).filter((m): m is string => Boolean(m));
           } else if (provider === "lmstudio") {
             const url = this.plugin.settings.lmStudioUrl.replace(/\/$/, "");
             const res = await requestUrl({ url: `${url}/v1/models` });
-            return res.json?.data?.map((m: any) => m.id) || [];
+            const json: unknown = res.json;
+            const dataArr = asArray(getRecordProp(json, "data")) ?? [];
+            return dataArr.map(m => getStringProp(m, "id")).filter((m): m is string => Boolean(m));
           } else {
             return HormeSettingTab.UPDATED_MODELS[provider] ?? PROVIDER_MODELS[provider] ?? [];
           }
@@ -482,18 +537,22 @@ export class HormeSettingTab extends PluginSettingTab {
       .setDesc("The folder in your vault containing grammar rules for your primary language.")
       .addText(t => {
         new FolderSuggest(this.app, t.inputEl);
-        t.setValue(this.plugin.settings.grammarFolderPath).onChange(async v => {
-          this.plugin.settings.grammarFolderPath = v.trim() || "Gramática";
-          await this.plugin.saveSettings();
+        t.setValue(this.plugin.settings.grammarFolderPath).onChange(v => {
+          void (async () => {
+            this.plugin.settings.grammarFolderPath = v.trim() || "Gramática";
+            await this.plugin.saveSettings();
+          })();
         });
       });
 
     new Setting(grammarSection)
       .setName("Grammar Language")
       .setDesc("The language your grammar manuals cover. Proofreading will only consult grammar manuals when the text is in this language.")
-      .addText(t => t.setValue(this.plugin.settings.grammarLanguage).onChange(async v => {
-        this.plugin.settings.grammarLanguage = v.trim() || "Español";
-        await this.plugin.saveSettings();
+      .addText(t => t.setValue(this.plugin.settings.grammarLanguage).onChange(v => {
+        void (async () => {
+          this.plugin.settings.grammarLanguage = v.trim() || "Español";
+          await this.plugin.saveSettings();
+        })();
       }));
 
     new Setting(grammarSection)
@@ -501,9 +560,11 @@ export class HormeSettingTab extends PluginSettingTab {
       .setDesc("Synchronise the skill with the latest content in your grammar manuals folder.")
       .addButton(btn => {
         btn.setButtonText("Rebuild Now")
-           .onClick(async () => {
-             await this.plugin.grammarIndexer.rebuildIndex();
-             new Notice("✅ Grammar Index Rebuilt");
+           .onClick(() => {
+             void (async () => {
+               await this.plugin.grammarIndexer.rebuildIndex();
+               new Notice("✅ Grammar Index Rebuilt");
+             })();
            });
       })
       .addButton(btn => {
@@ -513,10 +574,12 @@ export class HormeSettingTab extends PluginSettingTab {
             new GenericConfirmModal(
               this.app,
               "Delete the Grammar Index from memory and disk? You can rebuild it later.",
-              async () => {
-                const result = await this.plugin.grammarIndexer.deleteIndex();
-                new Notice(result === "deleted" ? "Grammar Index deleted." : "No Grammar Index detected.");
-                this.displayPreserveScroll();
+              () => {
+                void (async () => {
+                  const result = await this.plugin.grammarIndexer.deleteIndex();
+                  new Notice(result === "deleted" ? "Grammar Index deleted." : "No Grammar Index detected.");
+                  this.displayPreserveScroll();
+                })();
               }
             ).open();
           });
@@ -531,17 +594,21 @@ export class HormeSettingTab extends PluginSettingTab {
     new Setting(summarySection)
       .setName("Summary Field")
       .setDesc("The frontmatter key where generated summaries are stored (e.g. 'summary', 'resumen', 'abstract').")
-      .addText(t => t.setValue(this.plugin.settings.summaryField).onChange(async v => {
-        this.plugin.settings.summaryField = v.trim() || "summary";
-        await this.plugin.saveSettings();
+      .addText(t => t.setValue(this.plugin.settings.summaryField).onChange(v => {
+        void (async () => {
+          this.plugin.settings.summaryField = v.trim() || "summary";
+          await this.plugin.saveSettings();
+        })();
       }));
 
     new Setting(summarySection)
       .setName("Summary Language")
       .setDesc("The language summaries should be written in.")
-      .addText(t => t.setValue(this.plugin.settings.summaryLanguage).onChange(async v => {
-        this.plugin.settings.summaryLanguage = v.trim() || "Español";
-        await this.plugin.saveSettings();
+      .addText(t => t.setValue(this.plugin.settings.summaryLanguage).onChange(v => {
+        void (async () => {
+          this.plugin.settings.summaryLanguage = v.trim() || "Español";
+          await this.plugin.saveSettings();
+        })();
       }));
 
     // --- Tag Taxonomy Index ---
@@ -553,9 +620,11 @@ export class HormeSettingTab extends PluginSettingTab {
     new Setting(tagSection)
       .setName("Tag List Note")
       .setDesc("Optional: A note containing a list of allowed tags (one per line).")
-      .addText(t => t.setValue(this.plugin.settings.tagsFilePath).onChange(async v => {
-        this.plugin.settings.tagsFilePath = v.trim();
-        await this.plugin.saveSettings();
+      .addText(t => t.setValue(this.plugin.settings.tagsFilePath).onChange(v => {
+        void (async () => {
+          this.plugin.settings.tagsFilePath = v.trim();
+          await this.plugin.saveSettings();
+        })();
       }));
 
     new Setting(tagSection)
@@ -563,9 +632,11 @@ export class HormeSettingTab extends PluginSettingTab {
       .setDesc("Index your vault's tag structure for semantic suggestions. (Global access enabled)")
       .addButton(btn => {
         btn.setButtonText("Rebuild Now")
-           .onClick(async () => {
-             await this.plugin.tagIndexer.rebuildTagIndex();
-             new Notice("✅ Tag Index Ready");
+           .onClick(() => {
+             void (async () => {
+               await this.plugin.tagIndexer.rebuildTagIndex();
+               new Notice("✅ Tag Index Ready");
+             })();
            });
       })
       .addButton(btn => {
@@ -575,10 +646,12 @@ export class HormeSettingTab extends PluginSettingTab {
             new GenericConfirmModal(
               this.app,
               "Delete the Tag Index from memory and disk? You can rebuild it later.",
-              async () => {
-                const result = await this.plugin.tagIndexer.deleteIndex();
-                new Notice(result === "deleted" ? "Tag Index deleted." : "No Tag Index detected.");
-                this.displayPreserveScroll();
+              () => {
+                void (async () => {
+                  const result = await this.plugin.tagIndexer.deleteIndex();
+                  new Notice(result === "deleted" ? "Tag Index deleted." : "No Tag Index detected.");
+                  this.displayPreserveScroll();
+                })();
               }
             ).open();
           });
@@ -595,10 +668,12 @@ export class HormeSettingTab extends PluginSettingTab {
       .setDesc("Automatically surface related notes in a sidebar panel as you write. (Requires Vault Brain to be enabled and indexed).")
       .addToggle(t => {
         t.setValue(this.plugin.settings.connectionsEnabled)
-         .onChange(async v => {
-           this.plugin.settings.connectionsEnabled = v;
-           await this.plugin.saveSettings();
-           this.displayPreserveScroll();
+         .onChange(v => {
+           void (async () => {
+             this.plugin.settings.connectionsEnabled = v;
+             await this.plugin.saveSettings();
+             this.displayPreserveScroll();
+           })();
          });
       });
 
@@ -610,10 +685,12 @@ export class HormeSettingTab extends PluginSettingTab {
         .setLimits(0.1, 0.9, 0.05)
         .setValue(this.plugin.settings.connectionsThreshold)
         .setDynamicTooltip()
-        .onChange(async v => {
-          this.plugin.settings.connectionsThreshold = v;
-          threshSetting.setDesc(`Minimum similarity required to show a connection. (Current: ${v})`);
-          await this.plugin.saveSettings();
+        .onChange(v => {
+          void (async () => {
+            this.plugin.settings.connectionsThreshold = v;
+            threshSetting.setDesc(`Minimum similarity required to show a connection. (Current: ${v})`);
+            await this.plugin.saveSettings();
+          })();
         })
       );
 
@@ -624,10 +701,12 @@ export class HormeSettingTab extends PluginSettingTab {
         .setLimits(5, 50, 1)
         .setValue(this.plugin.settings.connectionsMaxResults)
         .setDynamicTooltip()
-        .onChange(async v => {
-          this.plugin.settings.connectionsMaxResults = v;
-          maxResultsSetting.setDesc(`Maximum number of connections to display. (Current: ${v})`);
-          await this.plugin.saveSettings();
+        .onChange(v => {
+          void (async () => {
+            this.plugin.settings.connectionsMaxResults = v;
+            maxResultsSetting.setDesc(`Maximum number of connections to display. (Current: ${v})`);
+            await this.plugin.saveSettings();
+          })();
         })
       );
 
@@ -637,9 +716,11 @@ export class HormeSettingTab extends PluginSettingTab {
         .addText(t => t
           .setPlaceholder("e.g. Templates, Daily Notes")
           .setValue(this.plugin.settings.connectionsExcludedFolders)
-          .onChange(async v => {
-            this.plugin.settings.connectionsExcludedFolders = v;
-            await this.plugin.saveSettings();
+          .onChange(v => {
+            void (async () => {
+              this.plugin.settings.connectionsExcludedFolders = v;
+              await this.plugin.saveSettings();
+            })();
           })
         );
 
@@ -648,9 +729,11 @@ export class HormeSettingTab extends PluginSettingTab {
         .setDesc("Clicking a connection opens it in a new split pane instead of replacing the active view.")
         .addToggle(t => t
           .setValue(this.plugin.settings.connectionsOpenInNewTab)
-          .onChange(async v => {
-            this.plugin.settings.connectionsOpenInNewTab = v;
-            await this.plugin.saveSettings();
+          .onChange(v => {
+            void (async () => {
+              this.plugin.settings.connectionsOpenInNewTab = v;
+              await this.plugin.saveSettings();
+            })();
           })
         );
 
@@ -661,9 +744,11 @@ export class HormeSettingTab extends PluginSettingTab {
           .addOption("minimal", "Minimal (Title only)")
           .addOption("detailed", "Detailed (Title + Path)")
           .setValue(this.plugin.settings.connectionsDisplayStyle)
-          .onChange(async v => {
-            this.plugin.settings.connectionsDisplayStyle = v as "minimal" | "detailed";
-            await this.plugin.saveSettings();
+          .onChange(v => {
+            void (async () => {
+              this.plugin.settings.connectionsDisplayStyle = v as "minimal" | "detailed";
+              await this.plugin.saveSettings();
+            })();
           })
         );
     }
@@ -678,12 +763,14 @@ export class HormeSettingTab extends PluginSettingTab {
 
     if (!isLocal && !this.plugin.settings.allowCloudRAG) {
       const warning = ragSection.createDiv("horme-settings-warning");
-      warning.textContent = "⚠️ Vault Brain is disabled for cloud providers to protect your privacy.";
-      warning.style.color = "var(--text-error)";
-      warning.style.padding = "10px";
-      warning.style.marginBottom = "10px";
-      warning.style.border = "1px solid var(--background-modifier-border)";
-      warning.style.borderRadius = "var(--radius-s)";
+      warning.setText("⚠️ Vault Brain is disabled for cloud providers to protect your privacy.");
+      warning.setCssProps({
+        color: "var(--text-error)",
+        padding: "10px",
+        marginBottom: "10px",
+        border: "1px solid var(--background-modifier-border)",
+        borderRadius: "var(--radius-s)"
+      });
     }
 
     new Setting(ragSection)
@@ -693,10 +780,12 @@ export class HormeSettingTab extends PluginSettingTab {
         const canEnable = isLocal || this.plugin.settings.allowCloudRAG;
         t.setValue(this.plugin.settings.vaultBrainEnabled && canEnable)
          .setDisabled(!canEnable)
-         .onChange(async v => {
-           this.plugin.settings.vaultBrainEnabled = v;
-           await this.plugin.saveSettings();
-           this.displayPreserveScroll();
+         .onChange(v => {
+           void (async () => {
+             this.plugin.settings.vaultBrainEnabled = v;
+             await this.plugin.saveSettings();
+             this.displayPreserveScroll();
+           })();
          });
       });
 
@@ -705,23 +794,27 @@ export class HormeSettingTab extends PluginSettingTab {
       .setDesc("WARNING: If enabled, snippets from your notes will be sent to cloud servers. This reduces privacy.")
       .addToggle(t => {
         t.setValue(this.plugin.settings.allowCloudRAG)
-         .onChange(async v => {
-           if (v) {
-             new GenericConfirmModal(
-               this.app,
-               "Are you sure? This will send snippets from your notes to third-party cloud servers.",
-               async () => {
-                 this.plugin.settings.allowCloudRAG = true;
-                 await this.plugin.saveSettings();
-                 this.displayPreserveScroll();
-               }
-             ).open();
-             t.setValue(false); // reset toggle — modal will re-enable if confirmed
-             return;
-           }
-           this.plugin.settings.allowCloudRAG = false;
-           await this.plugin.saveSettings();
-           this.displayPreserveScroll();
+         .onChange(v => {
+           void (async () => {
+             if (v) {
+               new GenericConfirmModal(
+                 this.app,
+                 "Are you sure? This will send snippets from your notes to third-party cloud servers.",
+                 () => {
+                   void (async () => {
+                     this.plugin.settings.allowCloudRAG = true;
+                     await this.plugin.saveSettings();
+                     this.displayPreserveScroll();
+                   })();
+                 }
+               ).open();
+               t.setValue(false); // reset toggle — modal will re-enable if confirmed
+               return;
+             }
+             this.plugin.settings.allowCloudRAG = false;
+             await this.plugin.saveSettings();
+             this.displayPreserveScroll();
+           })();
          });
       });
 
@@ -732,9 +825,11 @@ export class HormeSettingTab extends PluginSettingTab {
           .setDesc("Must be a specialized embedding model. Type a custom name or pick from those running in Ollama."),
         "horme-embed-models",
         async () => {
-          const res = await fetch(`${this.plugin.settings.ollamaBaseUrl}/api/tags`);
-          const data = await res.json();
-          return data.models?.map((m: any) => m.name) || ["nomic-embed-text", "mxbai-embed-large", "all-minilm"];
+          const res = await requestUrl({ url: `${this.plugin.settings.ollamaBaseUrl}/api/tags` });
+          const json: unknown = res.json;
+          const models = asArray(getRecordProp(json, "models")) ?? [];
+          const names = models.map(m => getStringProp(m, "name")).filter((m): m is string => Boolean(m));
+          return names.length > 0 ? names : ["nomic-embed-text", "mxbai-embed-large", "all-minilm"];
         },
         this.plugin.settings.ragEmbeddingModel,
         async v => {
@@ -749,10 +844,12 @@ export class HormeSettingTab extends PluginSettingTab {
         .setDesc("Automatically translates your tags into a second language during indexing. This 'shadows' your tags so that search queries in either language will find the note. (Note: This only affects the AI Index; it will never modify your actual note files or tags.)")
         .addToggle(toggle => toggle
           .setValue(this.plugin.settings.tagShadowingEnabled)
-          .onChange(async v => {
-            this.plugin.settings.tagShadowingEnabled = v;
-            await this.plugin.saveSettings();
-            this.displayPreserveScroll();
+          .onChange(v => {
+            void (async () => {
+              this.plugin.settings.tagShadowingEnabled = v;
+              await this.plugin.saveSettings();
+              this.displayPreserveScroll();
+            })();
           })
         );
 
@@ -777,9 +874,11 @@ export class HormeSettingTab extends PluginSettingTab {
             .addOption("Hindi", "Hindi")
             .addOption("Polish", "Polish")
             .setValue(this.plugin.settings.tagShadowingLanguage)
-            .onChange(async v => {
-              this.plugin.settings.tagShadowingLanguage = v;
-              await this.plugin.saveSettings();
+            .onChange(v => {
+              void (async () => {
+                this.plugin.settings.tagShadowingLanguage = v;
+                await this.plugin.saveSettings();
+              })();
             })
           );
 
@@ -790,10 +889,12 @@ export class HormeSettingTab extends PluginSettingTab {
             .addOption("ollama", "Ollama")
             .addOption("lmstudio", "LM Studio")
             .setValue(this.plugin.settings.tagTranslationProvider)
-            .onChange(async v => {
-              this.plugin.settings.tagTranslationProvider = v as "ollama" | "lmstudio";
-              await this.plugin.saveSettings();
-              this.displayPreserveScroll();
+            .onChange(v => {
+              void (async () => {
+                this.plugin.settings.tagTranslationProvider = v as "ollama" | "lmstudio";
+                await this.plugin.saveSettings();
+                this.displayPreserveScroll();
+              })();
             })
           );
 
@@ -805,9 +906,10 @@ export class HormeSettingTab extends PluginSettingTab {
           async () => {
             if (this.plugin.settings.tagTranslationProvider === "lmstudio") return [];
             try {
-              const res = await fetch(`${this.plugin.settings.ollamaBaseUrl}/api/tags`);
-              const data = await res.json();
-              return data.models?.map((m: any) => m.name) || [];
+              const res = await requestUrl({ url: `${this.plugin.settings.ollamaBaseUrl}/api/tags`, throw: false });
+              const json: unknown = res.json;
+              const models = asArray(getRecordProp(json, "models")) ?? [];
+              return models.map(m => getStringProp(m, "name")).filter((m): m is string => Boolean(m));
             } catch { return []; }
           },
           this.plugin.settings.tagTranslationModel,
@@ -821,11 +923,13 @@ export class HormeSettingTab extends PluginSettingTab {
         if (!this.plugin.settings.tagTranslationModel.trim()) {
           const warn = ragSection.createDiv("horme-settings-warning");
           warn.textContent = "⚠️ Tag shadowing is enabled but Tag Translation Model is empty. Tags will not be translated until you set a model.";
-          warn.style.color = "var(--text-error)";
-          warn.style.padding = "10px";
-          warn.style.marginTop = "8px";
-          warn.style.border = "1px solid var(--background-modifier-border)";
-          warn.style.borderRadius = "var(--radius-s)";
+          warn.setCssProps({
+            color: "var(--text-error)",
+            padding: "10px",
+            marginTop: "8px",
+            border: "1px solid var(--background-modifier-border)",
+            borderRadius: "var(--radius-s)",
+          });
         }
       }
 
@@ -834,10 +938,12 @@ export class HormeSettingTab extends PluginSettingTab {
         .setDesc(`Vault Index: ${this.plugin.settings.indexStatus}`)
         .addButton(btn => {
           btn.setButtonText("Rebuild Vault Index")
-             .onClick(async () => {
-               new Notice("Vault indexing started...");
-               await this.plugin.vaultIndexer.rebuildIndex();
-               this.displayPreserveScroll();
+             .onClick(() => {
+               void (async () => {
+                 new Notice("Vault indexing started...");
+                 await this.plugin.vaultIndexer.rebuildIndex();
+                 this.displayPreserveScroll();
+               })();
              });
         })
         .addButton(btn => {
@@ -847,11 +953,13 @@ export class HormeSettingTab extends PluginSettingTab {
               new GenericConfirmModal(
                 this.app,
                 "Delete the Vault Index from memory and disk? This removes all index shards until you rebuild.",
-                async () => {
-                  const result = await this.plugin.vaultIndexer.deleteIndex();
-                  if (result === "deleted") new Notice("Vault Index deleted.");
-                  else if (result === "missing") new Notice("No Vault Index detected.");
-                  this.displayPreserveScroll();
+                () => {
+                  void (async () => {
+                    const result = await this.plugin.vaultIndexer.deleteIndex();
+                    if (result === "deleted") new Notice("Vault Index deleted.");
+                    else if (result === "missing") new Notice("No Vault Index detected.");
+                    this.displayPreserveScroll();
+                  })();
                 }
               ).open();
             });
@@ -870,11 +978,13 @@ export class HormeSettingTab extends PluginSettingTab {
               new GenericConfirmModal(
                 this.app,
                 "Delete the Vault Index from memory and disk? This removes all index shards until you rebuild.",
-                async () => {
-                  const result = await this.plugin.vaultIndexer.deleteIndex();
-                  if (result === "deleted") new Notice("Vault Index deleted.");
-                  else if (result === "missing") new Notice("No Vault Index detected.");
-                  this.displayPreserveScroll();
+                () => {
+                  void (async () => {
+                    const result = await this.plugin.vaultIndexer.deleteIndex();
+                    if (result === "deleted") new Notice("Vault Index deleted.");
+                    else if (result === "missing") new Notice("No Vault Index detected.");
+                    this.displayPreserveScroll();
+                  })();
                 }
               ).open();
             });
@@ -882,6 +992,50 @@ export class HormeSettingTab extends PluginSettingTab {
     }
 
     // --- Custom Skills ---
+    const conceptSection = containerEl.createEl("details", { cls: "horme-settings-section" });
+    conceptSection.open = this.expandedSections["concept_notes"] ?? false;
+    conceptSection.ontoggle = () => this.expandedSections["concept_notes"] = conceptSection.open;
+    conceptSection.createEl("summary", { text: "◈ Concept Note Creation" });
+
+    new Setting(conceptSection)
+      .setName("Concept Folder Path")
+      .setDesc("Folder where concept notes will be created.")
+      .addText(t => {
+        new FolderSuggest(this.app, t.inputEl);
+        t.setValue(this.plugin.settings.conceptNoteFolder).onChange(v => {
+          void (async () => {
+            this.plugin.settings.conceptNoteFolder = v.trim();
+            await this.plugin.saveSettings();
+          })().catch(e => this.plugin.handleError(e, "Concept Notes"));
+        });
+      });
+
+    new Setting(conceptSection)
+      .setName("Source Property Name")
+      .setDesc("Frontmatter key used for the research link (template: ${sourceField}).")
+      .addText(t => {
+        t.setValue(this.plugin.settings.conceptNoteSourceField).onChange(v => {
+          void (async () => {
+            this.plugin.settings.conceptNoteSourceField = v.trim() || "Source";
+            await this.plugin.saveSettings();
+          })().catch(e => this.plugin.handleError(e, "Concept Notes"));
+        });
+      });
+
+    new Setting(conceptSection)
+      .setName("Note Template")
+      .setDesc("Placeholders: ${title}, ${tag}, ${sourceField}, ${source}, ${content}.")
+      .addTextArea(t => {
+        t.setValue(this.plugin.settings.conceptNoteTemplate).onChange(v => {
+          void (async () => {
+            this.plugin.settings.conceptNoteTemplate = v;
+            await this.plugin.saveSettings();
+          })().catch(e => this.plugin.handleError(e, "Concept Notes"));
+        });
+        t.inputEl.rows = 8;
+        t.inputEl.setCssProps({ width: "100%", resize: "vertical" });
+      });
+
     const customSkillsSection = containerEl.createEl("details", { cls: "horme-settings-section" });
     customSkillsSection.open = this.expandedSections["custom_skills"] ?? false;
     customSkillsSection.ontoggle = () => this.expandedSections["custom_skills"] = customSkillsSection.open;
@@ -905,11 +1059,13 @@ export class HormeSettingTab extends PluginSettingTab {
           .addButton(btn => btn
             .setIcon("trash")
             .setTooltip("Delete skill")
-            .onClick(async () => {
-              this.plugin.settings.customSkills =
-                this.plugin.settings.customSkills.filter(s => s.id !== skill.id);
-              await this.plugin.saveSettings(); // triggers loadCustomSkills() via main.ts
-              renderCustomSkills(listContainer);
+            .onClick(() => {
+              void (async () => {
+                this.plugin.settings.customSkills =
+                  this.plugin.settings.customSkills.filter(s => s.id !== skill.id);
+                await this.plugin.saveSettings(); // triggers loadCustomSkills() via main.ts
+                renderCustomSkills(listContainer);
+              })();
             })
           );
       }
@@ -922,10 +1078,12 @@ export class HormeSettingTab extends PluginSettingTab {
       .addButton(btn => btn
         .setButtonText("+ Add Custom Skill")
         .onClick(() => {
-          new CustomSkillModal(this.app, this.plugin, async (def) => {
-            this.plugin.settings.customSkills.push(def);
-            await this.plugin.saveSettings(); // triggers loadCustomSkills() via main.ts
-            renderCustomSkills(listContainer);
+          new CustomSkillModal(this.app, this.plugin, (def) => {
+            void (async () => {
+              this.plugin.settings.customSkills.push(def);
+              await this.plugin.saveSettings(); // triggers loadCustomSkills() via main.ts
+              renderCustomSkills(listContainer);
+            })();
           }).open();
         })
       );

@@ -12,11 +12,10 @@ export interface Skill {
   parameters: SkillParameter[];
   instructions: string;
   terminal?: boolean;
-  execute(params: any): Promise<string>;
+  execute(params: unknown): Promise<string>;
 }
 
 export interface SkillCall {
   skillId: string;
-  parameters: any;
+  parameters: unknown;
 }
-

@@ -1,5 +1,6 @@
 import { Skill, SkillParameter } from "./types";
 import HormePlugin from "../../main";
+import { errorToMessage } from "../utils/TypeGuards";
 
 export class TaxonomySkill implements Skill {
   id = "taxonomy";
@@ -16,7 +17,7 @@ export class TaxonomySkill implements Skill {
 
   instructions = `To use this skill, output exactly: <call:taxonomy>{}</call>. Use this before suggesting tags to ensure you are using the user's existing taxonomy.`;
 
-  async execute(): Promise<string> {
+  async execute(_params: unknown): Promise<string> {
     try {
       const tags = await this.plugin.loadAllowedTags();
       if (tags.length === 0) {
@@ -24,10 +25,10 @@ export class TaxonomySkill implements Skill {
       }
 
       return "Existing tags in the vault:\n" + tags.map(t => `#${t}`).join(", ");
-    } catch (e) {
+    } catch (e: unknown) {
 
       console.error("Horme Taxonomy Skill Error:", e);
-      throw e;
+      throw new Error(errorToMessage(e));
     }
   }
 }

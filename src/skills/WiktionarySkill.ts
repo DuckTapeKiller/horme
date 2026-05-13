@@ -1,5 +1,6 @@
 import { requestUrl } from "obsidian";
 import { Skill, SkillParameter } from "./types";
+import { asArray, errorToMessage, getRecordProp, getStringProp, isRecord } from "../utils/TypeGuards";
 
 export class WiktionarySkill implements Skill {
   id = "wiktionary";
@@ -24,9 +25,11 @@ export class WiktionarySkill implements Skill {
 
   instructions = `To use this skill, output exactly: <call:wiktionary>{"word": "example", "language": "en"}</call>. The "language" parameter is optional (defaults to "en"); use "es" for Spanish Wiktionary. Use this to verify word definitions, check etymology, distinguish false friends, or confirm that a word exists in the target language.`;
 
-  async execute(params: { word: string; language?: string }): Promise<string> {
+  async execute(params: unknown): Promise<string> {
     try {
-      const { word, language } = params;
+      const word = getStringProp(params, "word");
+      if (!word) return `Invalid parameters for ${this.name}: expected {"word": string, "language"?: string}.`;
+      const language = getStringProp(params, "language");
       const lang = (language || "en").toLowerCase().slice(0, 2);
       const wiktBase = `https://${lang}.wiktionary.org`;
 
@@ -34,9 +37,10 @@ export class WiktionarySkill implements Skill {
       const url = `${wiktBase}/w/api.php?action=query&titles=${encodeURIComponent(word)}`
         + `&prop=extracts&explaintext=1&format=json&origin=*`;
       const res = await requestUrl({ url });
-      const pages = res.json.query?.pages;
+      const json: unknown = res.json;
+      const pages = getRecordProp(getRecordProp(json, "query"), "pages");
 
-      if (!pages) {
+      if (!isRecord(pages)) {
         return `No Wiktionary (${lang}) entry found for "${word}".`;
       }
 
@@ -46,7 +50,7 @@ export class WiktionarySkill implements Skill {
         return await this.searchFallback(word, lang, wiktBase);
       }
 
-      const extract = pages[pageId]?.extract;
+      const extract = getStringProp(pages[pageId], "extract");
       if (!extract || extract.trim().length === 0) {
         return `Wiktionary (${lang}) page exists for "${word}" but contains no extractable text.`;
       }
@@ -57,10 +61,10 @@ export class WiktionarySkill implements Skill {
         : extract;
 
       return `## Wiktionary: "${word}" (${lang})\n\n${trimmed}\n\n<!-- ${wiktBase}/wiki/${encodeURIComponent(word)} -->`;
-    } catch (e) {
+    } catch (e: unknown) {
 
       console.error("Horme Wiktionary Skill Error:", e);
-      throw e;
+      throw new Error(errorToMessage(e));
     }
   }
 
@@ -68,13 +72,19 @@ export class WiktionarySkill implements Skill {
     try {
       const searchUrl = `${wiktBase}/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(word)}&srlimit=3&format=json&origin=*`;
       const searchRes = await requestUrl({ url: searchUrl });
-      const results = searchRes.json.query?.search;
+      const json: unknown = searchRes.json;
+      const results = asArray(getRecordProp(getRecordProp(json, "query"), "search")) ?? [];
 
-      if (!results || results.length === 0) {
+      if (results.length === 0) {
         return `No Wiktionary (${lang}) entry found for "${word}". The word may not exist in this language or may be misspelled.`;
       }
 
-      const suggestions = results.map((r: any) => r.title).join(", ");
+      const titles: string[] = [];
+      for (const r of results) {
+        const title = getStringProp(r, "title");
+        if (title) titles.push(title);
+      }
+      const suggestions = titles.join(", ");
       return `No exact Wiktionary (${lang}) entry for "${word}". Did you mean: ${suggestions}?`;
     } catch {
       return `No Wiktionary (${lang}) entry found for "${word}".`;

@@ -1,4 +1,5 @@
 import { App, Notice, TFile } from "obsidian";
+import type { UnknownRecord } from "../utils/TypeGuards";
 
 export class TagService {
   private app: App;
@@ -9,11 +10,13 @@ export class TagService {
 
   async applyTags(file: TFile, tags: string[]) {
     const toAdd = Array.from(new Set(tags.map((t) => t.toLowerCase())));
-    const fmApi = (this.app as any).fileManager?.processFrontMatter;
+    const fileManager = (this.app as unknown as { fileManager?: { processFrontMatter?: (file: TFile, cb: (fm: UnknownRecord) => void) => Promise<void> } })
+      .fileManager;
+    const fmApi = fileManager?.processFrontMatter;
 
     if (typeof fmApi === "function") {
-      await (this.app as any).fileManager.processFrontMatter(file, (fm: any) => {
-        const existing = this.toArray(fm.tags);
+      await fmApi(file, (fm) => {
+        const existing = this.toArray(fm["tags"]);
         const seen = new Set(existing.map(t => this.normalizeKey(t)));
         const merged = [...existing];
         
@@ -24,15 +27,15 @@ export class TagService {
             merged.push(t);
           }
         }
-        fm.tags = merged;
+        fm["tags"] = merged;
       });
     } else {
       new Notice("Horme: Frontmatter API not available.");
     }
   }
 
-  private toArray(v: any): string[] {
-    if (Array.isArray(v)) return v.filter((x) => typeof x === "string");
+  private toArray(v: unknown): string[] {
+    if (Array.isArray(v)) return v.filter((x): x is string => typeof x === "string");
     if (typeof v === "string") {
       const s = v.trim();
       if (!s) return [];
@@ -68,7 +71,7 @@ export class TagService {
     const textNorm = norm(noteText);
     const tokens = new Set(
       norm(noteText)
-        .replace(/[`~!@%^&*()=+[{\]}\\|;:'\",.<>/?]/g, " ")
+        .replace(/[`~!@%^&*()=+[{\]}\\|;:'",.<>/?]/g, " ")
         .split(/\s+/)
         .map((t) => t.trim())
         .filter((t) => t.length >= 3)

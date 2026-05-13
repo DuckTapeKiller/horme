@@ -39,7 +39,7 @@ export class HormeConnectionsView extends ItemView {
       this.isPaused = !this.isPaused;
       pauseBtn.textContent = this.isPaused ? "▻ Resume" : "▣ Pause";
       if (!this.isPaused && this.activeFilePath) {
-        this.updateConnections(this.activeFilePath);
+        void this.updateConnections(this.activeFilePath);
       }
     };
 
@@ -66,9 +66,9 @@ export class HormeConnectionsView extends ItemView {
     this.activeFilePath = filePath;
 
     if (this.debounceTimer !== null) window.clearTimeout(this.debounceTimer);
-    this.debounceTimer = window.setTimeout(async () => {
+    this.debounceTimer = window.setTimeout(() => {
       this.debounceTimer = null;
-      await this._doUpdateConnections(filePath);
+      void this._doUpdateConnections(filePath);
     }, 400);
   }
 
@@ -122,21 +122,23 @@ export class HormeConnectionsView extends ItemView {
           }
         }
         
-        titleEl.onclick = async (e) => {
+        titleEl.onclick = (e) => {
           e.preventDefault();
-          const targetFile = this.plugin.app.vault.getAbstractFileByPath(conn.path);
-          if (targetFile instanceof TFile) {
-            const leaf = this.plugin.app.workspace.getLeaf(this.plugin.settings.connectionsOpenInNewTab ? "tab" : false);
-            await leaf.openFile(targetFile);
-          }
+          void (async () => {
+            const targetFile = this.plugin.app.vault.getAbstractFileByPath(conn.path);
+            if (targetFile instanceof TFile) {
+              const leaf = this.plugin.app.workspace.getLeaf(this.plugin.settings.connectionsOpenInNewTab ? "tab" : false);
+              await leaf.openFile(targetFile);
+            }
+          })();
         };
 
-        const scoreEl = itemEl.createEl("span", { 
+        itemEl.createEl("span", {
           text: `${Math.round(conn.score * 100)}%`,
           cls: "horme-connection-score"
         });
       }
-    } catch (e) {
+    } catch (e: unknown) {
       this.connectionsListEl.empty();
       const errorEl = this.connectionsListEl.createEl("div", { cls: "horme-connections-error" });
       errorEl.createEl("p", { text: "Failed to load connections." });

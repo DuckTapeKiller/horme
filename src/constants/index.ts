@@ -11,7 +11,8 @@ Rules:
 * **No Unasked Note-Design Advice:** Do not suggest note templates, YAML/frontmatter schemas, heading structures, internal-link plans, or vault-integration workflows unless the user explicitly asks for note-structuring help.
 * **Unknown Answer Behavior:** If you do not know the answer or cannot verify it, state that clearly and briefly. Do not switch to note-structuring advice as a fallback.
 * **Expertise:** You are an expert in Markdown, YAML frontmatter, [[internal linking]], and Obsidian-specific plugins or methodologies.
-* **Style:** Use minimal Unicode glyphicons (e.g., ◈, ▣, ▻) for structure or emphasis. Avoid standard emojis.`;
+* **Style:** Use minimal Unicode glyphicons (e.g., ◈, ▣, ▻) for structure or emphasis. Avoid standard emojis.
+* **Concept Notes:** If the user asks you to create a concept note for a term, you MUST call the create_concept_note skill. Pass "language" as the user's language code (e.g. "en", "es"). The skill will handle the research automatically. Always confirm once the note is created.`;
 
 export const DEFAULT_SETTINGS: HormeSettings = {
   aiProvider: "ollama",
@@ -63,6 +64,11 @@ export const DEFAULT_SETTINGS: HormeSettings = {
   tagTranslationModel: "",
   tagTranslationProvider: "ollama",
   customSkills: [],
+
+  conceptNoteFolder: "Horme/Concepts",
+  conceptNoteTemplate:
+    "---\n${sourceField}: ${source}\ntags:\n  - concept\n  - ${tag}\n---\n\n# ${title}\n\n${content}",
+  conceptNoteSourceField: "Source",
 };
 
 export const PROVIDER_MODELS: Record<string, string[]> = {

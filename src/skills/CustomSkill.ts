@@ -1,6 +1,8 @@
 import { requestUrl } from "obsidian";
+import type { RequestUrlParam } from "obsidian";
 import { Skill, SkillParameter } from "./types";
 import { CustomSkillDefinition } from "../types";
+import { getStringProp, isRecord } from "../utils/TypeGuards";
 
 export class CustomSkill implements Skill {
   id: string;
@@ -37,21 +39,23 @@ export class CustomSkill implements Skill {
     }];
   }
 
-  async execute(params: { input: string }): Promise<string> {
-    const query = params.input;
+  async execute(params: unknown): Promise<string> {
+    const query = getStringProp(params, "input");
+    if (!query) return `Invalid parameters for ${this.name}: expected {"input": string}.`;
 
     // Substitute {{query}} in URL (URL-encoded) and body (raw)
     const finalUrl = this.url.replace(/\{\{query\}\}/g, encodeURIComponent(query));
 
-    const reqOptions: any = {
+    const headers: Record<string, string> = { ...this.headers };
+    const reqOptions: RequestUrlParam = {
       url: finalUrl,
       method: this.method,
-      headers: { ...this.headers },
+      headers,
       throw: false,
     };
 
     if (this.method === "POST" && this.body) {
-      const isJson = (!reqOptions.headers["Content-Type"] || reqOptions.headers["Content-Type"].includes("json"));
+      const isJson = (!headers["Content-Type"] || headers["Content-Type"].includes("json"));
       
       if (isJson) {
         // Safely escape the query before injecting it to prevent breaking the JSON structure.
@@ -59,8 +63,8 @@ export class CustomSkill implements Skill {
         const escapedQuery = JSON.stringify(query).slice(1, -1);
         reqOptions.body = this.body.replace(/\{\{query\}\}/g, escapedQuery);
         
-        if (!reqOptions.headers["Content-Type"]) {
-          reqOptions.headers["Content-Type"] = "application/json";
+        if (!headers["Content-Type"]) {
+          headers["Content-Type"] = "application/json";
         }
       } else {
         reqOptions.body = this.body.replace(/\{\{query\}\}/g, query);
@@ -74,9 +78,9 @@ export class CustomSkill implements Skill {
     }
 
     // Extract data via dot-path (e.g. "results[0].text")
-    let data: any = res.json ?? res.text;
+    let data: unknown = (res.json as unknown) ?? res.text;
 
-    if (this.responsePath && typeof data === "object") {
+    if (this.responsePath && isRecord(data)) {
       data = this.extractPath(data, this.responsePath);
     }
 
@@ -85,7 +89,10 @@ export class CustomSkill implements Skill {
       return `No data found at path "${this.responsePath}" in the response from ${this.name}.`;
     }
 
-    const output = typeof data === "object" ? JSON.stringify(data, null, 2) : String(data);
+    const output =
+      typeof data === "string" || typeof data === "number" || typeof data === "boolean"
+        ? String(data)
+        : JSON.stringify(data, null, 2);
 
     // Cap at 3000 chars to avoid context overflow
     if (output.length > 3000) {
@@ -99,9 +106,9 @@ export class CustomSkill implements Skill {
    * Extracts a value from a nested object using a dot-path string.
    * Supports array indexing: "results[0].title" → obj.results[0].title
    */
-  private extractPath(obj: any, path: string): any {
+  private extractPath(obj: unknown, path: string): unknown {
     const segments = path.split(".");
-    let current = obj;
+    let current: unknown = obj;
 
     for (const segment of segments) {
       if (current === undefined || current === null) return undefined;
@@ -109,14 +116,16 @@ export class CustomSkill implements Skill {
       // Handle array indexing like "results[0]"
       const arrMatch = segment.match(/^(\w+)\[(\d+)\]$/);
       if (arrMatch) {
-        current = current[arrMatch[1]];
-        if (Array.isArray(current)) {
-          current = current[parseInt(arrMatch[2])];
+        const key = arrMatch[1];
+        const idx = Number.parseInt(arrMatch[2], 10);
+        const next = isRecord(current) ? current[key] : undefined;
+        if (Array.isArray(next)) {
+          current = next[idx];
         } else {
           return undefined;
         }
       } else {
-        current = current[segment];
+        current = isRecord(current) ? current[segment] : undefined;
       }
     }
 

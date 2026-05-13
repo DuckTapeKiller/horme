@@ -1,5 +1,3 @@
-import { TFile, WorkspaceLeaf } from "obsidian";
-
 export type AiProvider = "ollama" | "lmstudio" | "claude" | "gemini" | "openai" | "groq" | "openrouter";
 
 export interface CustomSkillDefinition {
@@ -63,6 +61,11 @@ export interface HormeSettings {
   tagTranslationModel: string;
   tagTranslationProvider: "ollama" | "lmstudio";
   customSkills: CustomSkillDefinition[];
+
+  // Concept Notes (Autonomous research + note creation)
+  conceptNoteFolder: string;
+  conceptNoteTemplate: string;
+  conceptNoteSourceField: string;
 }
 
 export interface SavedConversation {
