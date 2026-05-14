@@ -108,7 +108,6 @@ export class HormeChatView extends ItemView {
     wiktionary: "book-a",
     vault_links: "cable",
     grammar_scholar: "signature",
-    taxonomy: "list-tree",
     date_calc: "calendar",
   };
 
@@ -133,8 +132,6 @@ export class HormeChatView extends ItemView {
       "ddg_search",
       "wiktionary",
       "vault_links",
-      "grammar_scholar",
-      "taxonomy",
     ]);
 
     for (const skill of allSkills) {

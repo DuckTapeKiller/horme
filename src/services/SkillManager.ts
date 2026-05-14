@@ -2,7 +2,6 @@ import HormePlugin from "../../main";
 import { Skill, SkillCall } from "../skills/types";
 import { WikipediaSkill } from "../skills/WikipediaSkill";
 import { VaultLinkSkill } from "../skills/VaultLinkSkill";
-import { TaxonomySkill } from "../skills/TaxonomySkill";
 import { GrammarScholarSkill } from "../skills/GrammarScholarSkill";
 import { WiktionarySkill } from "../skills/WiktionarySkill";
 import { DuckDuckGoSkill } from "../skills/DuckDuckGoSkill";
@@ -27,7 +26,6 @@ export class SkillManager {
     this.registerSkill(new DateCalculatorSkill());
     this.registerSkill(new CreateConceptNoteSkill(this.plugin.app, this.plugin));
     this.registerSkill(new VaultLinkSkill(this.plugin));
-    this.registerSkill(new TaxonomySkill(this.plugin));
     this.registerSkill(new GrammarScholarSkill(this.plugin));
   }
 

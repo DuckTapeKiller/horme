@@ -657,6 +657,96 @@ export class HormeSettingTab extends PluginSettingTab {
           });
       });
 
+    // --- Tag Generation Model Override ---
+    {
+      const allowCloud = this.plugin.settings.allowCloudRAG;
+      const tagProviderSetting = new Setting(tagSection)
+        .setName("Tag Generation Provider")
+        .setDesc(
+          allowCloud
+            ? "Provider used exclusively for the Tags button and command. Changing this does not affect the chat. Leave the model below empty to use the current chat provider instead."
+            : "Provider used exclusively for the Tags button and command. Only local providers are available to protect your privacy. Enable \"Allow Cloud Provider Access\" in Vault Brain to unlock cloud providers."
+        )
+        .addDropdown(drp => {
+          drp.addOption("ollama", "Ollama (Local)");
+          drp.addOption("lmstudio", "LM Studio (Local)");
+          if (allowCloud) {
+            drp.addOption("claude", "Anthropic Claude");
+            drp.addOption("gemini", "Google Gemini");
+            drp.addOption("openai", "OpenAI");
+            drp.addOption("groq", "Groq");
+            drp.addOption("openrouter", "OpenRouter");
+          }
+          // If the saved provider is a cloud one but cloud is now disabled,
+          // silently clamp to "ollama" so the dropdown doesn't show a blank.
+          const savedProvider = this.plugin.settings.tagsProvider;
+          const cloudProviders = ["claude", "gemini", "openai", "groq", "openrouter"];
+          const effectiveProvider =
+            !allowCloud && cloudProviders.includes(savedProvider) ? "ollama" : savedProvider;
+          if (effectiveProvider !== savedProvider) {
+            void (async () => {
+              this.plugin.settings.tagsProvider = effectiveProvider as AiProvider;
+              this.plugin.settings.tagsModel = "";
+              await this.plugin.saveSettings();
+            })();
+          }
+          drp.setValue(effectiveProvider);
+          drp.onChange(v => {
+            void (async () => {
+              this.plugin.settings.tagsProvider = v as AiProvider;
+              await this.plugin.saveSettings();
+              this.displayPreserveScroll();
+            })();
+          });
+          return drp;
+        });
+      void tagProviderSetting; // suppress unused-variable warning
+    }
+
+    this.buildModelCombo(
+      new Setting(tagSection)
+        .setName("Tag Generation Model")
+        .setDesc("The exact model used for tag generation. Leave blank to use the current chat model. For local providers, type the model name or pick from the dropdown. For cloud providers, type any valid model ID."),
+      "horme-tags-gen-model",
+      async () => {
+        const p = this.plugin.settings.tagsProvider;
+        try {
+          if (p === "ollama") {
+            const res = await requestUrl({ url: `${this.plugin.settings.ollamaBaseUrl}/api/tags`, throw: false });
+            const json: unknown = res.json;
+            const models = asArray(getRecordProp(json, "models")) ?? [];
+            return models.map(m => getStringProp(m, "name")).filter((m): m is string => Boolean(m));
+          }
+          if (p === "lmstudio") {
+            const url = this.plugin.settings.lmStudioUrl.replace(/\/$/, "");
+            const res = await requestUrl({ url: `${url}/v1/models`, throw: false });
+            const json: unknown = res.json;
+            const dataArr = asArray(getRecordProp(json, "data")) ?? [];
+            return dataArr.map(m => getStringProp(m, "id")).filter((m): m is string => Boolean(m));
+          }
+          return PROVIDER_MODELS[p] ?? [];
+        } catch {
+          return PROVIDER_MODELS[p] ?? [];
+        }
+      },
+      this.plugin.settings.tagsModel,
+      async v => {
+        this.plugin.settings.tagsModel = v;
+        await this.plugin.saveSettings();
+      }
+    );
+
+    if (!this.plugin.settings.allowCloudRAG) {
+      const tagsCloudNote = tagSection.createDiv();
+      tagsCloudNote.setCssProps({
+        fontSize: "var(--font-smallest)",
+        color: "var(--text-muted)",
+        marginTop: "4px",
+        paddingLeft: "2px",
+      });
+      tagsCloudNote.setText("Cloud providers are locked. To unlock them, enable \"Allow Cloud Provider Access\" in the Vault Brain section.");
+    }
+
     // --- Connections Feature ---
     const connectionsSection = containerEl.createEl("details", { cls: "horme-settings-section" });
     connectionsSection.open = this.expandedSections["connections"] ?? false;

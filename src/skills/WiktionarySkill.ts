@@ -23,7 +23,7 @@ export class WiktionarySkill implements Skill {
     }
   ];
 
-  instructions = `To use this skill, output exactly: <call:wiktionary>{"word": "example", "language": "en"}</call>. The "language" parameter is optional (defaults to "en"); use "es" for Spanish Wiktionary. Use this to verify word definitions, check etymology, distinguish false friends, or confirm that a word exists in the target language.`;
+  instructions = `To use this skill, output exactly: <call:wiktionary>{"word": "example", "language": "en"}</call>. IMPORTANT: Always infer the correct language code from the word itself. If the word is Spanish, use "es". If it is French, use "fr". If it is German, use "de". If it is Italian, use "it". If it is Portuguese, use "pt". Only use "en" if the word is genuinely English. The language code controls which national Wiktionary is queried (e.g. "es" queries es.wiktionary.org). Use this to verify word definitions, check etymology, distinguish false friends, or confirm that a word exists in the target language.`;
 
   async execute(params: unknown): Promise<string> {
     try {
@@ -56,9 +56,11 @@ export class WiktionarySkill implements Skill {
       }
 
       // Trim to a useful length — Wiktionary entries can be enormous
-      const trimmed = extract.length > 2000 
+      const raw = extract.length > 2000
         ? extract.substring(0, 1950) + "\n\n...[TRUNCATED]"
         : extract;
+
+      const trimmed = this.wikitextToMarkdown(raw);
 
       return `## Wiktionary: "${word}" (${lang})\n\n${trimmed}\n\n<!-- ${wiktBase}/wiki/${encodeURIComponent(word)} -->`;
     } catch (e: unknown) {
@@ -89,5 +91,18 @@ export class WiktionarySkill implements Skill {
     } catch {
       return `No Wiktionary (${lang}) entry found for "${word}".`;
     }
+  }
+
+  private wikitextToMarkdown(text: string): string {
+    return text
+      // ==== Level 4 headings ==== → #### heading
+      .replace(/^={4}([^=]+)={4}\s*$/gm, (_, t) => `#### ${t.trim()}`)
+      // === Level 3 headings === → ### heading
+      .replace(/^={3}([^=]+)={3}\s*$/gm, (_, t) => `### ${t.trim()}`)
+      // == Level 2 headings == → ## heading
+      .replace(/^={2}([^=]+)={2}\s*$/gm, (_, t) => `## ${t.trim()}`)
+      // Collapse 3+ consecutive blank lines into 2
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
   }
 }

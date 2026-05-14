@@ -97,4 +97,48 @@ export class AiGateway {
     if (p === "lmstudio") return settings.lmStudioModel;
     return settings.defaultModel;
   }
+
+  /**
+   * Generates a completion using an explicitly specified provider and model,
+   * independent of the current chat provider/model. No skill instructions are
+   * injected — this is intended for focused background tasks like tag generation.
+   */
+  public async generateWith(
+    prompt: string,
+    system: string,
+    providerName: string,
+    model: string
+  ): Promise<string> {
+    const settings = this.plugin.settings;
+    let provider: AiProvider;
+    switch (providerName) {
+      case "claude":
+        provider = new ClaudeProvider(settings.claudeApiKey, settings.temperature);
+        break;
+      case "gemini":
+        provider = new GeminiProvider(settings.geminiApiKey, settings.temperature);
+        break;
+      case "openai":
+        provider = new OpenAIProvider(settings.openaiApiKey, settings.temperature);
+        break;
+      case "groq":
+        provider = new GroqProvider(settings.groqApiKey, settings.temperature);
+        break;
+      case "openrouter":
+        provider = new OpenRouterProvider(settings.openRouterApiKey, settings.temperature);
+        break;
+      case "lmstudio":
+        provider = new LmStudioProvider(settings.lmStudioUrl, settings.temperature);
+        break;
+      default:
+        provider = new OllamaProvider(settings.ollamaBaseUrl, settings.temperature);
+    }
+    try {
+      return await provider.generate(prompt, system, model);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.plugin.diagnosticService.report("Tags", `Tag generation failed (model: ${model}): ${msg}`);
+      throw e instanceof Error ? e : new Error(msg);
+    }
+  }
 }

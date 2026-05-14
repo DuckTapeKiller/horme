@@ -21,7 +21,6 @@ import { RewriteModal } from "./src/modals/RewriteModal";
 import { ConfirmReplaceModal } from "./src/modals/ConfirmReplaceModal";
 import { ConversionModal } from "./src/modals/ConversionModal";
 import { HormeErrorModal } from "./src/modals/HormeErrorModal";
-import { GenericConfirmModal } from "./src/modals/GenericConfirmModal";
 
 // Services
 import { PdfService } from "./src/services/PdfService";
@@ -598,8 +597,12 @@ Allowed Tags:
 ${candidates.map(t => `- ${t}`).join("\n")}`;
 
     new Notice("Horme: Generating tags…");
+    this.setIndexingStatus("Generating tags...");
     try {
-      const response = await this.aiGateway.generate(body, prompt);
+      const tagsModel = this.settings.tagsModel.trim();
+      const response = tagsModel
+        ? await this.aiGateway.generateWith(body, prompt, this.settings.tagsProvider, tagsModel)
+        : await this.aiGateway.generate(body, prompt);
       const suggested = response.split("\n")
         .map(t => t.trim().replace(/^#/, ""))
         .filter(t => t.length > 0 && !t.includes(" "));
@@ -620,6 +623,8 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
       ).open();
     } catch (e: unknown) {
       this.handleError(e);
+    } finally {
+      this.setIndexingStatus(null);
     }
   }
 
@@ -743,6 +748,7 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
     const lang = this.settings.summaryLanguage || "Español";
 
     new Notice("Horme: Generating summary...");
+    this.setIndexingStatus("Generating summary...");
 
     try {
       const fullContent = await this.app.vault.read(file);
@@ -786,13 +792,16 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
         const afterFm = fullContent.slice(fmEndIndex);
 
         if (existingMatch) {
-          const oldSummary = existingMatch[0].replace(`${field}:`, "").trim().replace(/^["'']|["'']$/g, "");
-          new GenericConfirmModal(
+          const oldSummary = existingMatch[0].replace(`${field}:`, "").trim().replace(/^[''"]|[''"]$/g, "");
+          new ConfirmReplaceModal(
             this.app,
-            `Overwrite existing ${field}?\n\nOld: ${oldSummary}\n\nNew: ${summary}`,
-            () => {
+            oldSummary,
+            summary,
+            (edited) => {
               void (async () => {
-                const updatedFm = fmBlock.replace(fieldRegex, () => fieldValue);
+                const finalSummary = edited.trim();
+                const updatedFieldValue = `${field}: "${finalSummary.replace(/"/g, '\\"')}"`;
+                const updatedFm = fmBlock.replace(fieldRegex, () => updatedFieldValue);
                 const finalContent = `---\n${updatedFm}\n---\n${afterFm}`;
                 await this.app.vault.modify(file, finalContent);
                 new Notice(`Horme: Summary updated in "${field}" field.`);
@@ -816,6 +825,8 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
       console.error("Horme: Summary generation error", e);
       this.diagnosticService.report("Summary", `Generation failed: ${errorToMessage(e)}`);
       new Notice("Horme: Failed to generate summary.");
+    } finally {
+      this.setIndexingStatus(null);
     }
   }
 

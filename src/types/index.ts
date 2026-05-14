@@ -60,6 +60,8 @@ export interface HormeSettings {
   tagShadowingLanguage: string;
   tagTranslationModel: string;
   tagTranslationProvider: "ollama" | "lmstudio";
+  tagsProvider: AiProvider;
+  tagsModel: string;
   customSkills: CustomSkillDefinition[];
 
   // Concept Notes (Autonomous research + note creation)

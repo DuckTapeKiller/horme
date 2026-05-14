@@ -63,6 +63,8 @@ export const DEFAULT_SETTINGS: HormeSettings = {
   tagShadowingLanguage: "English",
   tagTranslationModel: "",
   tagTranslationProvider: "ollama",
+  tagsProvider: "ollama",
+  tagsModel: "",
   customSkills: [],
 
   conceptNoteFolder: "Horme/Concepts",
