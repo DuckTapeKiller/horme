@@ -1,15 +1,16 @@
 import { requestUrl } from "obsidian";
 import { AiProvider } from "./AiProvider";
-import { createAssistantContentReader } from "./StreamUtils";
 import { asArray, getRecordProp, getStringProp } from "../utils/TypeGuards";
 
 export class OpenAIProvider implements AiProvider {
   private apiKey: string;
   private temperature: number;
+  private maxTokens: number;
 
-  constructor(apiKey: string, temperature: number) {
+  constructor(apiKey: string, temperature: number, maxTokens: number) {
     this.apiKey = apiKey;
     this.temperature = temperature;
+    this.maxTokens = maxTokens;
   }
 
   private extractContent(json: unknown): string {
@@ -35,7 +36,7 @@ export class OpenAIProvider implements AiProvider {
           { role: "user", content: prompt }
         ],
         temperature: this.temperature,
-        max_tokens: 2048
+        max_tokens: this.maxTokens
       }),
       throw: false,
     });
@@ -56,7 +57,7 @@ export class OpenAIProvider implements AiProvider {
         model,
         messages: msgs,
         temperature: this.temperature,
-        max_tokens: 2048
+        max_tokens: this.maxTokens
       }),
       throw: false,
     });
@@ -64,7 +65,24 @@ export class OpenAIProvider implements AiProvider {
     return this.extractContent(res.json as unknown);
   }
   async stream(msgs: Array<{ role: string; content: string }>, model: string, signal?: AbortSignal): Promise<ReadableStreamDefaultReader<Uint8Array>> {
-    const full = await this.generateChat(msgs, model);
-    return createAssistantContentReader(full, signal);
+    if (!this.apiKey) throw new Error("No OpenAI API Key");
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages: msgs,
+        temperature: this.temperature,
+        max_tokens: this.maxTokens,
+        stream: true,
+      }),
+      signal,
+    });
+    if (!res.ok) throw new Error(`OpenAI stream error: ${res.status}`);
+    if (!res.body) throw new Error("OpenAI: no response body");
+    return res.body.getReader();
   }
 }

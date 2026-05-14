@@ -936,8 +936,8 @@ export class HormeChatView extends ItemView {
     this.lastMsgs = msgs;
     this.lastModel = model;
     this.isGenerating = true;
-    setIcon(this.sendBtn, "square");
-    this.sendBtn.classList.add("horme-stop-btn");
+    this.sendBtn.addClass("horme-stop-btn");
+    setIcon(this.sendBtn, "horme-shell");
     const loadingEl = this.showLoading();
     this.handleStreamingResponse(msgs, model, loadingEl, initialSourcePath, ragWasInjected, 0, currentSources, [])
       .catch(e => this.plugin.handleError(e));
@@ -961,6 +961,23 @@ export class HormeChatView extends ItemView {
     let reasoningEl: HTMLDetailsElement | null = null;
 
     this.activeAbortController = new AbortController();
+
+    const renderProgressiveMarkdown = (() => {
+      let lastRender = 0;
+      let renderTask: Promise<void> | null = null;
+      return async (text: string, target: HTMLElement) => {
+        const now = Date.now();
+        if (now - lastRender < 200) return; // Throttle 200ms
+        if (renderTask) return; // Skip if busy
+        lastRender = now;
+        renderTask = (async () => {
+          target.empty();
+          await MarkdownRenderer.render(this.app, text, target, initialSourcePath || "", this);
+          this.scrollToBottom();
+          renderTask = null;
+        })();
+      };
+    })();
 
     try {
       const reader = await this.plugin.aiGateway.stream(msgs, model, this.activeAbortController.signal, suppressVaultSkill);
@@ -1025,9 +1042,9 @@ export class HormeChatView extends ItemView {
                             if (content) {
                                 fullContent += content;
                                 // If there was reasoning, ensure the content is outside/after it
-                                let contentArea = el.querySelector(".horme-content-area");
+                                let contentArea = el.querySelector(".horme-content-area") as HTMLElement;
                                 if (!contentArea) contentArea = el.createDiv("horme-content-area");
-                                (contentArea as HTMLElement).textContent = fullContent;
+                                void renderProgressiveMarkdown(fullContent, contentArea);
                             }
                             this.scrollToBottom();
                         });
@@ -1376,6 +1393,25 @@ export class HormeChatView extends ItemView {
   private showLoading(label: string = "Thinking"): HTMLElement {
     const el = this.messagesEl.createDiv("horme-loading");
     el.createSpan({ text: label });
+
+    // Chronometer: counts up in whole seconds from 0
+    const timerEl = el.createSpan({ cls: "horme-loading-timer", text: "0s" });
+    let seconds = 0;
+    const intervalId = window.setInterval(() => {
+      seconds++;
+      timerEl.textContent = `${seconds}s`;
+    }, 1000);
+
+    // Use a MutationObserver so the interval is always cleared when the
+    // element is removed from the DOM, regardless of which code path removes it.
+    const observer = new MutationObserver(() => {
+      if (!el.isConnected) {
+        window.clearInterval(intervalId);
+        observer.disconnect();
+      }
+    });
+    observer.observe(this.messagesEl, { childList: true });
+
     const dots = el.createSpan({ cls: "horme-dot-pulse" });
     dots.createEl("span"); dots.createEl("span"); dots.createEl("span");
     this.scrollToBottom();

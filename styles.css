@@ -358,6 +358,14 @@
   }
 }
 
+.horme-loading-timer {
+  font-size: 11px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  min-width: 2.5ch;
+  margin-right: 4px;
+}
+
 /* ── Input Area ── */
 
 .horme-input-area {
@@ -371,7 +379,7 @@
   position: relative;
   display: flex;
   flex-direction: column;
-  background: var(--background-primary);
+  background: var(--background-secondary);
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-l);
   overflow: hidden;
@@ -422,14 +430,15 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
-  border-radius: var(--radius-m);
+  width: 24px !important;
+  height: 24px !important;
+  border-radius: var(--radius-s);
   border: none;
-  background: transparent;
+  background: var(--background-secondary-alt) !important;
   box-shadow: none;
   cursor: pointer;
   flex-shrink: 0;
+  --icon-size: 14px !important;
 }
 
 .horme-send-btn {
@@ -452,13 +461,25 @@
 }
 
 .horme-send-btn.horme-stop-btn {
-  background: var(--text-error);
+  background: var(--text-error) !important;
+  color: #000000 !important;
+}
+
+.horme-send-btn.horme-stop-btn svg {
+  animation: horme-spin 2s linear infinite !important;
+}
+
+@keyframes horme-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 .horme-image-btn,
 .horme-upload-btn {
   color: var(--text-muted);
-  transition: color 0.15s ease, transform 0.1s ease;
+  background: var(--background-secondary-alt) !important;
+  border-radius: var(--radius-s);
+  transition: color 0.15s ease, background 0.15s ease, transform 0.1s ease;
 }
 
 .horme-input-actions .horme-image-btn:hover,
@@ -473,16 +494,16 @@
   background: transparent;
 }
 
-.horme-send-btn svg,
-.horme-upload-btn svg {
-  width: 16px;
-  height: 16px;
+.horme-input-actions button svg {
+  width: 14px !important;
+  height: 14px !important;
+  min-width: 14px !important;
+  min-height: 14px !important;
+  stroke-width: 2px !important;
+  display: block !important;
 }
 
-.horme-image-btn svg {
-  width: 18px;
-  height: 18px;
-}
+/* Removed redundant rule - covered by button svg selector above */
 
 /* ── Empty State ── */
 
@@ -586,8 +607,9 @@ body.is-mobile .workspace-drawer.horme-keyboard-open .horme-empty {
   .horme-send-btn,
   .horme-upload-btn,
   .horme-image-btn {
-    width: 36px;
-    height: 36px;
+    width: 24px !important;
+    height: 24px !important;
+    --icon-size: 14px !important;
   }
 
   .horme-input-area {

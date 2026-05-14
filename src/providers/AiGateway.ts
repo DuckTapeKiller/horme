@@ -18,13 +18,13 @@ export class AiGateway {
     const settings = this.plugin.settings;
     const provider = settings.aiProvider;
     switch (provider) {
-      case "claude": return new ClaudeProvider(settings.claudeApiKey, settings.temperature);
-      case "gemini": return new GeminiProvider(settings.geminiApiKey, settings.temperature);
-      case "openai": return new OpenAIProvider(settings.openaiApiKey, settings.temperature);
-      case "groq": return new GroqProvider(settings.groqApiKey, settings.temperature);
-      case "openrouter": return new OpenRouterProvider(settings.openRouterApiKey, settings.temperature);
-      case "lmstudio": return new LmStudioProvider(settings.lmStudioUrl, settings.temperature);
-      default: return new OllamaProvider(settings.ollamaBaseUrl, settings.temperature);
+      case "claude": return new ClaudeProvider(settings.claudeApiKey, settings.temperature, settings.maxTokens);
+      case "gemini": return new GeminiProvider(settings.geminiApiKey, settings.temperature, settings.maxTokens);
+      case "openai": return new OpenAIProvider(settings.openaiApiKey, settings.temperature, settings.maxTokens);
+      case "groq": return new GroqProvider(settings.groqApiKey, settings.temperature, settings.maxTokens);
+      case "openrouter": return new OpenRouterProvider(settings.openRouterApiKey, settings.temperature, settings.maxTokens);
+      case "lmstudio": return new LmStudioProvider(settings.lmStudioUrl, settings.temperature, settings.maxTokens);
+      default: return new OllamaProvider(settings.ollamaBaseUrl, settings.temperature, settings.maxTokens);
     }
   }
 
@@ -114,25 +114,25 @@ export class AiGateway {
     let provider: AiProvider;
     switch (providerName) {
       case "claude":
-        provider = new ClaudeProvider(settings.claudeApiKey, settings.temperature);
+        provider = new ClaudeProvider(settings.claudeApiKey, settings.temperature, settings.maxTokens);
         break;
       case "gemini":
-        provider = new GeminiProvider(settings.geminiApiKey, settings.temperature);
+        provider = new GeminiProvider(settings.geminiApiKey, settings.temperature, settings.maxTokens);
         break;
       case "openai":
-        provider = new OpenAIProvider(settings.openaiApiKey, settings.temperature);
+        provider = new OpenAIProvider(settings.openaiApiKey, settings.temperature, settings.maxTokens);
         break;
       case "groq":
-        provider = new GroqProvider(settings.groqApiKey, settings.temperature);
+        provider = new GroqProvider(settings.groqApiKey, settings.temperature, settings.maxTokens);
         break;
       case "openrouter":
-        provider = new OpenRouterProvider(settings.openRouterApiKey, settings.temperature);
+        provider = new OpenRouterProvider(settings.openRouterApiKey, settings.temperature, settings.maxTokens);
         break;
       case "lmstudio":
-        provider = new LmStudioProvider(settings.lmStudioUrl, settings.temperature);
+        provider = new LmStudioProvider(settings.lmStudioUrl, settings.temperature, settings.maxTokens);
         break;
       default:
-        provider = new OllamaProvider(settings.ollamaBaseUrl, settings.temperature);
+        provider = new OllamaProvider(settings.ollamaBaseUrl, settings.temperature, settings.maxTokens);
     }
     try {
       return await provider.generate(prompt, system, model);

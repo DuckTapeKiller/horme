@@ -1,6 +1,5 @@
 import { requestUrl } from "obsidian";
 import { AiProvider } from "./AiProvider";
-import { createAssistantContentReader } from "./StreamUtils";
 import { asArray, errorToMessage, getRecordProp, getStringProp } from "../utils/TypeGuards";
 
 type ClaudeMessage = { role: "user" | "assistant"; content: string };
@@ -8,10 +7,12 @@ type ClaudeMessage = { role: "user" | "assistant"; content: string };
 export class ClaudeProvider implements AiProvider {
   private apiKey: string;
   private temperature: number;
+  private maxTokens: number;
 
-  constructor(apiKey: string, temperature: number) {
+  constructor(apiKey: string, temperature: number, maxTokens: number) {
     this.apiKey = apiKey;
     this.temperature = temperature;
+    this.maxTokens = maxTokens;
   }
 
   private extractText(json: unknown): string {
@@ -50,7 +51,7 @@ export class ClaudeProvider implements AiProvider {
       },
       body: JSON.stringify({
         model,
-        max_tokens: 2048,
+        max_tokens: this.maxTokens,
         system,
         messages: [{ role: "user", content: prompt }],
         temperature: this.temperature,
@@ -76,7 +77,7 @@ export class ClaudeProvider implements AiProvider {
       },
       body: JSON.stringify({
         model,
-        max_tokens: 2048,
+        max_tokens: this.maxTokens,
         temperature: this.temperature,
         system,
         messages: history,
@@ -93,12 +94,28 @@ export class ClaudeProvider implements AiProvider {
     model: string,
     signal?: AbortSignal
   ): Promise<ReadableStreamDefaultReader<Uint8Array>> {
-    try {
-      const full = await this.generateChat(msgs, model);
-      return createAssistantContentReader(full, signal);
-    } catch (e: unknown) {
-      throw new Error(errorToMessage(e));
-    }
+    if (!this.apiKey) throw new Error("No Claude API Key");
+    const { system, history } = this.normalizeMsgs(msgs);
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": this.apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: this.maxTokens,
+        temperature: this.temperature,
+        system,
+        messages: history,
+        stream: true,
+      }),
+      signal,
+    });
+    if (!res.ok) throw new Error(`Claude stream error: ${res.status}`);
+    if (!res.body) throw new Error("Claude: no response body");
+    return res.body.getReader();
   }
 }
 

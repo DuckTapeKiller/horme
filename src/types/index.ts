@@ -30,6 +30,7 @@ export interface HormeSettings {
   systemPromptPath: string;
   presetsPaths: string[];
   temperature: number;
+  maxTokens: number;
   exportFolder: string;
   tagsFilePath: string;
   maxTagCandidates: number;

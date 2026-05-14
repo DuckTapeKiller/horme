@@ -391,6 +391,25 @@ export class HormeSettingTab extends PluginSettingTab {
         await this.plugin.saveSettings();
       })();
     }));
+
+    new Setting(generalSection)
+      .setName("Max Output Tokens")
+      .setDesc("Maximum number of tokens the model can generate per response. Default: 8192. Raise this for long documents or complex writing tasks. Check your provider's documentation for model-specific limits.")
+      .addText(t => {
+        t.inputEl.type = "number";
+        t.inputEl.min = "256";
+        t.inputEl.step = "256";
+        t.setValue(String(this.plugin.settings.maxTokens));
+        t.onChange(v => {
+          void (async () => {
+            const parsed = parseInt(v, 10);
+            if (!isNaN(parsed) && parsed >= 256) {
+              this.plugin.settings.maxTokens = parsed;
+              await this.plugin.saveSettings();
+            }
+          })();
+        });
+      });
     new Setting(generalSection).setName("Export folder").addText(t => t.setValue(this.plugin.settings.exportFolder).onChange(v => {
       void (async () => {
         this.plugin.settings.exportFolder = v.trim() || "HORME";

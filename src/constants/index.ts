@@ -35,6 +35,7 @@ export const DEFAULT_SETTINGS: HormeSettings = {
   systemPromptPath: "",
   presetsPaths: [],
   temperature: 0.3,
+  maxTokens: 8192,
   exportFolder: "HORME",
   tagsFilePath: "",
   maxTagCandidates: 250,
