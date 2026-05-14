@@ -1,6 +1,6 @@
 {
   "name": "horme",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "AI-powered assistant with chat, right-click actions, vault-wide RAG, and an extensible skill system. Supports Ollama, Claude, Gemini, OpenAI, Groq, OpenRouter, and LM Studio.",
   "main": "main.js",
   "scripts": {

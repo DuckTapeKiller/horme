@@ -685,7 +685,7 @@ export class HormeSettingTab extends PluginSettingTab {
             !allowCloud && cloudProviders.includes(savedProvider) ? "ollama" : savedProvider;
           if (effectiveProvider !== savedProvider) {
             void (async () => {
-              this.plugin.settings.tagsProvider = effectiveProvider as AiProvider;
+              this.plugin.settings.tagsProvider = effectiveProvider;
               this.plugin.settings.tagsModel = "";
               await this.plugin.saveSettings();
             })();

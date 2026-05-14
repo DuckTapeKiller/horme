@@ -96,11 +96,11 @@ export class WiktionarySkill implements Skill {
   private wikitextToMarkdown(text: string): string {
     return text
       // ==== Level 4 headings ==== → #### heading
-      .replace(/^={4}([^=]+)={4}\s*$/gm, (_, t) => `#### ${t.trim()}`)
+      .replace(/^={4}([^=]+)={4}\s*$/gm, (_: string, t: string) => `#### ${t.trim()}`)
       // === Level 3 headings === → ### heading
-      .replace(/^={3}([^=]+)={3}\s*$/gm, (_, t) => `### ${t.trim()}`)
+      .replace(/^={3}([^=]+)={3}\s*$/gm, (_: string, t: string) => `### ${t.trim()}`)
       // == Level 2 headings == → ## heading
-      .replace(/^={2}([^=]+)={2}\s*$/gm, (_, t) => `## ${t.trim()}`)
+      .replace(/^={2}([^=]+)={2}\s*$/gm, (_: string, t: string) => `## ${t.trim()}`)
       // Collapse 3+ consecutive blank lines into 2
       .replace(/\n{3,}/g, "\n\n")
       .trim();

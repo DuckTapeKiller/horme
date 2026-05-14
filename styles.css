@@ -69,45 +69,45 @@
   flex: 1;
 }
 
-.horme-header-btn {
+.horme-header .horme-header-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 2px 10px !important;
+  padding: 2px 10px;
   border-radius: var(--radius-s);
   border: 1px solid var(--background-modifier-border);
   background: var(--background-primary);
   color: var(--text-muted);
-  font-size: 10px !important;
-  min-height: 20px !important;
+  font-size: 10px;
+  min-height: 20px;
   font-family: var(--font-interface);
   cursor: pointer;
   transition: all 0.15s ease;
   white-space: nowrap;
 }
 
-.horme-header-btn:hover {
+.horme-header .horme-header-btn:hover {
   background: var(--background-modifier-hover);
   color: var(--text-normal);
 }
 
-.horme-header-btn.mod-cta {
-  background-color: var(--interactive-accent) !important;
-  color: var(--text-on-accent) !important;
-  border: none !important;
+.horme-header .horme-header-btn.mod-cta {
+  background-color: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border: none;
   font-weight: 600;
 }
 
-.horme-header-btn.mod-cta:hover {
-  background-color: var(--interactive-accent-hover) !important;
-  color: var(--text-on-accent) !important;
+.horme-header .horme-header-btn.mod-cta:hover {
+  background-color: var(--interactive-accent-hover);
+  color: var(--text-on-accent);
 }
 
-.horme-header-btn svg {
+.horme-header .horme-header-btn svg {
   --icon-size: 18px;
-  width: var(--icon-size) !important;
-  height: var(--icon-size) !important;
-  stroke-width: 2.5px !important;
+  width: var(--icon-size);
+  height: var(--icon-size);
+  stroke-width: 2.5px;
 }
 
 .horme-header-row-actions {
@@ -121,20 +121,20 @@
   gap: 8px;
 }
 
-.horme-header-btn.horme-icon-btn {
+.horme-header .horme-header-btn.horme-icon-btn {
   width: 28px;
   height: 28px;
-  padding: 0 !important;
+  padding: 0;
   background: var(--background-primary);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
 }
 
-.horme-header-btn.horme-icon-btn svg {
+.horme-header .horme-header-btn.horme-icon-btn svg {
   --icon-size: 15px;
-  width: var(--icon-size) !important;
-  height: var(--icon-size) !important;
-  stroke-width: 2.5px !important;
-  color: var(--text-normal) !important;
+  width: var(--icon-size);
+  height: var(--icon-size);
+  stroke-width: 2.5px;
+  color: var(--text-normal);
 }
 
 .horme-context-toggle {
@@ -416,18 +416,18 @@
   flex: 1;
 }
 
-.horme-send-btn,
-.horme-image-btn,
-.horme-upload-btn {
+.horme-input-actions .horme-send-btn,
+.horme-input-actions .horme-image-btn,
+.horme-input-actions .horme-upload-btn {
   display: flex;
   align-items: center;
   justify-content: center;
   width: 36px;
   height: 36px;
   border-radius: var(--radius-m);
-  border: none !important;
-  background: transparent !important;
-  box-shadow: none !important;
+  border: none;
+  background: transparent;
+  box-shadow: none;
   cursor: pointer;
   flex-shrink: 0;
 }
@@ -441,9 +441,9 @@
   opacity: 0.85;
 }
 
-.horme-send-btn:active {
+.horme-input-actions .horme-send-btn:active {
   transform: scale(0.9);
-  background: transparent !important;
+  background: transparent;
 }
 
 .horme-send-btn:disabled {
@@ -461,16 +461,16 @@
   transition: color 0.15s ease, transform 0.1s ease;
 }
 
-.horme-image-btn:hover,
-.horme-upload-btn:hover {
+.horme-input-actions .horme-image-btn:hover,
+.horme-input-actions .horme-upload-btn:hover {
   color: var(--text-normal);
-  background: transparent !important;
+  background: transparent;
 }
 
-.horme-image-btn:active,
-.horme-upload-btn:active {
+.horme-input-actions .horme-image-btn:active,
+.horme-input-actions .horme-upload-btn:active {
   transform: scale(0.9);
-  background: transparent !important;
+  background: transparent;
 }
 
 .horme-send-btn svg,
@@ -630,17 +630,17 @@ body.is-mobile .workspace-drawer.horme-keyboard-open .workspace-drawer-tab-optio
   display: none !important;
 }
 
-.horme-save-btn {
+.horme-save-wrapper .horme-save-btn {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 8px !important;
+  padding: 2px 8px;
   border-radius: var(--radius-s);
   border: 1px solid var(--background-modifier-border);
   background: transparent;
   color: var(--text-faint);
-  font-size: 9px !important;
-  min-height: 18px !important;
+  font-size: 9px;
+  min-height: 18px;
   font-family: var(--font-interface);
   cursor: pointer;
   transition: color 0.15s ease, border-color 0.15s ease;
@@ -738,8 +738,8 @@ body.is-mobile .workspace-drawer.horme-keyboard-open .workspace-drawer-tab-optio
   opacity: 1;
 }
 
-.horme-history-item-delete:hover {
-  color: #000000 !important;
+.horme-history-item .horme-history-item-delete:hover {
+  color: #000000;
   background-color: var(--text-error);
 }
 
@@ -990,9 +990,9 @@ textarea.horme-diff-textarea:focus {
   height: 64px;
 }
 
-.horme-settings-title {
-  margin: 0 !important;
-  font-size: 28px !important;
+.horme-settings-header .horme-settings-title {
+  margin: 0;
+  font-size: 28px;
   font-weight: 700;
   letter-spacing: -0.5px;
   color: var(--text-normal);
@@ -1298,7 +1298,7 @@ body.is-mobile .horme-select {
   border: 1px solid var(--background-modifier-border);
   font-family: var(--font-monospace);
   position: relative;
-  color: #eee;
+  color: #eeeeee;
 }
 
 .horme-diag-logs-header {
@@ -1308,7 +1308,7 @@ body.is-mobile .horme-select {
   justify-content: space-between;
   align-items: center;
   font-size: 11px;
-  color: #888;
+  color: #888888;
   background: rgba(0, 0, 0, 0.2);
 }
 
@@ -1327,7 +1327,7 @@ body.is-mobile .horme-select {
 }
 
 .horme-diag-entry-time {
-  color: #666;
+  color: #666666;
   white-space: nowrap;
 }
 
@@ -1339,7 +1339,7 @@ body.is-mobile .horme-select {
 }
 
 .horme-diag-entry-msg {
-  color: #ccc;
+  color: #cccccc;
 }
 
 .horme-diag-entry-error .horme-diag-entry-msg {
@@ -1356,7 +1356,7 @@ body.is-mobile .horme-select {
   gap: 8px;
 }
 
-.horme-diag-refresh-btn {
+.horme-diag-logs-header .horme-diag-refresh-btn {
   background: transparent;
   border: none;
   padding: 2px;
@@ -1366,19 +1366,19 @@ body.is-mobile .horme-select {
   align-items: center;
   justify-content: center;
   transition: color 0.2s ease;
-  box-shadow: none !important;
+  box-shadow: none;
 }
 
-.horme-diag-refresh-btn:hover {
+.horme-diag-logs-header .horme-diag-refresh-btn:hover {
   color: var(--text-normal);
 }
 
-.horme-diag-refresh-btn svg {
+.horme-diag-logs-header .horme-diag-refresh-btn svg {
   width: 14px;
   height: 14px;
 }
 
-.horme-diag-refresh-btn.is-spinning svg {
+.horme-diag-logs-header .horme-diag-refresh-btn.is-spinning svg {
   animation: horme-spin 0.6s linear infinite;
 }
 
@@ -1475,7 +1475,7 @@ body.is-mobile .horme-select {
   display: grid;
   grid-template-columns: auto 1fr auto;
   grid-template-rows: auto auto;
-  column-gap: 8px;
+  gap: 0 8px;
   align-items: center;
   padding: 8px 12px;
   cursor: pointer;
@@ -1546,10 +1546,10 @@ body.is-mobile .horme-select {
   color: var(--color-accent);
 }
 
-.horme-skill-pill-dismiss {
-  background: transparent !important;
+.horme-skill-pill .horme-skill-pill-dismiss {
+  background: transparent;
   border: none;
-  box-shadow: none !important;
+  box-shadow: none;
   color: var(--text-muted);
   cursor: pointer;
   font-size: 14px;
@@ -1557,9 +1557,9 @@ body.is-mobile .horme-select {
   padding: 0;
 }
 
-.horme-skill-pill-dismiss:hover {
+.horme-skill-pill .horme-skill-pill-dismiss:hover {
   color: var(--text-normal);
-  background: transparent !important;
+  background: transparent;
 }
 
 /* ── Custom Skill Modal ── */

@@ -28,15 +28,16 @@ export class AiGateway {
     }
   }
 
-  private getSystemPromptWithSkills(baseSystem: string, suppressVaultSkill = false): string {
-    const skillInstructions = this.plugin.skillManager.getSkillInstructions(suppressVaultSkill);
+  private getSystemPromptWithSkills(baseSystem: string, suppressVaultSkill = false, suppressAllSkills = false, targetSkillId?: string): string {
+    if (suppressAllSkills) return baseSystem;
+    const skillInstructions = this.plugin.skillManager.getSkillInstructions(suppressVaultSkill, targetSkillId);
     return `${baseSystem}\n\n${skillInstructions}`;
   }
 
-  async generate(prompt: string | Array<{role: string, content: string}>, system: string, modelOverride?: string): Promise<string> {
+  async generate(prompt: string | Array<{role: string, content: string}>, system: string, modelOverride?: string, suppressAllSkills = false, targetSkillId?: string): Promise<string> {
     const provider = this.getProvider();
     const model = modelOverride || this.getCurrentModel();
-    const enhancedSystem = this.getSystemPromptWithSkills(system);
+    const enhancedSystem = this.getSystemPromptWithSkills(system, false, suppressAllSkills, targetSkillId);
     
     if (Array.isArray(prompt)) {
       const msgs = [

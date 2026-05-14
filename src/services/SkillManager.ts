@@ -33,7 +33,7 @@ export class SkillManager {
     this.skills.set(skill.id, skill);
   }
 
-  getSkillInstructions(suppressVaultSkill = false): string {
+  getSkillInstructions(suppressVaultSkill = false, targetSkillId?: string): string {
     // Privacy guard: never advertise vault_links if vault search is locked
     const vaultLocked = !this.plugin.settings.vaultBrainEnabled
       || (!this.plugin.isLocalProviderActive() && !this.plugin.settings.allowCloudRAG);
@@ -43,6 +43,9 @@ export class SkillManager {
                     "Do not explain the skill call, just output the tag. You can think first, then call the skill.\n\n";
 
     for (const skill of this.skills.values()) {
+      // If a specific skill is targeted, skip all others
+      if (targetSkillId && skill.id !== targetSkillId) continue;
+      
       // Suppress vault_links when RAG context has already been injected OR vault is privacy-locked
       if ((suppressVaultSkill || vaultLocked) && skill.id === "vault_links") continue;
       instructions += `### Skill: ${skill.name} (id: ${skill.id})\n`;

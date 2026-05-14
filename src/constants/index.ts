@@ -90,7 +90,7 @@ export const ACTIONS: Array<{ id: string; title: string; prompt: string }> = [
   {
     id: "expand",
     title: "Expand",
-    prompt: "Expand the following text with more detail while maintaining the original meaning and tone. Return only the expanded text.",
+    prompt: "You are a text-expansion engine. Your task is to add detail while maintaining the original meaning and tone.\n\nRULES:\n1. ZERO CHATTER: Return EXCLUSIVELY the raw expanded text. No explanations, no feedback, no preamble.",
   },
   {
     id: "summarize",
@@ -100,7 +100,7 @@ export const ACTIONS: Array<{ id: string; title: string; prompt: string }> = [
   {
     id: "beautify",
     title: "Beautify Format",
-    prompt: "You are a markdown formatting assistant. The user will send you a block of markdown text. Your job is to fix and beautify its structure: correct heading hierarchy, clean up bullet points and lists, normalize spacing, and ensure consistent use of bold and italics. Never alter the actual words or meaning. Return only the corrected markdown with no explanation or preamble.",
+    prompt: "You are a Markdown formatting engine. Your task is to fix the structure (headings, lists, spacing) of the provided text.\n\nRULES:\n1. Never alter the actual words or meaning.\n2. ZERO CHATTER: Return EXCLUSIVELY the raw beautified markdown. Do not include greetings, explanations, or preamble.",
   },
   {
     id: "fact-check",
