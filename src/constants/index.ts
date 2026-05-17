@@ -88,7 +88,8 @@ export const PROVIDER_MODELS: Record<string, string[]> = {
   claude: ["claude-3-5-haiku-latest", "claude-3-5-sonnet-latest", "claude-3-opus-latest", "claude-haiku-4-5-20251001"],
   openai: ["gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo"],
   groq: ["llama-3.1-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768", "gemma2-9b-it"],
-  openrouter: ["mistralai/mistral-7b-instruct:free", "google/gemma-7b-it:free", "openchat/openchat-7b:free"]
+  openrouter: ["mistralai/mistral-7b-instruct:free", "google/gemma-7b-it:free", "openchat/openchat-7b:free"],
+  mistral: ["mistral-large-latest", "mistral-small-latest", "pixtral-large-latest", "open-mistral-nemo", "codestral-latest"]
 };
 
 export const ACTIONS: Array<{ id: string; title: string; prompt: string }> = [
