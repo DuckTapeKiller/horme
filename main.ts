@@ -79,9 +79,12 @@ export default class HormePlugin extends Plugin {
 
   private indexDebounceMap = new Map<string, number>();
   private statusBarItem: HTMLElement | null = null;
+  private backgroundStatusText: string | null = null;
+  private foregroundStatusText: string | null = null;
   private settingsChangeListeners = new Set<() => void>();
   private _mobileProviderOverrideActive = false;
   private _originalProvider: AiProvider | null = null;
+  private _originalModel: string | null = null;
   private _lastPersistedAiProvider: AiProvider | null = null;
 
   onSettingsChange(cb: () => void): () => void {
@@ -90,7 +93,7 @@ export default class HormePlugin extends Plugin {
   }
 
   private isCloudProvider(p: AiProvider): boolean {
-    return p === "claude" || p === "gemini" || p === "openai" || p === "groq" || p === "openrouter";
+    return p === "claude" || p === "gemini" || p === "openai" || p === "groq" || p === "openrouter" || p === "mistral";
   }
 
   private isLikelyOllamaEmbeddingModel(tag: OllamaTagsModel): boolean {
@@ -209,13 +212,29 @@ export default class HormePlugin extends Plugin {
       this.settings.aiProvider = this.settings.mobileProvider;
       const p = this.settings.mobileProvider;
       const m = this.settings.mobileModel;
-      if (p === "claude")          this.settings.claudeModel = m;
-      else if (p === "gemini")     this.settings.geminiModel = m;
-      else if (p === "openai")     this.settings.openaiModel = m;
-      else if (p === "groq")       this.settings.groqModel = m;
-      else if (p === "openrouter") this.settings.openRouterModel = m;
-      else if (p === "lmstudio")   this.settings.lmStudioModel = m;
-      else                         this.settings.defaultModel = m;
+      
+      if (p === "claude") {
+        this._originalModel = this.settings.claudeModel;
+        this.settings.claudeModel = m;
+      } else if (p === "gemini") {
+        this._originalModel = this.settings.geminiModel;
+        this.settings.geminiModel = m;
+      } else if (p === "openai") {
+        this._originalModel = this.settings.openaiModel;
+        this.settings.openaiModel = m;
+      } else if (p === "groq") {
+        this._originalModel = this.settings.groqModel;
+        this.settings.groqModel = m;
+      } else if (p === "openrouter") {
+        this._originalModel = this.settings.openRouterModel;
+        this.settings.openRouterModel = m;
+      } else if (p === "lmstudio") {
+        this._originalModel = this.settings.lmStudioModel;
+        this.settings.lmStudioModel = m;
+      } else {
+        this._originalModel = this.settings.defaultModel;
+        this.settings.defaultModel = m;
+      }
     }
     
     // PDF extraction worker setup
@@ -336,6 +355,11 @@ export default class HormePlugin extends Plugin {
     this.registerEvent(
       this.app.vault.on("delete", (file) => {
         if (file instanceof TFile && file.path.endsWith(".md")) {
+          const existing = this.indexDebounceMap.get(file.path);
+          if (existing !== undefined) {
+            window.clearTimeout(existing);
+            this.indexDebounceMap.delete(file.path);
+          }
           this.vaultIndexer.removeEntriesForPath(file.path);
         }
       })
@@ -344,6 +368,11 @@ export default class HormePlugin extends Plugin {
     this.registerEvent(
       this.app.vault.on("rename", (file, oldPath) => {
         if (file instanceof TFile && file.path.endsWith(".md")) {
+          const existing = this.indexDebounceMap.get(oldPath);
+          if (existing !== undefined) {
+            window.clearTimeout(existing);
+            this.indexDebounceMap.delete(oldPath);
+          }
           this.vaultIndexer.removeEntriesForPath(oldPath);
           void this.vaultIndexer.enqueueIndex(file).catch(e => this.handleError(e));
         }
@@ -356,7 +385,7 @@ export default class HormePlugin extends Plugin {
     await this.grammarIndexer.loadIndex();
     
     this.statusBarItem = this.addStatusBarItem();
-    this.statusBarItem.setCssProps({ display: "none" });
+    this.statusBarItem.setCssStyles({ display: "none" });
 
     this.models = await this.fetchModels();
 
@@ -581,16 +610,13 @@ Your Goal: Reconstruct the document into clean, professional Markdown.
     const tags = await this.loadAllowedTags();
     if (!tags.length) { new Notice("Horme: No tags found in vault."); return; }
 
-    // Use editor.getValue() to support Editing/Live Preview unsaved content
     const raw = view.editor ? view.editor.getValue() : view.getViewData();
     const body = this.tagService.stripFrontmatter(raw);
     const context = `${file.basename}\n\n${body}`;
 
-    // HYBRID APPROACH: Combine Keyword ranking and Semantic ranking
     const keywordCandidates = this.tagService.rankCandidates(context, tags).slice(0, 60);
     const semanticCandidates = await this.tagIndexer.getSemanticCandidates(context, 60);
     
-    // Merge and de-duplicate
     const candidates = Array.from(new Set([...keywordCandidates, ...semanticCandidates]));
 
     const prompt = `You are a tagging engine. Generate a newline-separated list of tags for the provided note content.
@@ -607,11 +633,20 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
     this.setIndexingStatus("Generating tags...");
     try {
       const tagsModel = this.settings.tagsModel.trim();
+      // Pass the complete 'context' string containing the file title to avoid context starvation
       const response = tagsModel
-        ? await this.aiGateway.generateWith(body, prompt, this.settings.tagsProvider, tagsModel)
-        : await this.aiGateway.generate(body, prompt, undefined, true);
+        ? await this.aiGateway.generateWith(context, prompt, this.settings.tagsProvider, tagsModel)
+        : await this.aiGateway.generate(context, prompt, undefined, true);
+      
       const suggested = response.split("\n")
-        .map(t => t.trim().replace(/^#/, ""))
+        .map(t => {
+          let tag = t.trim();
+          // Clean out formatting bullet points or numbering sequences
+          tag = tag.replace(/^\s*(?:\d+\.|[\-\*])\s+/, "");
+          // Clean decorative boundaries and hash markers
+          tag = tag.replace(/^[\s\_\*\`\"\'\[\]\(\)#]+/, "").replace(/[\s\_\*\`\"\'\[\]\(\)]+$/, "");
+          return tag;
+        })
         .filter(t => t.length > 0 && !t.includes(" "));
       
       if (!suggested.length) { new Notice("Horme: No valid tags generated."); return; }
@@ -1040,6 +1075,13 @@ RULES:
         });
         return res.status === 200;
       }
+      if (p === "mistral" && this.settings.mistralApiKey) {
+        const res = await requestUrl({
+          url: "https://api.mistral.ai/v1/models",
+          headers: { "Authorization": `Bearer ${this.settings.mistralApiKey}` }
+        });
+        return res.status === 200;
+      }
 
       return false; // No key or failed check
     } catch { return false; }
@@ -1119,12 +1161,39 @@ RULES:
 
   setIndexingStatus(text: string | null) {
     if (!this.statusBarItem) return;
+
+    const isBackgroundPattern = text && (
+      text.includes("Indexing") || 
+      text.includes("Scanning") || 
+      text.includes("Pre-translating") || 
+      text.includes("Loading Vault Index") ||
+      text.includes("Saving brain index") ||
+      text.includes("Waiting for brain index") ||
+      text.includes("Initializing")
+    );
+
     if (text === null) {
-      this.statusBarItem.setCssProps({ display: "none" });
+      const isBackgroundActive = Boolean(this.vaultIndexer?.isIndexing || this.vaultIndexer?.isProcessingQueue);
+      if (!isBackgroundActive) {
+        this.backgroundStatusText = null;
+      }
+      this.foregroundStatusText = null;
     } else {
-      this.statusBarItem.setCssProps({ display: "" });
-      this.statusBarItem.textContent = `● ${text}`;
-      this.statusBarItem.setCssProps({ color: "var(--text-success)" });
+      if (isBackgroundPattern) {
+        this.backgroundStatusText = text;
+      } else {
+        this.foregroundStatusText = text;
+      }
+    }
+
+    const displayValue = this.foregroundStatusText ?? (Boolean(this.vaultIndexer?.isIndexing || this.vaultIndexer?.isProcessingQueue) ? this.backgroundStatusText : null);
+
+    if (displayValue === null) {
+      this.statusBarItem.setCssStyles({ display: "none" });
+    } else {
+      this.statusBarItem.setCssStyles({ display: "" });
+      this.statusBarItem.textContent = `● ${displayValue}`;
+      this.statusBarItem.setCssStyles({ color: "var(--text-success)" });
     }
   }
 
@@ -1153,13 +1222,34 @@ RULES:
       this.settings.documentCloudWarningShown = false;
     }
 
-    // If mobile override is active, temporarily restore the original provider
+    // If mobile override is active, temporarily restore the original provider and model
     // before persisting so the override never contaminates saved data.
     if (this._mobileProviderOverrideActive && this._originalProvider !== null) {
       const overriddenProvider = this.settings.aiProvider;
       this.settings.aiProvider = this._originalProvider;
+      
+      let overriddenModel = "";
+      const p = this._originalProvider;
+      if (p === "claude") { overriddenModel = this.settings.claudeModel; this.settings.claudeModel = this._originalModel || ""; }
+      else if (p === "gemini") { overriddenModel = this.settings.geminiModel; this.settings.geminiModel = this._originalModel || ""; }
+      else if (p === "openai") { overriddenModel = this.settings.openaiModel; this.settings.openaiModel = this._originalModel || ""; }
+      else if (p === "groq") { overriddenModel = this.settings.groqModel; this.settings.groqModel = this._originalModel || ""; }
+      else if (p === "openrouter") { overriddenModel = this.settings.openRouterModel; this.settings.openRouterModel = this._originalModel || ""; }
+      else if (p === "mistral") { overriddenModel = this.settings.mistralModel; this.settings.mistralModel = this._originalModel || ""; }
+      else if (p === "lmstudio") { overriddenModel = this.settings.lmStudioModel; this.settings.lmStudioModel = this._originalModel || ""; }
+      else { overriddenModel = this.settings.defaultModel; this.settings.defaultModel = this._originalModel || ""; }
+
       await this.saveData(this.settings);
+      
       this.settings.aiProvider = overriddenProvider;
+      if (p === "claude") this.settings.claudeModel = overriddenModel;
+      else if (p === "gemini") this.settings.geminiModel = overriddenModel;
+      else if (p === "openai") this.settings.openaiModel = overriddenModel;
+      else if (p === "groq") this.settings.groqModel = overriddenModel;
+      else if (p === "openrouter") this.settings.openRouterModel = overriddenModel;
+      else if (p === "mistral") this.settings.mistralModel = overriddenModel;
+      else if (p === "lmstudio") this.settings.lmStudioModel = overriddenModel;
+      else this.settings.defaultModel = overriddenModel;
     } else {
       await this.saveData(this.settings);
     }

@@ -8,6 +8,7 @@ import { DuckDuckGoSkill } from "../skills/DuckDuckGoSkill";
 import { DateCalculatorSkill } from "../skills/DateCalculatorSkill";
 import { CustomSkill } from "../skills/CustomSkill";
 import { CreateConceptNoteSkill } from "../skills/CreateConceptNoteSkill";
+import { FetchAndSummariseSkill } from "../skills/FetchAndSummariseSkill";
 
 export class SkillManager {
   private plugin: HormePlugin;
@@ -27,6 +28,7 @@ export class SkillManager {
     this.registerSkill(new CreateConceptNoteSkill(this.plugin.app, this.plugin));
     this.registerSkill(new VaultLinkSkill(this.plugin));
     this.registerSkill(new GrammarScholarSkill(this.plugin));
+    this.registerSkill(new FetchAndSummariseSkill(this.plugin));
   }
 
   registerSkill(skill: Skill) {
@@ -64,13 +66,95 @@ export class SkillManager {
   }
 
   parseSkillCalls(text: string): SkillCall[] {
+    // Step 9.3: Add a maximum single-response length check (e.g., 200KB)
+    if (text.length > 200 * 1024) {
+      this.plugin.diagnosticService.report(
+        "Skill Parser",
+        `Refusing to parse skill calls. Text length (${text.length} bytes) exceeds 200KB limit.`,
+        "warning"
+      );
+      return [];
+    }
+
     const calls: SkillCall[] = [];
-    const regex = /<call:([^>]+)>([\s\S]*?)<\/call>/g;
+    // 1. Finds each <call:id> opening tag using a non-backtracking regex for the tag name only.
+    const tagRegex = /<call:([a-zA-Z0-9_]+)>/g;
     let match;
 
-    while ((match = regex.exec(text)) !== null) {
+    const isEscaped = (str: string, index: number): boolean => {
+      let count = 0;
+      for (let i = index - 1; i >= 0; i--) {
+        if (str[i] === '\\') count++;
+        else break;
+      }
+      return count % 2 !== 0;
+    };
+
+    while ((match = tagRegex.exec(text)) !== null) {
       const skillId = match[1];
-      const paramsText = match[2];
+      const startIdx = match.index + match[0].length;
+
+      // Find the opening '{' that begins the JSON parameter object.
+      let jsonStart = -1;
+      for (let i = startIdx; i < text.length; i++) {
+        const char = text[i];
+        if (char === '{') {
+          jsonStart = i;
+          break;
+        }
+        if (char === '<') {
+          break;
+        }
+      }
+
+      if (jsonStart === -1) {
+        continue;
+      }
+
+      // Use the brace-counting parser to extract the balanced JSON object.
+      let braceCount = 0;
+      let inString = false;
+      let jsonEnd = -1;
+
+      for (let i = jsonStart; i < text.length; i++) {
+        const char = text[i];
+        if (char === '"' && !isEscaped(text, i)) {
+          inString = !inString;
+        }
+        if (!inString) {
+          if (char === '{') {
+            braceCount++;
+          } else if (char === '}') {
+            braceCount--;
+            if (braceCount === 0) {
+              jsonEnd = i;
+              break;
+            }
+          }
+        }
+      }
+
+      if (jsonEnd === -1) {
+        const msg = `Failed to find balanced JSON parameters for skill ${skillId}. Unclosed brace.`;
+        this.plugin.diagnosticService.report("Skill Parser", msg, "warning");
+        continue;
+      }
+
+      const paramsText = text.slice(jsonStart, jsonEnd + 1);
+
+      // Finds the </call> tag immediately after the closing '}'.
+      const afterJson = text.slice(jsonEnd + 1);
+      const closeTagMatch = /^\s*<\/call>/.exec(afterJson);
+      if (!closeTagMatch) {
+        const msg = `Failed to parse skill ${skillId}: missing or misplaced </call> closing tag.`;
+        this.plugin.diagnosticService.report("Skill Parser", msg, "warning");
+        continue;
+      }
+
+      // Update regex index to skip past the closing tag
+      const closeTagLength = closeTagMatch[0].length;
+      tagRegex.lastIndex = jsonEnd + 1 + closeTagLength;
+
       try {
         const parameters: unknown = JSON.parse(paramsText);
         calls.push({ skillId, parameters });

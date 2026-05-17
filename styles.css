@@ -1737,3 +1737,54 @@ body.is-mobile .horme-select {
   margin-top: 2rem;
   font-style: italic;
 }
+
+.horme-tag-test-results {
+  margin: 8px 0 16px 0;
+  padding: 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-secondary);
+  font-size: 0.88em;
+}
+
+.horme-tag-test-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 8px 0;
+}
+
+.horme-tag-test-table th,
+.horme-tag-test-table td {
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.horme-tag-test-table th {
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.horme-tag-test-type-path { color: var(--text-muted); }
+.horme-tag-test-type-leaf { color: var(--text-normal); }
+.horme-tag-test-original  { font-family: var(--font-monospace); }
+.horme-tag-test-translated { font-family: var(--font-monospace); color: var(--color-green); }
+.horme-tag-test-missing    { color: var(--text-faint); font-style: italic; }
+
+.horme-tag-test-ok   { color: var(--color-green); }
+.horme-tag-test-warn { color: var(--color-yellow); }
+.horme-tag-test-fail { color: var(--color-red); }
+
+.horme-tag-test-warnings {
+  background: var(--background-modifier-error);
+  border-radius: 4px;
+  padding: 8px 12px;
+  margin-bottom: 10px;
+}
+
+.horme-tag-test-warning-line { margin: 2px 0; color: var(--text-error); }
+.horme-tag-test-summary { margin-top: 10px; color: var(--text-muted); }
+.horme-tag-test-error   { color: var(--color-red); }
+.horme-tag-test-loading { color: var(--text-muted); font-style: italic; }
+.horme-tag-test-empty   { color: var(--text-muted); font-style: italic; }

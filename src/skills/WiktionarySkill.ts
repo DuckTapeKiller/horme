@@ -1,4 +1,4 @@
-import { requestUrl } from "obsidian";
+import { requestUrlWithTimeout } from "../utils/requestWithTimeout";
 import { Skill, SkillParameter } from "./types";
 import { asArray, errorToMessage, getRecordProp, getStringProp, isRecord } from "../utils/TypeGuards";
 
@@ -7,6 +7,7 @@ export class WiktionarySkill implements Skill {
   name = "Wiktionary Lookup";
   description = "Looks up word definitions, etymology, usage notes, and conjugation details from Wiktionary. Supports multiple languages.";
   terminal = true;
+  primaryParam = "word";
   
   parameters: SkillParameter[] = [
     {
@@ -36,7 +37,7 @@ export class WiktionarySkill implements Skill {
       // Fetch the page extract for the word
       const url = `${wiktBase}/w/api.php?action=query&titles=${encodeURIComponent(word)}`
         + `&prop=extracts&explaintext=1&format=json&origin=*`;
-      const res = await requestUrl({ url });
+      const res = await requestUrlWithTimeout({ url });
       const json: unknown = res.json;
       const pages = getRecordProp(getRecordProp(json, "query"), "pages");
 
@@ -73,7 +74,7 @@ export class WiktionarySkill implements Skill {
   private async searchFallback(word: string, lang: string, wiktBase: string): Promise<string> {
     try {
       const searchUrl = `${wiktBase}/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(word)}&srlimit=3&format=json&origin=*`;
-      const searchRes = await requestUrl({ url: searchUrl });
+      const searchRes = await requestUrlWithTimeout({ url: searchUrl });
       const json: unknown = searchRes.json;
       const results = asArray(getRecordProp(getRecordProp(json, "query"), "search")) ?? [];
 

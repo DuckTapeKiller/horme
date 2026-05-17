@@ -15,12 +15,12 @@ export interface GrammarChunk {
   embedding: Int8Array | string; // Int8Array in memory, base64 string on disk
 }
 
-
 export class GrammarIndexer {
   private plugin: HormePlugin;
   public chunks: GrammarChunk[] = [];
   private indexPath: string;
   private indexedModel: string = "";
+  private isIndexing = false;
 
   constructor(plugin: HormePlugin) {
     this.plugin = plugin;
@@ -83,68 +83,79 @@ export class GrammarIndexer {
   }
 
   async rebuildIndex() {
-    const folderPath = this.plugin.settings.grammarFolderPath || "Gramática";
-    const folder = this.plugin.app.vault.getAbstractFileByPath(folderPath);
-
-    if (!folder || !(folder instanceof TFolder)) {
-      console.warn(`Horme: Grammar folder "${folderPath}" not found.`);
-      this.plugin.diagnosticService.report("Grammar", `Grammar folder "${folderPath}" not found.`, "warning");
+    if (this.isIndexing) {
+      new Notice("Horme Grammar: Indexing is already in progress.");
       return;
     }
+    this.isIndexing = true;
 
-    new Notice("Horme: Generating Grammar Index (view progress in console)...");
-    this.chunks = [];
-    
-    const files = this.getFilesRecursively(folder);
-    let totalChunks = 0;
-    let errorCount = 0;
-    const { doc: docPrefix } = getModelPrefixes(this.plugin.settings.ragEmbeddingModel);
-    
-    console.log(`Horme Grammar: Scanning ${files.length} files in "${folderPath}"...`);
+    try {
+      const folderPath = this.plugin.settings.grammarFolderPath || "Gramática";
+      const folder = this.plugin.app.vault.getAbstractFileByPath(folderPath);
 
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      this.plugin.setIndexingStatus(`Grammar: ${i + 1}/${files.length}`);
+      if (!folder || !(folder instanceof TFolder)) {
+        console.warn(`Horme: Grammar folder "${folderPath}" not found.`);
+        this.plugin.diagnosticService.report("Grammar", `Grammar folder "${folderPath}" not found.`, "warning");
+        return;
+      }
+
+      new Notice("Horme: Generating Grammar Index (view progress in console)...");
+      const newChunks: GrammarChunk[] = [];
       
-      if (file.extension === "md") {
-        console.log(`Horme Grammar: [${i + 1}/${files.length}] Processing ${file.path}`);
-        const content = await this.plugin.app.vault.read(file);
-        const chunks = this.plugin.embeddingService.chunkTextWithOffsets(content, 600, 100);
-        const validChunks = chunks.filter(c => c.text.trim().length > 0);
+      const files = this.getFilesRecursively(folder);
+      let totalChunks = 0;
+      let errorCount = 0;
+      const { doc: docPrefix } = getModelPrefixes(this.plugin.settings.ragEmbeddingModel);
+      
+      console.log(`Horme Grammar: Scanning ${files.length} files in "${folderPath}"...`);
 
-        if (validChunks.length > 0) {
-          // Batch embed with document prefix
-          const embeddingTexts = validChunks.map(c => `${docPrefix}${file.basename}\n\n${c.text}`);
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        this.plugin.setIndexingStatus(`Grammar: ${i + 1}/${files.length}`);
+        
+        if (file.extension === "md") {
+          console.log(`Horme Grammar: [${i + 1}/${files.length}] Processing ${file.path}`);
+          const content = await this.plugin.app.vault.read(file);
+          const chunks = this.plugin.embeddingService.chunkTextWithOffsets(content, 600, 100);
+          const validChunks = chunks.filter(c => c.text.trim().length > 0);
 
-          try {
-            const embeddings = await this.plugin.embeddingService.getEmbeddings(embeddingTexts);
-            for (let j = 0; j < validChunks.length; j++) {
-              totalChunks++;
-              if (embeddings[j] && embeddings[j].length > 0) {
-                this.chunks.push({
-                  path: file.path,
-                  content: validChunks[j].text,
-                  embedding: quantizeEmbeddingToInt8(embeddings[j])
-                });
+          if (validChunks.length > 0) {
+            // Batch embed with document prefix
+            const embeddingTexts = validChunks.map(c => `${docPrefix}${file.basename}\n\n${c.text}`);
+
+            try {
+              const embeddings = await this.plugin.embeddingService.getEmbeddings(embeddingTexts);
+              for (let j = 0; j < validChunks.length; j++) {
+                totalChunks++;
+                if (embeddings[j] && embeddings[j].length > 0) {
+                  newChunks.push({
+                    path: file.path,
+                    content: validChunks[j].text,
+                    embedding: quantizeEmbeddingToInt8(embeddings[j])
+                  });
+                }
               }
+            } catch (e: unknown) {
+              errorCount += validChunks.length;
+              this.plugin.diagnosticService.report("Grammar", `Failed to index ${file.path}: ${errorToMessage(e)}`, "warning");
             }
-          } catch (e: unknown) {
-            errorCount += validChunks.length;
-            this.plugin.diagnosticService.report("Grammar", `Failed to index ${file.path}: ${errorToMessage(e)}`, "warning");
           }
         }
       }
-    }
 
-    this.indexedModel = this.plugin.settings.ragEmbeddingModel;
-    await this.saveIndex();
-    
-    this.plugin.setIndexingStatus(null);
-    
-    if (errorCount > 0) {
-      new Notice(`⚠️ Grammar Index Built with ${errorCount} errors. Check console.`);
-    } else {
-      new Notice(`✅ Grammar Index Ready (${totalChunks} chunks).`);
+      this.chunks = newChunks;
+      this.indexedModel = this.plugin.settings.ragEmbeddingModel;
+      await this.saveIndex();
+      
+      this.plugin.setIndexingStatus(null);
+      
+      if (errorCount > 0) {
+        new Notice(`⚠️ Grammar Index Built with ${errorCount} errors. Check console.`);
+      } else {
+        new Notice(`✅ Grammar Index Ready (${totalChunks} chunks).`);
+      }
+    } finally {
+      this.isIndexing = false;
     }
   }
 
@@ -174,6 +185,11 @@ export class GrammarIndexer {
   }
 
   async deleteIndex(): Promise<"deleted" | "missing"> {
+    if (this.isIndexing) {
+      new Notice("Horme: Please wait for grammar indexing to finish.");
+      throw new Error("Blocked by active indexing.");
+    }
+
     const adapter = this.plugin.app.vault.adapter;
     const hadInMemory = this.chunks.length > 0;
     const hadOnDisk = await adapter.exists(this.indexPath);

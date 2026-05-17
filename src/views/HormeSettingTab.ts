@@ -8,8 +8,8 @@ import { CustomSkillModal } from "../modals/CustomSkillModal";
 import { asArray, getRecordProp, getStringProp } from "../utils/TypeGuards";
 
 type CloudProviderId = Exclude<AiProvider, "ollama" | "lmstudio">;
-type CloudApiKeyField = "claudeApiKey" | "geminiApiKey" | "openaiApiKey" | "groqApiKey" | "openRouterApiKey";
-type CloudModelField = "claudeModel" | "geminiModel" | "openaiModel" | "groqModel" | "openRouterModel";
+type CloudApiKeyField = "claudeApiKey" | "geminiApiKey" | "openaiApiKey" | "groqApiKey" | "openRouterApiKey" | "mistralApiKey";
+type CloudModelField = "claudeModel" | "geminiModel" | "openaiModel" | "groqModel" | "openRouterModel" | "mistralModel";
 type CloudProviderConfig = { id: CloudProviderId; name: string; key: CloudApiKeyField; model: CloudModelField };
 
 export class HormeSettingTab extends PluginSettingTab {
@@ -29,7 +29,8 @@ export class HormeSettingTab extends PluginSettingTab {
       value === "gemini" ||
       value === "openai" ||
       value === "groq" ||
-      value === "openrouter"
+      value === "openrouter" ||
+      value === "mistral"
     );
   }
 
@@ -82,6 +83,15 @@ export class HormeSettingTab extends PluginSettingTab {
       "meta-llama/llama-3.3-70b-instruct:free",
       "mistralai/mixtral-8x7b-instruct",
       "deepseek/deepseek-chat",
+    ],
+    mistral: [
+      "mistral-large-latest",
+      "mistral-medium-latest",
+      "mistral-small-latest",
+      "open-mistral-7b",
+      "open-mixtral-8x7b",
+      "pixtral-12b-latest",
+      "codestral-latest",
     ],
   };
 
@@ -279,6 +289,7 @@ export class HormeSettingTab extends PluginSettingTab {
         dd.addOption("openai", "OpenAI GPT (API)");
         dd.addOption("groq", "Groq (High Speed)");
         dd.addOption("openrouter", "OpenRouter (Free/Aggregator)");
+        dd.addOption("mistral", "Mistral AI (API)");
         dd.setValue(this.plugin.settings.aiProvider);
         dd.onChange((v) => {
           void (async () => {
@@ -351,7 +362,8 @@ export class HormeSettingTab extends PluginSettingTab {
       { id: "gemini", name: "Google Gemini", key: "geminiApiKey", model: "geminiModel" },
       { id: "openai", name: "OpenAI GPT", key: "openaiApiKey", model: "openaiModel" },
       { id: "groq", name: "Groq", key: "groqApiKey", model: "groqModel" },
-      { id: "openrouter", name: "OpenRouter", key: "openRouterApiKey", model: "openRouterModel" }
+      { id: "openrouter", name: "OpenRouter", key: "openRouterApiKey", model: "openRouterModel" },
+      { id: "mistral", name: "Mistral AI", key: "mistralApiKey", model: "mistralModel" }
     ];
 
     for (const cp of cloudProviders) {
@@ -508,6 +520,7 @@ export class HormeSettingTab extends PluginSettingTab {
           dd.addOption("openai", "OpenAI GPT (API)");
           dd.addOption("groq", "Groq (High Speed)");
           dd.addOption("openrouter", "OpenRouter (Free/Aggregator)");
+          dd.addOption("mistral", "Mistral AI (API)");
           dd.setValue(this.plugin.settings.mobileProvider);
           dd.onChange(v => {
             void (async () => {
@@ -695,11 +708,12 @@ export class HormeSettingTab extends PluginSettingTab {
             drp.addOption("openai", "OpenAI");
             drp.addOption("groq", "Groq");
             drp.addOption("openrouter", "OpenRouter");
+            drp.addOption("mistral", "Mistral AI");
           }
           // If the saved provider is a cloud one but cloud is now disabled,
           // silently clamp to "ollama" so the dropdown doesn't show a blank.
           const savedProvider = this.plugin.settings.tagsProvider;
-          const cloudProviders = ["claude", "gemini", "openai", "groq", "openrouter"];
+          const cloudProviders = ["claude", "gemini", "openai", "groq", "openrouter", "mistral"];
           const effectiveProvider =
             !allowCloud && cloudProviders.includes(savedProvider) ? "ollama" : savedProvider;
           if (effectiveProvider !== savedProvider) {
@@ -756,13 +770,7 @@ export class HormeSettingTab extends PluginSettingTab {
     );
 
     if (!this.plugin.settings.allowCloudRAG) {
-      const tagsCloudNote = tagSection.createDiv();
-      tagsCloudNote.setCssProps({
-        fontSize: "var(--font-smallest)",
-        color: "var(--text-muted)",
-        marginTop: "4px",
-        paddingLeft: "2px",
-      });
+      const tagsCloudNote = tagSection.createDiv("horme-settings-muted");
       tagsCloudNote.setText("Cloud providers are locked. To unlock them, enable \"Allow Cloud Provider Access\" in the Vault Brain section.");
     }
 
@@ -1040,7 +1048,153 @@ export class HormeSettingTab extends PluginSettingTab {
             borderRadius: "var(--radius-s)",
           });
         }
+
+        // --- Test Translation ---
+        const testResultsEl = ragSection.createDiv({ cls: "horme-tag-test-results" });
+        testResultsEl.style.display = "none";
+
+        new Setting(ragSection)
+          .setName("Test translation")
+          .setDesc(
+            "Run a sample of your vault tags through the translation model " +
+            "to verify output quality before rebuilding the index. " +
+            "Uses the Tag Translation Provider and Model configured above."
+          )
+          .addButton(btn => {
+            btn.setButtonText("Run test").onClick(async () => {
+              btn.setButtonText("Testing...").setDisabled(true);
+              testResultsEl.empty();
+              testResultsEl.style.display = "block";
+
+              const loadingEl = testResultsEl.createEl("p", {
+                text: "Contacting model — this may take 10–30 seconds on a local LLM...",
+                cls: "horme-tag-test-loading"
+              });
+
+              try {
+                const rows = await this.plugin.vaultIndexer.testTagTranslation();
+                loadingEl.remove();
+
+                if (rows.length === 0) {
+                  testResultsEl.createEl("p", {
+                    text: "No tags found in the sampled vault files. " +
+                          "Make sure you have notes with Obsidian tags and that the index has been built.",
+                    cls: "horme-tag-test-empty"
+                  });
+                  return;
+                }
+
+                // Collect any warnings first
+                const warnings = rows.filter(r => r.warning !== null);
+                if (warnings.length > 0) {
+                  const warnBox = testResultsEl.createDiv({ cls: "horme-tag-test-warnings" });
+                  warnBox.createEl("strong", { text: "⚠ Model output warnings:" });
+                  warnings.forEach(w => {
+                    warnBox.createEl("p", { text: w.warning ?? "", cls: "horme-tag-test-warning-line" });
+                  });
+                }
+
+                // Build results table
+                const table = testResultsEl.createEl("table", { cls: "horme-tag-test-table" });
+                const thead = table.createEl("thead");
+                const headerRow = thead.createEl("tr");
+                headerRow.createEl("th", { text: "Type" });
+                headerRow.createEl("th", { text: "Spanish (original)" });
+                headerRow.createEl("th", { text: "Translation" });
+                headerRow.createEl("th", { text: "Status" });
+
+                const tbody = table.createEl("tbody");
+
+                // Show path rows first, then leaf rows
+                const sorted = [...rows].sort((a, b) =>
+                  a.type === b.type ? 0 : a.type === "path" ? -1 : 1
+                );
+
+                for (const row of sorted) {
+                  const tr = tbody.createEl("tr");
+                  tr.createEl("td", {
+                    text: row.type === "path" ? "Category label" : "Specific value",
+                    cls: `horme-tag-test-type horme-tag-test-type-${row.type}`
+                  });
+                  tr.createEl("td", { text: row.original, cls: "horme-tag-test-original" });
+                  tr.createEl("td", {
+                    text: row.translated ?? "(no output)",
+                    cls: row.translated ? "horme-tag-test-translated" : "horme-tag-test-missing"
+                  });
+
+                  const statusCell = tr.createEl("td");
+                  if (!row.translated) {
+                    statusCell.createEl("span", { text: "✗ Failed", cls: "horme-tag-test-fail" });
+                  } else if (row.warning) {
+                    statusCell.createEl("span", { text: "⚠ Check format", cls: "horme-tag-test-warn" });
+                  } else {
+                    statusCell.createEl("span", { text: "✓", cls: "horme-tag-test-ok" });
+                  }
+                }
+
+                // Summary line
+                const ok = rows.filter(r => r.translated && !r.warning).length;
+                const total = rows.length;
+                testResultsEl.createEl("p", {
+                  text: `${ok} / ${total} translations look clean. ` +
+                        (warnings.length > 0
+                          ? `${warnings.length} format issue(s) detected — consider switching to a larger or more instruction-following model.`
+                          : "Output format looks correct."),
+                  cls: "horme-tag-test-summary"
+                });
+
+              } catch (e: unknown) {
+                loadingEl.remove();
+                testResultsEl.createEl("p", {
+                  text: `Test failed: ${e instanceof Error ? e.message : String(e)}`,
+                  cls: "horme-tag-test-error"
+                });
+              } finally {
+                btn.setButtonText("Run test").setDisabled(false);
+              }
+            });
+          });
       }
+
+    new Setting(ragSection)
+      .setName("Metadata Keyword Weight")
+      .setDesc("Maximum priority bonus given to exact keyword matches in titles, tags, and summaries (Default: 0.25)")
+      .addSlider(slider => slider
+        .setLimits(0.0, 1.0, 0.05)
+        .setValue(this.plugin.settings.searchMetadataCap)
+        .setDynamicTooltip()
+        .onChange(async (value) => {
+          this.plugin.settings.searchMetadataCap = value;
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(ragSection)
+      .setName("Content Keyword Weight")
+      .setDesc("Maximum priority bonus given to exact keyword matches found deep inside the note body (Default: 0.20)")
+      .addSlider(slider => slider
+        .setLimits(0.0, 1.0, 0.05)
+        .setValue(this.plugin.settings.searchContentCap)
+        .setDynamicTooltip()
+        .onChange(async (value) => {
+          this.plugin.settings.searchContentCap = value;
+          await this.plugin.saveSettings();
+        }));
+
+      new Setting(ragSection)
+        .setName("Reset Search Weights")
+        .setDesc("Restore the mathematically optimal defaults (Metadata: 0.25, Content: 0.20).")
+        .addButton(btn => btn
+          .setButtonText("Reset to Defaults")
+          .onClick(() => {
+            void (async () => {
+              this.plugin.settings.searchMetadataCap = 0.25;
+              this.plugin.settings.searchContentCap = 0.20;
+              await this.plugin.saveSettings();
+              this.displayPreserveScroll(); // Refresh the UI to update slider positions
+              new Notice("Search weights restored to defaults.");
+            })();
+          })
+        );
 
       new Setting(ragSection)
         .setName("Index Control")

@@ -22,7 +22,6 @@ export class EmbeddingService {
    */
   async getEmbeddings(texts: string[]): Promise<number[][]> {
     const chatProvider = this.plugin.settings.aiProvider;
-    // For cloud providers, we MUST use a local provider for embeddings (default to Ollama)
     const embedProvider = (chatProvider === "ollama" || chatProvider === "lmstudio") 
       ? chatProvider 
       : "ollama";
@@ -37,16 +36,14 @@ export class EmbeddingService {
         const result = await this.getOllamaEmbeddingsBatch(batch);
         allEmbeddings.push(...result);
       } else if (embedProvider === "lmstudio") {
-        for (const text of batch) {
-          allEmbeddings.push(await this.getLMStudioEmbedding(text));
-        }
+        const result = await this.getLMStudioEmbeddingsBatch(batch);
+        allEmbeddings.push(...result);
       }
     }
     return allEmbeddings;
   }
 
   private async getOllamaEmbeddingsBatch(inputs: string[]): Promise<number[][]> {
-    // Try true batch request first (Ollama supports array `input`)
     try {
       const data = JSON.stringify({
         model: this.plugin.settings.ragEmbeddingModel || "nomic-embed-text",
@@ -80,21 +77,26 @@ export class EmbeddingService {
       this.plugin.diagnosticService.report("Embeddings", `Batch embed failed, falling back to sequential: ${errorToMessage(e)}`, "warning");
     }
 
-    // Fallback: sequential one-at-a-time
+    // Fallback: sequential one-at-a-time with dynamic dimension recovery
     const results: number[][] = [];
+    let detectedDimension = 768; // Safe fallback base dimension
+
     for (let i = 0; i < inputs.length; i++) {
       try {
         const embedding = await this.getOllamaEmbeddingSafe(inputs[i]);
         results.push(embedding);
+        if (embedding && embedding.length > 0) {
+          detectedDimension = embedding.length; // Capture the real model dimensions dynamically
+        }
       } catch {
-        results.push(new Array<number>(1024).fill(0)); // zero vector = excluded by MIN_SIMILARITY
+        // Build zero-vector matching the exact dimension required by the running model
+        results.push(new Array<number>(detectedDimension).fill(0));
       }
     }
     return results;
   }
 
   private async getOllamaEmbeddingSafe(text: string, attempt = 0): Promise<number[]> {
-    // On retry, truncate progressively: full → 800 → 400 → 200
     const limits = [text.length, 800, 400, 200];
     const truncated = text.slice(0, limits[attempt] ?? 200);
 
@@ -113,8 +115,9 @@ export class EmbeddingService {
   }
 
   private async getOllamaEmbedding(text: string): Promise<number[]> {
+    const defaultModel = this.plugin.settings.ragEmbeddingModel || "nomic-embed-text";
     const data = JSON.stringify({
-      model: this.plugin.settings.ragEmbeddingModel || "nomic-embed-text",
+      model: defaultModel,
       input: text
     });
 
@@ -139,13 +142,12 @@ export class EmbeddingService {
       throw new Error("Ollama embed response missing embeddings");
     }
 
-    // If 501, try the legacy /api/embeddings endpoint
     if (res.status === 501) {
       const legacyRes = await requestUrl({
         url: `${this.plugin.settings.ollamaBaseUrl}/api/embeddings`,
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: this.plugin.settings.ragEmbeddingModel, prompt: text }),
+        body: JSON.stringify({ model: defaultModel, prompt: text }),
         throw: false
       });
       if (legacyRes.status === 200) {
@@ -161,7 +163,7 @@ export class EmbeddingService {
     throw new Error(`Ollama embed error: ${res.status}${errorDetail ? ` - ${errorDetail}` : ""}`);
   }
 
-  private async getLMStudioEmbedding(text: string): Promise<number[]> {
+  private async getLMStudioEmbeddingsBatch(inputs: string[]): Promise<number[][]> {
     try {
       const res = await requestUrl({
         url: `${this.plugin.settings.lmStudioUrl}/v1/embeddings`,
@@ -169,19 +171,23 @@ export class EmbeddingService {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: this.plugin.settings.lmStudioModel || "local-model",
-          input: text
+          input: inputs
         })
       });
       if (res.status !== 200) throw new Error(`LM Studio Error: ${res.status} - ${res.text}`);
       const json: unknown = res.json;
       const dataArr = asArray(getRecordProp(json, "data"));
-      if (!dataArr || dataArr.length === 0) throw new Error("LM Studio response missing data");
-      const first = dataArr[0];
-      const embedding = asNumberArray(getRecordProp(first, "embedding"));
-      if (!embedding) throw new Error("LM Studio response missing embedding");
-      return embedding;
+      if (!dataArr || dataArr.length !== inputs.length) throw new Error("LM Studio response data missing or length mismatch");
+      
+      const out: number[][] = [];
+      for (const item of dataArr) {
+        const embedding = asNumberArray(getRecordProp(item, "embedding"));
+        if (!embedding) throw new Error("LM Studio item missing vector data");
+        out.push(embedding);
+      }
+      return out;
     } catch (e: unknown) {
-      throw new Error(`LM Studio Embedding Failed: ${errorToMessage(e)}`);
+      throw new Error(`LM Studio Batch Embedding Failed: ${errorToMessage(e)}`);
     }
   }
 
@@ -198,8 +204,6 @@ export class EmbeddingService {
 
       if (end < text.length) {
         const midpoint = start + Math.floor(chunkSize / 2);
-
-        // Search backward from end for a sentence boundary in the second half of the chunk
         let foundBoundary = false;
         for (let i = end; i >= midpoint; i--) {
           const ch = text[i];
@@ -211,7 +215,6 @@ export class EmbeddingService {
           }
         }
 
-        // Fall back to word boundary if no sentence boundary found
         if (!foundBoundary) {
           for (let i = end; i > start; i--) {
             if (text[i] === " " || text[i] === "\n") {
@@ -226,11 +229,8 @@ export class EmbeddingService {
       if (chunk.length > 0) chunks.push(chunk);
 
       if (end >= text.length) break;
-
-      // Always advance forward — never go backward
       start = Math.max(start + 1, end - overlap);
     }
-
     return chunks;
   }
 
@@ -275,11 +275,8 @@ export class EmbeddingService {
       const chunkText = text.slice(start, end).trim();
       if (chunkText.length > 0) chunks.push({ text: chunkText, start, end });
       if (end >= text.length) break;
-
-      // Always advance forward — never go backward
       start = Math.max(start + 1, end - overlap);
     }
-
     return chunks;
   }
 }

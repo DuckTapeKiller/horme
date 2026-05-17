@@ -1,4 +1,5 @@
-import { App, normalizePath, requestUrl } from "obsidian";
+import { App, normalizePath } from "obsidian";
+import { requestUrlWithTimeout } from "../utils/requestWithTimeout";
 import HormePlugin from "../../main";
 import { Skill, SkillParameter } from "./types";
 import { asArray, errorToMessage, getRecordProp, getStringProp, isRecord } from "../utils/TypeGuards";
@@ -54,7 +55,7 @@ export class CreateConceptNoteSkill implements Skill {
       const base = `https://${lang}.wikipedia.org`;
       const wikiUrl = `${base}/wiki/${slug}`;
       const wikiApiUrl = `${base}/api/rest_v1/page/summary/${slug}`;
-      const res = await requestUrl({ url: wikiApiUrl, throw: false });
+      const res = await requestUrlWithTimeout({ url: wikiApiUrl, throw: false });
       if (res.status === 200) {
         const extract = getStringProp(res.json as unknown, "extract");
         if (extract && extract.trim().length > 0) return { content: extract.trim(), url: wikiUrl };
@@ -68,7 +69,7 @@ export class CreateConceptNoteSkill implements Skill {
       const wiktBase = `https://${lang}.wiktionary.org`;
       const wiktUrl = `${wiktBase}/wiki/${slug}`;
       const wiktApiUrl = `${wiktBase}/api/rest_v1/page/definition/${slug}`;
-      const res = await requestUrl({ url: wiktApiUrl, throw: false });
+      const res = await requestUrlWithTimeout({ url: wiktApiUrl, throw: false });
       if (res.status === 200 && isRecord(res.json)) {
         const enArr = asArray(getRecordProp(res.json, "en")) ?? [];
         const first = enArr[0];

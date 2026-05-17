@@ -1,4 +1,4 @@
-export type AiProvider = "ollama" | "lmstudio" | "claude" | "gemini" | "openai" | "groq" | "openrouter";
+export type AiProvider = "ollama" | "lmstudio" | "claude" | "gemini" | "openai" | "groq" | "openrouter" | "mistral";
 
 export interface CustomSkillDefinition {
   id: string;           // generated slug: "custom_" + sanitized name
@@ -27,6 +27,8 @@ export interface HormeSettings {
   groqModel: string;
   openRouterApiKey: string;
   openRouterModel: string;
+  mistralApiKey: string;
+  mistralModel: string;
   systemPromptPath: string;
   presetsPaths: string[];
   temperature: number;
@@ -69,6 +71,11 @@ export interface HormeSettings {
   conceptNoteFolder: string;
   conceptNoteTemplate: string;
   conceptNoteSourceField: string;
+
+  searchMetadataCap: number;
+  searchContentCap: number;
+  tagTranslationDictionary: Record<string, string>;
+  tagCacheSanitised: boolean;
 }
 
 export interface SavedConversation {
@@ -79,7 +86,7 @@ export interface SavedConversation {
 }
 
 export interface ChatMessage {
-  role: "user" | "assistant" | "system";
+  role: "user" | "assistant" | "system" | "tool_result";
   content: string;
   images?: string[];
   audio?: string | null;

@@ -1,4 +1,4 @@
-import { requestUrl } from "obsidian";
+import { requestUrlWithTimeout } from "../utils/requestWithTimeout";
 import { Skill, SkillParameter } from "./types";
 import { asArray, errorToMessage, getRecordProp, getStringProp } from "../utils/TypeGuards";
 
@@ -7,6 +7,7 @@ export class DuckDuckGoSkill implements Skill {
   name = "DuckDuckGo Instant Answer";
   description = "Searches DuckDuckGo for instant answers, quick facts, and topic summaries. Useful for recent events, technical specs, and claims not covered by Wikipedia.";
   terminal = true;
+  primaryParam = "query";
   
   parameters: SkillParameter[] = [
     {
@@ -25,7 +26,7 @@ export class DuckDuckGoSkill implements Skill {
       if (!query) return `Invalid parameters for ${this.name}: expected {"query": string}.`;
       
       const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`;
-      const res = await requestUrl({ url });
+      const res = await requestUrlWithTimeout({ url });
       const data: unknown = res.json;
 
       let output = `## DuckDuckGo: "${query}"\n\n`;

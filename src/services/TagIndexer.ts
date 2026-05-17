@@ -16,6 +16,7 @@ interface TagEntry {
 export class TagIndexer {
   private plugin: HormePlugin;
   private index: TagEntry[] = [];
+  private isIndexing = false;
   
   get entryCount(): number {
     return this.index.length;
@@ -96,6 +97,11 @@ export class TagIndexer {
   }
 
   async deleteIndex(): Promise<"deleted" | "missing"> {
+    if (this.isIndexing) {
+      new Notice("Horme: Please wait for tag indexing to finish.");
+      throw new Error("Blocked by active indexing.");
+    }
+
     const adapter = this.plugin.app.vault.adapter;
     const hadInMemory = this.index.length > 0;
     const hadOnDisk = await adapter.exists(this.indexPath);
@@ -123,86 +129,80 @@ export class TagIndexer {
    * Scans all unique tags in the vault and indexes them semantically.
    */
   async rebuildTagIndex() {
-    this.plugin.setIndexingStatus("Indexing Tags...");
-    
-    // Get all unique tags from Obsidian's metadata cache
-    const allTags = new Set<string>();
-    const files = this.plugin.app.vault.getMarkdownFiles();
-    
-    for (const file of files) {
-      const cache = this.plugin.app.metadataCache.getFileCache(file);
-      let foundAny = false;
-
-      if (cache?.tags && cache.tags.length > 0) {
-        cache.tags.forEach(t => allTags.add(t.tag.startsWith("#") ? t.tag.slice(1) : t.tag));
-        foundAny = true;
-      }
-      // Also check frontmatter tags
-      if (cache?.frontmatter?.tags) {
-        const fmTags = Array.isArray(cache.frontmatter.tags) ? cache.frontmatter.tags : [cache.frontmatter.tags];
-        for (const t of fmTags) {
-          if (typeof t === "string") {
-            allTags.add(t.startsWith("#") ? t.slice(1) : t);
-            foundAny = true;
-          }
-        }
-      }
-      if (cache?.frontmatter?.tag) {
-        const fmTags = Array.isArray(cache.frontmatter.tag) ? cache.frontmatter.tag : [cache.frontmatter.tag];
-        for (const t of fmTags) {
-          if (typeof t === "string") {
-            allTags.add(t.startsWith("#") ? t.slice(1) : t);
-            foundAny = true;
-          }
-        }
-      }
-
-      if (!foundAny) {
-        try {
-          const content = await this.plugin.app.vault.read(file);
-          const inlineTagRegex = /(^|\s)#([^\s#]+)/gm;
-          let match: RegExpExecArray | null;
-          while ((match = inlineTagRegex.exec(content)) !== null) {
-            allTags.add(match[2]);
-          }
-        } catch {
-          // Silently skip unreadable files
-        }
-      }
+    if (this.isIndexing) {
+      new Notice("Horme: Tag indexing is already in progress.");
+      return;
     }
+    this.isIndexing = true;
 
-    const tagList = Array.from(allTags);
-    console.log(`Horme: Indexing ${tagList.length} unique tags...`);
-    
-    const newIndex: TagEntry[] = [];
-
-    
-    // Process in batches for speed
-    const BATCH_SIZE = 50;
-    for (let i = 0; i < tagList.length; i += BATCH_SIZE) {
-      const batch = tagList.slice(i, i + BATCH_SIZE);
-      this.plugin.setIndexingStatus(`Tags: ${i}/${tagList.length}`);
+    try {
+      this.plugin.setIndexingStatus("Indexing Tags...");
       
-      try {
-        // No prefix: tag suggestion is symmetric (tag text ↔ note content)
-        const humanizedBatch = batch.map(t => t.replace(/[/_]/g, " "));
-        const embeddings = await this.plugin.embeddingService.getEmbeddings(humanizedBatch);
-        for (let j = 0; j < batch.length; j++) {
-          if (embeddings[j] && embeddings[j].length > 0) {
-            newIndex.push({ tag: batch[j], embedding: quantizeEmbeddingToInt8(embeddings[j]) });
+      // Get all unique tags from Obsidian's metadata cache
+      const allTags = new Set<string>();
+      const files = this.plugin.app.vault.getMarkdownFiles();
+      
+      const processFmTags = (raw: unknown) => {
+        if (!raw) return;
+        const arr = Array.isArray(raw) ? raw : [raw];
+        for (const item of arr) {
+          if (typeof item === "string") {
+            item.split(",").forEach(t => {
+              const cleaned = t.trim().replace(/^#/, "");
+              if (cleaned) allTags.add(cleaned);
+            });
           }
         }
-      } catch (e: unknown) {
-        this.plugin.diagnosticService.report("Tags", `Tag batch indexing failed: ${errorToMessage(e)}`, "warning");
-      }
-    }
+      };
 
-    this.index = newIndex;
-    this.indexedModel = this.plugin.settings.ragEmbeddingModel;
-    await this.saveIndex();
-    this.plugin.setIndexingStatus(null);
-    new Notice(`✅ Tag Index Ready (${this.index.length} tags)`);
-    console.log("Horme: Tag index rebuilt successfully.");
+      for (const file of files) {
+        const cache = this.plugin.app.metadataCache.getFileCache(file);
+        if (!cache) continue;
+
+        if (cache.tags && cache.tags.length > 0) {
+          cache.tags.forEach(t => allTags.add(t.tag.replace(/^#/, "")));
+        }
+        
+        if (cache.frontmatter) {
+          processFmTags(cache.frontmatter.tags);
+          processFmTags(cache.frontmatter.tag);
+        }
+      }
+
+      const tagList = Array.from(allTags);
+      console.log(`Horme: Indexing ${tagList.length} unique tags...`);
+      
+      const newIndex: TagEntry[] = [];
+      
+      // Process in batches for speed
+      const BATCH_SIZE = 50;
+      for (let i = 0; i < tagList.length; i += BATCH_SIZE) {
+        const batch = tagList.slice(i, i + BATCH_SIZE);
+        this.plugin.setIndexingStatus(`Tags: ${i}/${tagList.length}`);
+        
+        try {
+          // No prefix: tag suggestion is symmetric (tag text ↔ note content)
+          const humanizedBatch = batch.map(t => t.replace(/[/_]/g, " "));
+          const embeddings = await this.plugin.embeddingService.getEmbeddings(humanizedBatch);
+          for (let j = 0; j < batch.length; j++) {
+            if (embeddings[j] && embeddings[j].length > 0) {
+              newIndex.push({ tag: batch[j], embedding: quantizeEmbeddingToInt8(embeddings[j]) });
+            }
+          }
+        } catch (e: unknown) {
+          this.plugin.diagnosticService.report("Tags", `Tag batch indexing failed: ${errorToMessage(e)}`, "warning");
+        }
+      }
+
+      this.index = newIndex;
+      this.indexedModel = this.plugin.settings.ragEmbeddingModel;
+      await this.saveIndex();
+      this.plugin.setIndexingStatus(null);
+      new Notice(`✅ Tag Index Ready (${this.index.length} tags)`);
+      console.log("Horme: Tag index rebuilt successfully.");
+    } finally {
+      this.isIndexing = false;
+    }
   }
 
   /**
@@ -215,19 +215,19 @@ export class TagIndexer {
       // Note: No isLocalProviderActive() guard here because EmbeddingService 
       // always routes embeddings to Ollama, even when the chat provider is cloud.
       // This ensures tag suggestions work without leaking data to the cloud.
-	      const queryEmbedding = await this.plugin.embeddingService.getEmbedding(
-	        text.slice(0, 1500)
-	      );
-	      
-	      const scored = this.index.map(entry => {
-	        const emb = typeof entry.embedding === "string"
-	          ? decompressEmbeddingToInt8(entry.embedding)
-	          : entry.embedding;
-	        return {
-	          tag: entry.tag,
-	          score: cosineSimilarityFloatInt8(queryEmbedding, emb)
-	        };
-	      });
+      const queryEmbedding = await this.plugin.embeddingService.getEmbedding(
+        text.slice(0, 1500)
+      );
+      
+      const scored = this.index.map(entry => {
+        const emb = typeof entry.embedding === "string"
+          ? decompressEmbeddingToInt8(entry.embedding)
+          : entry.embedding;
+        return {
+          tag: entry.tag,
+          score: cosineSimilarityFloatInt8(queryEmbedding, emb)
+        };
+      });
 
       scored.sort((a, b) => b.score - a.score);
       return scored.slice(0, topN).map(s => s.tag);

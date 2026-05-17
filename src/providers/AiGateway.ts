@@ -7,6 +7,7 @@ import { GeminiProvider } from "./GeminiProvider";
 import { OpenAIProvider } from "./OpenAIProvider";
 import { GroqProvider } from "./GroqProvider";
 import { OpenRouterProvider } from "./OpenRouterProvider";
+import { MistralProvider } from "./MistralProvider";
 export class AiGateway {
   private plugin: HormePlugin;
 
@@ -23,6 +24,7 @@ export class AiGateway {
       case "openai": return new OpenAIProvider(settings.openaiApiKey, settings.temperature, settings.maxTokens);
       case "groq": return new GroqProvider(settings.groqApiKey, settings.temperature, settings.maxTokens);
       case "openrouter": return new OpenRouterProvider(settings.openRouterApiKey, settings.temperature, settings.maxTokens);
+      case "mistral": return new MistralProvider(settings.mistralApiKey, settings.temperature, settings.maxTokens);
       case "lmstudio": return new LmStudioProvider(settings.lmStudioUrl, settings.temperature, settings.maxTokens);
       default: return new OllamaProvider(settings.ollamaBaseUrl, settings.temperature, settings.maxTokens);
     }
@@ -95,6 +97,7 @@ export class AiGateway {
     if (p === "openai") return settings.openaiModel;
     if (p === "groq") return settings.groqModel;
     if (p === "openrouter") return settings.openRouterModel;
+    if (p === "mistral") return settings.mistralModel;
     if (p === "lmstudio") return settings.lmStudioModel;
     return settings.defaultModel;
   }
@@ -127,6 +130,9 @@ export class AiGateway {
         break;
       case "openrouter":
         provider = new OpenRouterProvider(settings.openRouterApiKey, settings.temperature, settings.maxTokens);
+        break;
+      case "mistral":
+        provider = new MistralProvider(settings.mistralApiKey, settings.temperature, settings.maxTokens);
         break;
       case "lmstudio":
         provider = new LmStudioProvider(settings.lmStudioUrl, settings.temperature, settings.maxTokens);

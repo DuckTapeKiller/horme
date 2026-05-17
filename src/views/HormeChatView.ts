@@ -5,6 +5,14 @@ import { ChatMessage, SavedConversation } from "../types";
 import { NotePickerModal } from "../modals/NotePickerModal";
 import { GenericConfirmModal } from "../modals/GenericConfirmModal";
 
+const SKILL_PLACEHOLDERS: Record<string, string> = {
+  "fetch_and_summarise": "Paste URL to summarise...",
+  "wikipedia": "Type name, concept, or historical event to look up...",
+  "ddg_search": "Type search query or claim to verify live...",
+  "wiktionary": "Type a specific word to inspect layout or definition...",
+  "vault_links": "Type topic or content snippet to map related notes...",
+};
+
 export class HormeChatView extends ItemView {
   plugin: HormePlugin;
   private history: ChatMessage[] = [];
@@ -18,6 +26,7 @@ export class HormeChatView extends ItemView {
   private connectionDot!: HTMLElement;
   private presetSelect!: HTMLSelectElement;
   private isGenerating = false;
+  private generationEpoch = 0;
   private showingHistory = false;
   private unregisterSettingsListener: (() => void) | null = null;
   private documentClickHandler: (() => void) | null = null;
@@ -32,7 +41,6 @@ export class HormeChatView extends ItemView {
   private uploadedDocName: string | null = null;
   private uploadedImages: string[] = [];
   private uploadedAudio: string | null = null;
-  private leafChangeRef: EventRef | null = null;
   private rollingRAGContext: string[] = [];
   private selectedContextNotes: TFile[] = [];
   private contextNotesLabel!: HTMLElement;
@@ -40,6 +48,7 @@ export class HormeChatView extends ItemView {
   private vaultBrainLabel!: HTMLElement;
   private forcedSkillId: string | null = null;
   private skillsMenuEl: HTMLElement | null = null;
+  private activeLoadingIntervals: Set<number> = new Set();
  
   private async pickImage() {
     const fileInput = activeDocument.createElement("input");
@@ -132,6 +141,7 @@ export class HormeChatView extends ItemView {
       "ddg_search",
       "wiktionary",
       "vault_links",
+      "fetch_and_summarise", // ◈ Forces the skill to run in Direct Mode and bypass Vault Brain entirely
     ]);
 
     for (const skill of allSkills) {
@@ -152,13 +162,26 @@ export class HormeChatView extends ItemView {
       });
 
       item.addEventListener("click", () => {
+        if (this.isGenerating) {
+          new Notice("Horme: Cannot change skill mode while generating.");
+          return;
+        }
         this.skillsMenuEl!.classList.add("horme-skills-menu-hidden");
+
+        // 🟢 Clear any existing skill state to ensure mutual exclusivity before applying new selection
+        this.forcedSkillId = null;
+        this.inputEl.value = "";
+        this.inputEl.placeholder = "Ask Horme…";
+        this.containerEl.querySelector(".horme-skill-pill")?.remove();
+        this.autoGrow?.();
 
         if (isForced) {
           // ARM the skill for direct execution on next send.
-          // Vault Brain will be suppressed for that turn (see sendMessage intercept).
           this.forcedSkillId = skill.id;
           this.showArmedSkillPill(skill.name, skill.id);
+          
+          // Update placeholder text dynamically
+          this.inputEl.placeholder = SKILL_PLACEHOLDERS[skill.id] || "Type required input for this skill...";
           this.inputEl.focus();
         } else {
           // TEMPLATE mode: insert a starter phrase; the model handles the skill call normally.
@@ -205,6 +228,7 @@ export class HormeChatView extends ItemView {
     dismiss.title = "Disarm skill";
     dismiss.addEventListener("click", () => {
       this.forcedSkillId = null;
+      this.inputEl.placeholder = "Ask Horme…"; // Revert placeholder text
       pill.remove();
     });
     pill.appendChild(dismiss);
@@ -238,6 +262,7 @@ export class HormeChatView extends ItemView {
         else if (p === "openai")     this.plugin.settings.openaiModel = v;
         else if (p === "groq")       this.plugin.settings.groqModel = v;
         else if (p === "openrouter") this.plugin.settings.openRouterModel = v;
+        else if (p === "mistral")    this.plugin.settings.mistralModel = v;
         else if (p === "lmstudio")   this.plugin.settings.lmStudioModel = v;
         else                         this.plugin.settings.defaultModel = v;
         void this.plugin.saveSettings().catch(e => this.plugin.handleError(e, "Settings"));
@@ -283,6 +308,10 @@ export class HormeChatView extends ItemView {
 
       skillsBtn.addEventListener("click", (e) => {
         e.stopPropagation();
+        if (this.isGenerating) {
+          new Notice("Horme: Cannot change skill mode while generating.");
+          return;
+        }
         const isHidden = this.skillsMenuEl!.classList.contains("horme-skills-menu-hidden");
         if (isHidden) {
           this.skillsMenuEl!.classList.remove("horme-skills-menu-hidden");
@@ -395,8 +424,9 @@ export class HormeChatView extends ItemView {
         })().catch(e => this.plugin.handleError(e));
       });
 
-      this.leafChangeRef = this.app.workspace.on("active-leaf-change", () => this.updateContextNoteLabel());
-      this.registerEvent(this.leafChangeRef);
+      this.registerEvent(
+        this.app.workspace.on("active-leaf-change", () => this.updateContextNoteLabel())
+      );
 
       /* Messages */
       this.loadingOverlay = this.containerEl.createDiv("horme-loading-overlay");
@@ -479,6 +509,8 @@ export class HormeChatView extends ItemView {
   }
 
   async onClose() {
+    this.generationEpoch++;
+    void this.stopGeneration();
     // Flush any pending history write before the view is destroyed
     await this.plugin.historyManager.flush();
     this.unregisterSettingsListener?.();
@@ -487,6 +519,13 @@ export class HormeChatView extends ItemView {
       activeDocument.removeEventListener("click", this.documentClickHandler);
       this.documentClickHandler = null;
     }
+    // Deterministically clear all loading chronometer intervals.
+    // The old MutationObserver approach leaked because contentEl.empty()
+    // removes the parent, not the child, so the observer never fired.
+    for (const id of this.activeLoadingIntervals) {
+      window.clearInterval(id);
+    }
+    this.activeLoadingIntervals.clear();
     this.contentEl.empty();
   }
 
@@ -559,6 +598,7 @@ export class HormeChatView extends ItemView {
     if (p === "openai")      return this.plugin.settings.openaiModel;
     if (p === "groq")        return this.plugin.settings.groqModel;
     if (p === "openrouter")  return this.plugin.settings.openRouterModel;
+    if (p === "mistral")     return this.plugin.settings.mistralModel;
     if (p === "lmstudio")    return this.plugin.settings.lmStudioModel;
     return this.plugin.settings.defaultModel;
   }
@@ -599,6 +639,7 @@ export class HormeChatView extends ItemView {
   }
 
   private async stopGeneration() {
+    this.generationEpoch++;
     if (this.activeAbortController) {
       this.activeAbortController.abort();
       this.activeAbortController = null;
@@ -670,8 +711,6 @@ export class HormeChatView extends ItemView {
   private async sendMessage(regenerate = false) {
     if (this.isGenerating) return;
 
-    const suppressRAG = !!this.forcedSkillId;
-
     // ── Forced skill execution ──────────────────────────────────────────────
     // When a skill is armed from the dropdown, we bypass both the normal
     // send flow AND Vault Brain RAG. The skill owns the context for this turn.
@@ -680,8 +719,17 @@ export class HormeChatView extends ItemView {
       const query = this.inputEl.value.trim();
       if (!query) return;
 
-      // Disarm immediately — pill and flag cleared before any async work
+      // Step 4.1: Lock the generation state at the start of forced execution
+      this.isGenerating = true;
+      this.sendBtn.addClass("horme-stop-btn");
+      setIcon(this.sendBtn, "horme-shell");
+
+      // Step 4.3: Store a new AbortController
+      this.activeAbortController = new AbortController();
+
+      // Disarm immediately — pill, flag, and placeholder cleared before any async work
       this.forcedSkillId = null;
+      this.inputEl.placeholder = "Ask Horme…"; // Revert placeholder text
       this.containerEl.querySelector(".horme-skill-pill")?.remove();
 
       // Render the user's message in the chat
@@ -699,13 +747,49 @@ export class HormeChatView extends ItemView {
 
         // Map the user's raw input to the skill's primary parameter.
         // All forced-execution skills have a single primary string param.
-        const primaryParam = skill.parameters[0]?.name ?? "query";
-        const forcedParams = { [primaryParam]: query };
+        const primaryParam = skill.primaryParam ?? skill.parameters[0]?.name;
+        if (!primaryParam) {
+          this.plugin.diagnosticService.report(
+            "Skills",
+            `Skill configuration error: no primary parameter defined for skill "${skillId}".`,
+            "warning"
+          );
+          new Notice("Skill configuration error: no primary parameter defined.");
+          throw new Error("Skill configuration error: no primary parameter defined.");
+        }
+
+        const forcedParams: Record<string, any> = { [primaryParam]: query };
+
+        // Verify and inject required parameters that are not the primary one
+        for (const param of skill.parameters) {
+          if (param.required && !(param.name in forcedParams)) {
+            if (param.name === "language") {
+              const langSetting = (this.plugin.settings.grammarLanguage || this.plugin.settings.summaryLanguage || "en").toLowerCase();
+              forcedParams.language = langSetting.includes("es") || langSetting.includes("spa") ? "es" : "en";
+            } else {
+              if (param.type === "number") {
+                forcedParams[param.name] = 0;
+              } else if (param.type === "boolean") {
+                forcedParams[param.name] = false;
+              } else {
+                forcedParams[param.name] = "";
+              }
+            }
+          }
+        }
+
+        // TODO: For skills whose execute() does not accept a signal, the abort signal
+        // cannot cancel the underlying network request — document this limitation.
         const result = await skill.execute(forcedParams);
+
+        if (this.activeAbortController?.signal.aborted) {
+          throw new DOMException("Generation stopped.", "AbortError");
+        }
 
         loadingEl.remove();
         await this.renderSkillResultBox(skill.id, skill.name, forcedParams, result);
         const forcedSkillLinks = this.extractSourceLinks(result);
+        if (!this.contentEl.isConnected) return; // Connectivity guard from Fix 2
         const resultBubble = this.addMessageBubble("assistant", "");
         const contentArea = resultBubble.querySelector(".horme-content-area") as HTMLElement;
         if (contentArea) {
@@ -725,7 +809,17 @@ export class HormeChatView extends ItemView {
 
       } catch (e: unknown) {
         loadingEl.remove();
-        this.plugin.handleError(e);
+        if (e instanceof DOMException && e.name === "AbortError") {
+          new Notice("Generation stopped.");
+        } else {
+          this.plugin.handleError(e);
+        }
+      } finally {
+        // Step 4.2 & 4.3: Reset generating state and controller inside finally block
+        this.isGenerating = false;
+        setIcon(this.sendBtn, "send");
+        this.sendBtn.classList.remove("horme-stop-btn");
+        this.activeAbortController = null;
       }
 
       return; // Skip the rest of sendMessage()
@@ -837,8 +931,14 @@ export class HormeChatView extends ItemView {
       const sessionRAGEnabled = this.vaultBrainToggle ? this.vaultBrainToggle.checked : true;
       let relevantChunks: string[] = [];
 
-      if (!suppressRAG && this.plugin.settings.vaultBrainEnabled && canUseRAG && hasBuiltVaultIndex && sessionRAGEnabled) {
-        relevantChunks = await this.plugin.vaultIndexer.search(text);
+      if (this.plugin.settings.vaultBrainEnabled && canUseRAG && hasBuiltVaultIndex && sessionRAGEnabled) {
+        this.plugin.setIndexingStatus("Searching vault brain...");
+        try {
+          relevantChunks = await this.plugin.vaultIndexer.search(text);
+        } finally {
+          this.plugin.setIndexingStatus(null);
+        }
+
         if (relevantChunks.length > 0) {
           // search() returns chunks sorted best-first (highest score first).
           // We must preserve that ordering when merging into the rolling context,
@@ -864,7 +964,11 @@ export class HormeChatView extends ItemView {
           }
           systemParts.push(
             `LOCAL VAULT CONTEXT — Relevant notes from your vault are provided below.\n` +
-            `Answer the user's question directly using this context.\n` +
+            `LANGUAGE RULE: Respond exclusively in the same language the user used in their question. ` +
+            `If the context is in a different language, translate the facts accurately — do not switch your response language.\n` +
+            `CONTEXT PRIORITY: Base your answer on the vault context above. ` +
+            `If the context contains specific facts (dates, names, events), treat them as ground truth ` +
+            `and do not substitute your training data for them.\n` +
             `Do NOT call vault_links or any other vault search skill — the search has already been done.\n\n` +
             this.rollingRAGContext.join("\n\n---\n\n")
           );
@@ -923,9 +1027,50 @@ export class HormeChatView extends ItemView {
         msgs.push(currentMsg);
       } else {
         if (systemParts.length) msgs.push({ role: "system", content: systemParts.join("\n\n") });
+        
+        // Consolidate tool result messages from history (Fix 3)
+        const filteredHistory: ChatMessage[] = [];
+        const toolResults: ChatMessage[] = [];
         for (const m of this.history) {
-          msgs.push({ role: m.role, content: m.content });
+          if (m.role === "tool_result" || (m.role === "system" && m.content.startsWith("[SKILL RESULT:"))) {
+            toolResults.push(m);
+          } else {
+            filteredHistory.push(m);
+          }
         }
+
+        let consolidatedToolResult: ChatMessage | null = null;
+        if (toolResults.length > 0) {
+          consolidatedToolResult = {
+            role: "user",
+            content: toolResults.map(r => r.content).join("\n\n")
+          };
+        }
+
+        // Inject immediately before the most recent assistant turn
+        let lastAssistantIdx = -1;
+        for (let i = filteredHistory.length - 1; i >= 0; i--) {
+          if (filteredHistory[i].role === "assistant") {
+            lastAssistantIdx = i;
+            break;
+          }
+        }
+
+        if (consolidatedToolResult) {
+          if (lastAssistantIdx !== -1) {
+            filteredHistory.splice(lastAssistantIdx, 0, consolidatedToolResult);
+          } else {
+            filteredHistory.push(consolidatedToolResult);
+          }
+        }
+
+        for (const m of filteredHistory) {
+          msgs.push({ role: m.role as "user" | "assistant" | "system" | "tool_result", content: m.content });
+        }
+
+        // Consolidate consecutive roles to prevent API errors
+        msgs = this.cleanAndConsolidateMsgs(msgs);
+
         // Attach media to the latest user message in the payload
         const lastMsg = msgs[msgs.length - 1];
         if (currentMsg.images) lastMsg.images = currentMsg.images;
@@ -935,11 +1080,9 @@ export class HormeChatView extends ItemView {
 
     this.lastMsgs = msgs;
     this.lastModel = model;
-    this.isGenerating = true;
-    this.sendBtn.addClass("horme-stop-btn");
-    setIcon(this.sendBtn, "horme-shell");
+    const epoch = ++this.generationEpoch;
     const loadingEl = this.showLoading();
-    this.handleStreamingResponse(msgs, model, loadingEl, initialSourcePath, ragWasInjected, 0, currentSources, [])
+    await this.handleStreamingResponse(msgs, model, loadingEl, initialSourcePath, ragWasInjected, 0, currentSources, [], epoch)
       .catch(e => this.plugin.handleError(e));
   }
 
@@ -953,8 +1096,16 @@ export class HormeChatView extends ItemView {
     suppressVaultSkill: boolean,
     skillDepth: number,
     sources: string[] = [],
-    skillSourceLinks: string[] = []
+    skillSourceLinks: string[] = [],
+    epoch: number
   ) {
+    if (this.generationEpoch !== epoch || !this.contentEl.isConnected) {
+      return;
+    }
+    this.isGenerating = true;
+    this.sendBtn.addClass("horme-stop-btn");
+    setIcon(this.sendBtn, "horme-shell");
+
     let bubbleEl: HTMLElement | null = null;
     let fullContent = "";
     let fullReasoning = "";
@@ -981,6 +1132,7 @@ export class HormeChatView extends ItemView {
 
     try {
       const reader = await this.plugin.aiGateway.stream(msgs, model, this.activeAbortController.signal, suppressVaultSkill);
+      if (!this.contentEl.isConnected) return;
       this.activeReader = reader;
       const decoder = new TextDecoder();
       let buffer = "";
@@ -995,6 +1147,8 @@ export class HormeChatView extends ItemView {
 
       while (true) {
         const { done, value } = await reader.read();
+        if (!this.contentEl.isConnected) return;
+        if (this.generationEpoch !== epoch) break; // Stale stream guard
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
@@ -1018,7 +1172,11 @@ export class HormeChatView extends ItemView {
                         this.processChunk(jsonStr, (content, reasoning) => {
                             if (!hasReceivedFirstChunk && (content || reasoning)) {
                                 hasReceivedFirstChunk = true;
-                                if (loadingEl) loadingEl.remove();
+                                if (loadingEl) {
+                                    loadingEl.remove();
+                                    loadingEl = null;
+                                }
+                                if (!this.contentEl.isConnected) return;
                                 bubbleEl = this.addMessageBubble("assistant", "");
                             }
                             
@@ -1077,6 +1235,7 @@ export class HormeChatView extends ItemView {
       }
 
       const finalMsg = fullReasoning ? `> [!thought]\n> ${fullReasoning.replace(/\n/g, "\n> ")}\n\n${fullContent}` : fullContent;
+      if (!this.contentEl.isConnected) return;
       if (fullContent || fullReasoning) {
           this.history.push({ role: "assistant", content: finalMsg });
           
@@ -1118,18 +1277,20 @@ export class HormeChatView extends ItemView {
                 loadingSpan.insertBefore(iconEl, loadingSpan.firstChild);
               }
               const result = await this.plugin.skillManager.executeSkill(call);
+              if (!this.contentEl.isConnected) return;
               skillLoading.remove();
               const skillLinks = this.extractSourceLinks(result);
               for (const link of skillLinks) {
                 if (!aggregatedSkillLinks.includes(link)) aggregatedSkillLinks.push(link);
               }
 
-              // Add the result to history
+              // Add the result to history (Fix 3)
               this.history.push({ 
-                role: "system", 
-                content: `RESULT FROM SKILL "${skillName}":\n\n${result}\n\nBased on this result, please continue your response to the user.` 
+                role: "tool_result", 
+                content: `[SKILL RESULT: ${skillName}]\n\n${result}\n\nPlease continue your response based on this result.` 
               });
               await this.renderSkillResultBox(skillName, displayName, call.parameters, result);
+              if (!this.contentEl.isConnected) return;
 
               const isTerminal = skill?.terminal === true;
               const shouldPromote = this.shouldPromoteSkillFailure(result);
@@ -1155,26 +1316,82 @@ export class HormeChatView extends ItemView {
 
             if (!hasTerminalSkill) {
               // Prepare the next turn in the loop
-              const nextMsgs: ChatMessage[] = [];
+              let nextMsgs: ChatMessage[] = [];
               const effectivePrompt = this.sessionSystemPromptOverride ?? await this.plugin.getEffectiveSystemPrompt();
               if (effectivePrompt) nextMsgs.push({ role: "system", content: effectivePrompt });
               
+              // Consolidate tool result messages from history (Fix 3)
+              const filteredHistory: ChatMessage[] = [];
+              const toolResults: ChatMessage[] = [];
               for (const m of this.history) {
-                nextMsgs.push({ role: m.role, content: m.content });
+                if (m.role === "tool_result" || (m.role === "system" && m.content.startsWith("[SKILL RESULT:"))) {
+                  toolResults.push(m);
+                } else {
+                  filteredHistory.push(m);
+                }
               }
+
+              let consolidatedToolResult: ChatMessage | null = null;
+              if (toolResults.length > 0) {
+                consolidatedToolResult = {
+                  role: "user",
+                  content: toolResults.map(r => r.content).join("\n\n")
+                };
+              }
+
+              // Inject immediately before the most recent assistant turn
+              let lastAssistantIdx = -1;
+              for (let i = filteredHistory.length - 1; i >= 0; i--) {
+                if (filteredHistory[i].role === "assistant") {
+                  lastAssistantIdx = i;
+                  break;
+                }
+              }
+
+              if (consolidatedToolResult) {
+                if (lastAssistantIdx !== -1) {
+                  filteredHistory.splice(lastAssistantIdx, 0, consolidatedToolResult);
+                } else {
+                  filteredHistory.push(consolidatedToolResult);
+                }
+              }
+
+              for (const m of filteredHistory) {
+                nextMsgs.push({ role: m.role as "user" | "assistant" | "system" | "tool_result", content: m.content });
+              }
+
+              // Consolidate consecutive roles to prevent API errors
+              nextMsgs = this.cleanAndConsolidateMsgs(nextMsgs);
 
               // Recurse with depth guard
               if (skillDepth >= HormeChatView.MAX_SKILL_DEPTH) {
-                new Notice("Horme: Maximum skill depth reached. Stopping skill loop.");
+                new Notice("Horme: Maximum skill depth reached. Stopping skill loop. (conversation saved)");
+                
+                await this.plugin.historyManager.append({
+                  id: this.conversationId,
+                  title: this.history.find(m => m.role === "user")?.content.slice(0, 60) || "Untitled chat",
+                  timestamp: Date.now(),
+                  messages: this.history
+                });
+
+                if (this.contentEl.isConnected) {
+                  const limitBubble = this.addMessageBubble("assistant", "");
+                  const contentArea = limitBubble.querySelector(".horme-content-area") as HTMLElement;
+                  if (contentArea) {
+                    contentArea.textContent = "The skill chain has reached the maximum allowed depth. The conversation has been saved.";
+                  }
+                  this.scrollToBottom();
+                }
               } else {
                 const nextLoading = this.showLoading();
-                await this.handleStreamingResponse(nextMsgs, model, nextLoading, initialSourcePath, false, skillDepth + 1, [], aggregatedSkillLinks);
+                await this.handleStreamingResponse(nextMsgs, model, nextLoading, initialSourcePath, false, skillDepth + 1, [], aggregatedSkillLinks, epoch);
               }
             } else {
               // Terminal skills: save history and stop — no LLM synthesis needed
               if (bubbleEl && aggregatedSkillLinks.length > 0) {
                 this.renderSkillSourceLinks(bubbleEl as HTMLElement, aggregatedSkillLinks);
               }
+              if (!this.contentEl.isConnected) return;
               await this.plugin.historyManager.append({
                 id: this.conversationId,
                 title: this.history.find(m => m.role === "user")?.content.slice(0, 60) || "Untitled chat",
@@ -1188,6 +1405,7 @@ export class HormeChatView extends ItemView {
             this.renderSkillSourceLinks(bubbleEl as HTMLElement, skillSourceLinks);
           }
 
+          if (!this.contentEl.isConnected) return;
           await this.plugin.historyManager.append({
             id: this.conversationId,
             title: this.history.find(m => m.role === "user")?.content.slice(0, 60) || "Untitled chat",
@@ -1199,7 +1417,6 @@ export class HormeChatView extends ItemView {
       if (e instanceof DOMException && e.name === "AbortError") {
         new Notice("Generation stopped.");
       } else {
-        if (loadingEl) loadingEl.remove();
         this.plugin.handleError(e);
       }
     } finally {
@@ -1402,15 +1619,20 @@ export class HormeChatView extends ItemView {
       timerEl.textContent = `${seconds}s`;
     }, 1000);
 
-    // Use a MutationObserver so the interval is always cleared when the
-    // element is removed from the DOM, regardless of which code path removes it.
-    const observer = new MutationObserver(() => {
-      if (!el.isConnected) {
-        window.clearInterval(intervalId);
-        observer.disconnect();
-      }
-    });
-    observer.observe(this.messagesEl, { childList: true });
+    // Track the interval so onClose() can clear it deterministically.
+    // The previous MutationObserver approach leaked because contentEl.empty()
+    // detaches the parent (messagesEl), not the child (el), so the observer
+    // callback never fired and the interval ran forever.
+    this.activeLoadingIntervals.add(intervalId);
+
+    // Self-cleanup when the element is removed during normal operation
+    // (e.g., loadingEl.remove() after generation completes).
+    const origRemove = el.remove.bind(el);
+    el.remove = () => {
+      window.clearInterval(intervalId);
+      this.activeLoadingIntervals.delete(intervalId);
+      origRemove();
+    };
 
     const dots = el.createSpan({ cls: "horme-dot-pulse" });
     dots.createEl("span"); dots.createEl("span"); dots.createEl("span");
@@ -1555,7 +1777,90 @@ export class HormeChatView extends ItemView {
    * so the user sees clean text instead of the model's internal tool invocations.
    */
   private stripSkillCallXml(content: string): string {
-    return content.replace(/<call:[^>]+>[\s\S]*?<\/call>/g, "").trim();
+    const tagRegex = /<call:([a-zA-Z0-9_]+)>/g;
+    let match;
+
+    const isEscaped = (str: string, index: number): boolean => {
+      let count = 0;
+      for (let i = index - 1; i >= 0; i--) {
+        if (str[i] === '\\') count++;
+        else break;
+      }
+      return count % 2 !== 0;
+    };
+
+    let cleanText = "";
+    let lastIndex = 0;
+    tagRegex.lastIndex = 0;
+
+    while ((match = tagRegex.exec(content)) !== null) {
+      const skillId = match[1];
+      const startTagIdx = match.index;
+      const startIdx = startTagIdx + match[0].length;
+
+      // Find the opening '{' that begins the JSON parameter object.
+      let jsonStart = -1;
+      for (let i = startIdx; i < content.length; i++) {
+        const char = content[i];
+        if (char === '{') {
+          jsonStart = i;
+          break;
+        }
+        if (char === '<') {
+          break;
+        }
+      }
+
+      if (jsonStart === -1) {
+        continue;
+      }
+
+      // Use the brace-counting parser to extract the balanced JSON object.
+      let braceCount = 0;
+      let inString = false;
+      let jsonEnd = -1;
+
+      for (let i = jsonStart; i < content.length; i++) {
+        const char = content[i];
+        if (char === '"' && !isEscaped(content, i)) {
+          inString = !inString;
+        }
+        if (!inString) {
+          if (char === '{') {
+            braceCount++;
+          } else if (char === '}') {
+            braceCount--;
+            if (braceCount === 0) {
+              jsonEnd = i;
+              break;
+            }
+          }
+        }
+      }
+
+      if (jsonEnd === -1) {
+        continue;
+      }
+
+      // Find the </call> tag immediately after the closing '}'.
+      const afterJson = content.slice(jsonEnd + 1);
+      const closeTagMatch = /^\s*<\/call>/.exec(afterJson);
+      if (!closeTagMatch) {
+        continue;
+      }
+
+      const endTagIdx = jsonEnd + 1 + closeTagMatch[0].length;
+
+      // Add preceding non-tag text to cleanText
+      cleanText += content.slice(lastIndex, startTagIdx);
+      lastIndex = endTagIdx;
+
+      // Update regex index to skip past the closing tag
+      tagRegex.lastIndex = endTagIdx;
+    }
+
+    cleanText += content.slice(lastIndex);
+    return cleanText.trim();
   }
 
   /**
@@ -1624,5 +1929,23 @@ export class HormeChatView extends ItemView {
       cur = (cur as Record<string, unknown>)[key];
     }
     return typeof cur === "string" ? cur : undefined;
+  }
+
+  private cleanAndConsolidateMsgs(rawMsgs: ChatMessage[]): ChatMessage[] {
+    const consolidated: ChatMessage[] = [];
+    for (const m of rawMsgs) {
+      if (consolidated.length > 0 && consolidated[consolidated.length - 1].role === m.role) {
+        consolidated[consolidated.length - 1].content += "\n\n" + m.content;
+        if (m.images) {
+          consolidated[consolidated.length - 1].images = [
+            ...(consolidated[consolidated.length - 1].images || []),
+            ...m.images
+          ];
+        }
+      } else {
+        consolidated.push({ ...m });
+      }
+    }
+    return consolidated;
   }
 }

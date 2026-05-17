@@ -81,6 +81,7 @@
 - [Requirements](#-requirements)
 - [Features](#-features)
   - [Vault Brain (Local RAG)](#-vault-brain-local-rag)
+    - [Search Relevance & Mathematics](#-search-relevance--mathematics)
   - [Live Connections](#-live-connections)
   - [Semantic Tagging](#-semantic-tagging)
   - [Grammar Proofreading Engine](#-grammar-proofreading-engine)
@@ -140,6 +141,38 @@ The Vault Brain gives the AI long-term memory of your entire knowledge base. It 
 - **Multi-Query Fusion:** Search runs dual-embedding (full query + keyword distillation) for improved recall across your vault.
 - **Model-Locked Integrity:** The index is versioned. If you change your embedding model in settings, the plugin detects the mismatch and prompts for a rebuild to prevent corrupted results.
 - **Session Toggle:** A "Use Vault Brain" checkbox in the chat header lets you disable vault search per-session for faster responses when you don't need it.
+
+#### <span style="color:#6d28d9">&#9655; Search Relevance & Mathematics</span>
+
+The search engine uses a hybrid relevance scoring formula combining semantic embeddings, structured metadata matching, and a content-aware "deep scan". 
+
+The total score for any candidate chunk is:
+$$\text{Total Score} = \text{Vector Score} + \text{Metadata Bonus} + \text{Content Bonus}$$
+
+With a maximum possible score of **$1.45$**, the relevance weights are precisely allocated as follows:
+
+| Element | Max Score Contribution | Precise Relative Weight |
+| :--- | :---: | :---: |
+| **Semantic Vector Similarity (Embeddings)** | `1.00` | **$69.0\%$** |
+| **Metadata Keyword Matching** | `0.25` | **$17.2\%$** |
+| **Content Body Keyword Matching (Deep Scan)** | `0.20` | **$13.8\%$** |
+| **Total** | **`1.45`** | **$100\%$** |
+
+##### Precise Breakdown of the Scoring Components
+1. **Semantic Vector Score (Max Contribution: `1.00`, $69\%$ Weight):**
+   * Calculated using cosine similarity between the query embedding and the chunk embedding (which mathematically ranges from `-1.0` to `1.0`).
+2. **Metadata Keyword Bonus (Max Cap: `0.25`, $17.2\%$ Weight):**
+   * Rewards exact matches in the note's structured fields (File Path, Summary, Tags, Headings).
+   * **Quoted Terms Boost (e.g., `"exact search"`):** `+0.15` per term.
+   * **Regular Keyword Terms Boost:**
+     * File Path (Title): `+0.05` per matching word.
+     * YAML Summary (`resumen`): `+0.04` per matching word.
+     * Heading Hierarchy: `+0.04` per matching word.
+     * Tags: `+0.03` per matching word.
+3. **Content Body Keyword Bonus (Max Cap: `0.20`, $13.8\%$ Weight):**
+   * Done as a "Deep Scan" on the actual body text for the top 50 candidates:
+   * **Quoted Terms Boost inside body:** `+0.15` per term.
+   * **Regular Keyword Terms inside body:** `+0.05` per term.
 
 ### <span style="color:#6d28d9">&#9655; Live Connections</span>
 

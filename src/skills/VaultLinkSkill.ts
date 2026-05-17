@@ -6,6 +6,7 @@ export class VaultLinkSkill implements Skill {
   id = "vault_links";
   name = "Vault Linker";
   description = "Finds semantically related notes within the user's Obsidian vault based on content similarity.";
+  primaryParam = "context";
   
   private plugin: HormePlugin;
 

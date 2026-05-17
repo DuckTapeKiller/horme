@@ -1,5 +1,5 @@
-import { requestUrl } from "obsidian";
 import type { RequestUrlParam } from "obsidian";
+import { requestUrlWithTimeout } from "../utils/requestWithTimeout";
 import { Skill, SkillParameter } from "./types";
 import { CustomSkillDefinition } from "../types";
 import { getStringProp, isRecord } from "../utils/TypeGuards";
@@ -10,6 +10,7 @@ export class CustomSkill implements Skill {
   description: string;
   instructions: string;
   parameters: SkillParameter[];
+  primaryParam = "input";
   private url: string;
   private method: "GET" | "POST";
   private headers: Record<string, string>;
@@ -71,7 +72,7 @@ export class CustomSkill implements Skill {
       }
     }
 
-    const res = await requestUrl(reqOptions);
+    const res = await requestUrlWithTimeout(reqOptions);
 
     if (res.status < 200 || res.status >= 400) {
       return `HTTP Error ${res.status} from ${this.name}. Response: ${(res.text || "").slice(0, 500)}`;

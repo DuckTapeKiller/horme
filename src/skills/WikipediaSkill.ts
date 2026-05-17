@@ -1,4 +1,4 @@
-import { requestUrl } from "obsidian";
+import { requestUrlWithTimeout } from "../utils/requestWithTimeout";
 import { Skill, SkillParameter } from "./types";
 import { asArray, errorToMessage, getRecordProp, getStringProp, isRecord } from "../utils/TypeGuards";
 
@@ -7,6 +7,7 @@ export class WikipediaSkill implements Skill {
   name = "Wikipedia Search";
   description = "Searches Wikipedia for factual information, detailed article sections, and verification of claims. Supports multiple languages.";
   terminal = true;
+  primaryParam = "query";
   
   parameters: SkillParameter[] = [
     {
@@ -35,7 +36,7 @@ export class WikipediaSkill implements Skill {
       
       // 1. Search for the most relevant page
       const searchUrl = `${wikiBase}/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&srlimit=3&format=json&origin=*`;
-      const searchRes = await requestUrl({ url: searchUrl });
+      const searchRes = await requestUrlWithTimeout({ url: searchUrl, throw: false });
       const searchData: unknown = searchRes.json;
       
       const queryObj = getRecordProp(searchData, "query");
@@ -50,7 +51,7 @@ export class WikipediaSkill implements Skill {
 
       // 2. Fetch the summary for context
       const summaryUrl = `${wikiBase}/api/rest_v1/page/summary/${encodeURIComponent(pageTitle.replace(/ /g, "_"))}`;
-      const summaryRes = await requestUrl({ url: summaryUrl });
+      const summaryRes = await requestUrlWithTimeout({ url: summaryUrl, throw: false });
       const summaryData: unknown = summaryRes.json;
 
       let output = `## Wikipedia: ${pageTitle} (${lang})\n\n`;
@@ -63,7 +64,7 @@ export class WikipediaSkill implements Skill {
       // 3. Fetch relevant sections from the full article for deeper fact-checking
       const sectionsUrl = `${wikiBase}/w/api.php?action=parse&page=${encodeURIComponent(pageTitle)}&prop=sections&format=json&origin=*`;
       try {
-        const sectionsRes = await requestUrl({ url: sectionsUrl });
+        const sectionsRes = await requestUrlWithTimeout({ url: sectionsUrl, throw: false });
         const sectionsData: unknown = sectionsRes.json;
         
         const parseObj = getRecordProp(sectionsData, "parse");
@@ -81,7 +82,7 @@ export class WikipediaSkill implements Skill {
           if (topSections.length > 0) {
             // Fetch plain text extract of the page with section info
             const extractUrl = `${wikiBase}/w/api.php?action=query&titles=${encodeURIComponent(pageTitle)}&prop=extracts&exintro=0&explaintext=1&exsectionformat=plain&exchars=3000&format=json&origin=*`;
-            const extractRes = await requestUrl({ url: extractUrl });
+            const extractRes = await requestUrlWithTimeout({ url: extractUrl, throw: false });
             const extractJson: unknown = extractRes.json;
             const pages = getRecordProp(getRecordProp(extractJson, "query"), "pages");
             

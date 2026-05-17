@@ -12,6 +12,7 @@ export interface Skill {
   parameters: SkillParameter[];
   instructions: string;
   terminal?: boolean;
+  primaryParam?: string;
   execute(params: unknown): Promise<string>;
 }
 
