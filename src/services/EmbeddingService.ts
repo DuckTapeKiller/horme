@@ -73,7 +73,7 @@ export class EmbeddingService {
         }
       }
     } catch (e: unknown) {
-      console.warn("Horme: Batch embed failed, falling back to sequential.", e);
+      this.plugin.debugWarn("Horme: Batch embed failed, falling back to sequential.", e);
       this.plugin.diagnosticService.report("Embeddings", `Batch embed failed, falling back to sequential: ${errorToMessage(e)}`, "warning");
     }
 
@@ -106,7 +106,7 @@ export class EmbeddingService {
       const msg = errorToMessage(e);
       const isContextError = msg.includes("context length") || msg.includes("400");
       if (isContextError && attempt < 3) {
-        console.warn(`Horme: Chunk too long (attempt ${attempt + 1}), retrying at ${limits[attempt + 1]} chars...`);
+        this.plugin.debugWarn(`Horme: Chunk too long (attempt ${attempt + 1}), retrying at ${limits[attempt + 1]} chars...`);
         this.plugin.diagnosticService.report("Embeddings", `Chunk too long (attempt ${attempt + 1}), retrying at ${limits[attempt + 1]} chars`, "warning");
         return await this.getOllamaEmbeddingSafe(text, attempt + 1);
       }

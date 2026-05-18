@@ -1,4 +1,4 @@
-import type { RequestUrlParam } from "obsidian";
+import type { App, RequestUrlParam } from "obsidian";
 import { requestUrlWithTimeout } from "../utils/requestWithTimeout";
 import { Skill, SkillParameter } from "./types";
 import { CustomSkillDefinition } from "../types";
@@ -16,8 +16,10 @@ export class CustomSkill implements Skill {
   private headers: Record<string, string>;
   private body: string;
   private responsePath: string;
+  private app: App;
 
-  constructor(def: CustomSkillDefinition) {
+  constructor(app: App, def: CustomSkillDefinition) {
+    this.app = app;
     this.id = def.id;
     this.name = def.name;
     this.description = def.description;
@@ -40,14 +42,39 @@ export class CustomSkill implements Skill {
     }];
   }
 
+  private resolveSecrets(input: string, missing: Set<string>): string {
+    return input.replace(/\{\{secret:([^}]+)\}\}/g, (_match, rawId) => {
+      const id = String(rawId || "").trim();
+      if (!id) return "";
+      try {
+        const value = this.app.secretStorage.getSecret(id);
+        if (value === null) {
+          missing.add(id);
+          return "";
+        }
+        return value;
+      } catch {
+        missing.add(id);
+        return "";
+      }
+    });
+  }
+
   async execute(params: unknown): Promise<string> {
     const query = getStringProp(params, "input");
     if (!query) return `Invalid parameters for ${this.name}: expected {"input": string}.`;
 
     // Substitute {{query}} in URL (URL-encoded) and body (raw)
-    const finalUrl = this.url.replace(/\{\{query\}\}/g, encodeURIComponent(query));
+    const missingSecrets = new Set<string>();
+    const finalUrl = this.resolveSecrets(
+      this.url.replace(/\{\{query\}\}/g, encodeURIComponent(query)),
+      missingSecrets
+    );
 
-    const headers: Record<string, string> = { ...this.headers };
+    const headers: Record<string, string> = {};
+    for (const [k, v] of Object.entries(this.headers || {})) {
+      headers[k] = this.resolveSecrets(String(v ?? ""), missingSecrets);
+    }
     const reqOptions: RequestUrlParam = {
       url: finalUrl,
       method: this.method,
@@ -62,14 +89,19 @@ export class CustomSkill implements Skill {
         // Safely escape the query before injecting it to prevent breaking the JSON structure.
         // JSON.stringify("test") returns '"test"'. We slice off the outer quotes to get the escaped inner string.
         const escapedQuery = JSON.stringify(query).slice(1, -1);
-        reqOptions.body = this.body.replace(/\{\{query\}\}/g, escapedQuery);
+        reqOptions.body = this.resolveSecrets(this.body.replace(/\{\{query\}\}/g, escapedQuery), missingSecrets);
         
         if (!headers["Content-Type"]) {
           headers["Content-Type"] = "application/json";
         }
       } else {
-        reqOptions.body = this.body.replace(/\{\{query\}\}/g, query);
+        reqOptions.body = this.resolveSecrets(this.body.replace(/\{\{query\}\}/g, query), missingSecrets);
       }
+    }
+
+    if (missingSecrets.size > 0) {
+      const list = [...missingSecrets].sort().join(", ");
+      return `Custom skill "${this.name}" is missing secret(s): ${list}. Create them in Obsidian Secret Storage (or select/create them in Horme's provider API Key fields) and try again.`;
     }
 
     const res = await requestUrlWithTimeout(reqOptions);

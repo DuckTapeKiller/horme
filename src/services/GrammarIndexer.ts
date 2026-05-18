@@ -27,7 +27,7 @@ export class GrammarIndexer {
     // Explicitly place in the plugin folder so the user can find it
     const configDir = this.plugin.app.vault.configDir;
     this.indexPath = normalizePath(`${configDir}/plugins/${this.plugin.manifest.id}/Grammar Index/grammar_index.json`);
-    console.log(`Horme Grammar: Initializing index at ${this.indexPath}`);
+    this.plugin.debugLog(`Horme Grammar: Initializing index at ${this.indexPath}`);
   }
 
   async loadIndex() {
@@ -47,7 +47,7 @@ export class GrammarIndexer {
         this.indexedModel = isNewFormat ? (getStringProp(parsed, "model") ?? "") : "";
         const currentModel = this.plugin.settings.ragEmbeddingModel;
         if (this.indexedModel && this.indexedModel !== currentModel) {
-          console.log(`Horme Grammar: Model changed (${this.indexedModel} → ${currentModel}). Index cleared.`);
+          this.plugin.debugLog(`Horme Grammar: Model changed (${this.indexedModel} → ${currentModel}). Index cleared.`);
           this.chunks = [];
           this.indexedModel = currentModel;
           return;
@@ -73,9 +73,9 @@ export class GrammarIndexer {
         }
         this.chunks = chunks;
         
-        console.log(`Horme: Loaded ${this.chunks.length} grammar vectors.`);
+        this.plugin.debugLog(`Horme: Loaded ${this.chunks.length} grammar vectors.`);
       } else {
-        console.log("Horme Grammar: No index found. Use 'Rebuild Grammar Index' in settings.");
+        this.plugin.debugLog("Horme Grammar: No index found. Use 'Rebuild Grammar Index' in settings.");
       }
     } catch (e: unknown) {
       this.plugin.diagnosticService.report("Grammar", `Failed to load index: ${errorToMessage(e)}`);
@@ -94,12 +94,12 @@ export class GrammarIndexer {
       const folder = this.plugin.app.vault.getAbstractFileByPath(folderPath);
 
       if (!folder || !(folder instanceof TFolder)) {
-        console.warn(`Horme: Grammar folder "${folderPath}" not found.`);
+        this.plugin.debugWarn(`Horme: Grammar folder "${folderPath}" not found.`);
         this.plugin.diagnosticService.report("Grammar", `Grammar folder "${folderPath}" not found.`, "warning");
         return;
       }
 
-      new Notice("Horme: Generating Grammar Index (view progress in console)...");
+      new Notice("Horme: Generating Grammar Index (view progress in status bar)...");
       const newChunks: GrammarChunk[] = [];
       
       const files = this.getFilesRecursively(folder);
@@ -107,14 +107,14 @@ export class GrammarIndexer {
       let errorCount = 0;
       const { doc: docPrefix } = getModelPrefixes(this.plugin.settings.ragEmbeddingModel);
       
-      console.log(`Horme Grammar: Scanning ${files.length} files in "${folderPath}"...`);
+      this.plugin.debugLog(`Horme Grammar: Scanning ${files.length} files in "${folderPath}"...`);
 
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
         this.plugin.setIndexingStatus(`Grammar: ${i + 1}/${files.length}`);
         
         if (file.extension === "md") {
-          console.log(`Horme Grammar: [${i + 1}/${files.length}] Processing ${file.path}`);
+          this.plugin.debugLog(`Horme Grammar: [${i + 1}/${files.length}] Processing ${file.path}`);
           const content = await this.plugin.app.vault.read(file);
           const chunks = this.plugin.embeddingService.chunkTextWithOffsets(content, 600, 100);
           const validChunks = chunks.filter(c => c.text.trim().length > 0);
@@ -178,7 +178,7 @@ export class GrammarIndexer {
       });
       await adapter.write(this.indexPath, data);
       
-      console.log(`Horme Grammar: SUCCESS. Index saved to: ${this.indexPath}`);
+      this.plugin.debugLog(`Horme Grammar: SUCCESS. Index saved to: ${this.indexPath}`);
     } catch (e: unknown) {
       this.plugin.diagnosticService.report("Grammar", `Failed to save index: ${errorToMessage(e)}`);
     }

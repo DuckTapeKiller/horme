@@ -1,4 +1,4 @@
-import { App, PluginSettingTab, Setting, Notice, setIcon, requestUrl } from "obsidian";
+import { App, PluginSettingTab, Setting, Notice, setIcon, requestUrl, SecretComponent } from "obsidian";
 import HormePlugin from "../../main";
 import { PROVIDER_MODELS } from "../constants";
 import { AiProvider } from "../types";
@@ -8,9 +8,9 @@ import { CustomSkillModal } from "../modals/CustomSkillModal";
 import { asArray, getRecordProp, getStringProp } from "../utils/TypeGuards";
 
 type CloudProviderId = Exclude<AiProvider, "ollama" | "lmstudio">;
-type CloudApiKeyField = "claudeApiKey" | "geminiApiKey" | "openaiApiKey" | "groqApiKey" | "openRouterApiKey" | "mistralApiKey";
+type CloudSecretIdField = "claudeSecretId" | "geminiSecretId" | "openaiSecretId" | "groqSecretId" | "openRouterSecretId" | "mistralSecretId";
 type CloudModelField = "claudeModel" | "geminiModel" | "openaiModel" | "groqModel" | "openRouterModel" | "mistralModel";
-type CloudProviderConfig = { id: CloudProviderId; name: string; key: CloudApiKeyField; model: CloudModelField };
+type CloudProviderConfig = { id: CloudProviderId; name: string; secretId: CloudSecretIdField; model: CloudModelField };
 
 export class HormeSettingTab extends PluginSettingTab {
   plugin: HormePlugin;
@@ -358,27 +358,32 @@ export class HormeSettingTab extends PluginSettingTab {
 
     // CLOUD PROVIDERS
     const cloudProviders: CloudProviderConfig[] = [
-      { id: "claude", name: "Anthropic Claude", key: "claudeApiKey", model: "claudeModel" },
-      { id: "gemini", name: "Google Gemini", key: "geminiApiKey", model: "geminiModel" },
-      { id: "openai", name: "OpenAI GPT", key: "openaiApiKey", model: "openaiModel" },
-      { id: "groq", name: "Groq", key: "groqApiKey", model: "groqModel" },
-      { id: "openrouter", name: "OpenRouter", key: "openRouterApiKey", model: "openRouterModel" },
-      { id: "mistral", name: "Mistral AI", key: "mistralApiKey", model: "mistralModel" }
+      { id: "claude", name: "Anthropic Claude", secretId: "claudeSecretId", model: "claudeModel" },
+      { id: "gemini", name: "Google Gemini", secretId: "geminiSecretId", model: "geminiModel" },
+      { id: "openai", name: "OpenAI GPT", secretId: "openaiSecretId", model: "openaiModel" },
+      { id: "groq", name: "Groq", secretId: "groqSecretId", model: "groqModel" },
+      { id: "openrouter", name: "OpenRouter", secretId: "openRouterSecretId", model: "openRouterModel" },
+      { id: "mistral", name: "Mistral AI", secretId: "mistralSecretId", model: "mistralModel" }
     ];
 
     for (const cp of cloudProviders) {
       const section = providersContainer.createEl("details", { cls: "horme-settings-section" });
       section.open = true;
       section.createEl("summary", { text: `◈ ${cp.name}` });
-      new Setting(section).setName("API Key").addText(t => {
-        t.inputEl.type = "password";
-        t.setValue(this.plugin.settings[cp.key]).onChange(v => {
-          void (async () => {
-            this.plugin.settings[cp.key] = v;
-            await this.plugin.saveSettings();
-          })();
+      new Setting(section)
+        .setName("API Key")
+        .setDesc("Stored in Obsidian Secret Storage (not in data.json).")
+        .addComponent((el) => {
+          const c = new SecretComponent(this.app, el);
+          c.setValue(this.plugin.settings[cp.secretId]);
+          c.onChange((v) => {
+            void (async () => {
+              this.plugin.settings[cp.secretId] = v.trim();
+              await this.plugin.saveSettings();
+            })();
+          });
+          return c;
         });
-      });
       this.buildModelCombo(
         new Setting(section).setName("Model")
           .setDesc("Select a suggestion or type any custom model ID."),
@@ -422,6 +427,15 @@ export class HormeSettingTab extends PluginSettingTab {
           })();
         });
       });
+    new Setting(generalSection)
+      .setName("Debug logging")
+      .setDesc("Enable extra logs in the developer console (may include file paths). Leave off for normal use.")
+      .addToggle(t => t.setValue(this.plugin.settings.debugLoggingEnabled).onChange(v => {
+        void (async () => {
+          this.plugin.settings.debugLoggingEnabled = v;
+          await this.plugin.saveSettings();
+        })();
+      }));
     new Setting(generalSection).setName("Export folder").addText(t => t.setValue(this.plugin.settings.exportFolder).onChange(v => {
       void (async () => {
         this.plugin.settings.exportFolder = v.trim() || "HORME";

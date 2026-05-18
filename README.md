@@ -70,7 +70,7 @@
 > **Example Query:**
 > > “I want to write an essay on modern art, help me find which of my notes can help me.”
 >
-> No data leaves your machine. No API keys. No cloud. Just your models, your notes, your rules. But if you still want to use cloud models, they are available in settings. 
+> When using local providers (Ollama/LM Studio), no data leaves your machine and no API keys are required. If you use a cloud provider, Horme stores API keys via Obsidian Secret Storage (not in `data.json`). 
 
 
 ---
@@ -124,7 +124,7 @@
 | **Ollama** | Must be running locally at `http://127.0.0.1:11434` (configurable). |
 | **Embedding Model** | Specialized model for RAG (e.g. `ollama pull nomic-embed-text` or `mxbai-embed-large`). |
 | **Chat Model** | Pull a model with `ollama pull <model>` (e.g. `gemma3`, `llama3`). |
-| **Obsidian** | v1.0.0 or later. |
+| **Obsidian** | v1.11.4 or later (required for Secret Storage API keys). |
 
 ---
 
@@ -384,11 +384,13 @@ Horme supports multiple AI providers. Local providers are recommended for privac
 | **Embedding Model** | `nomic-embed-text` | Model used for indexing (e.g. `nomic-embed-text`, `mxbai-embed-large`). |
 | **Vault Brain** | `Off` | Toggle for the semantic RAG engine and background indexer. |
 | **Allow Cloud RAG** | `Off` | Explicitly allow vault content to be sent to cloud providers. |
+| **Cloud API Keys** | — | Stored in Obsidian Secret Storage (not in `data.json`). |
 | **Grammar Manual Folder** | `Gramática` | Folder containing your grammar reference notes. |
 | **Grammar Language** | `Español` | Language your grammar manuals cover. Proofreading only consults manuals for this language. |
 | **Summary Field** | `summary` | Frontmatter key where generated summaries are stored. |
 | **Summary Language** | `Español` | Language summaries are written in. |
 | **Max Tag Candidates** | `250` | Number of existing tags considered for semantic suggestions. |
+| **Debug logging** | `Off` | Enables extra developer-console logs (may include file paths). |
 | **Export Folder** | `HORME` | Vault-relative path for saved notes and exports. |
 
 ---

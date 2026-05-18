@@ -38,7 +38,9 @@ export class PdfService {
       ? await this.app.vault.readBinary(file)
       : await file.arrayBuffer();
 
-    const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer }) as unknown as PdfJsLoadingTask;
+    // Security hardening: disable evaluation of JS strings inside PDF.js. This reduces the
+    // risk of malicious PDFs triggering arbitrary JS execution in the renderer context.
+    const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer, isEvalSupported: false }) as unknown as PdfJsLoadingTask;
     let pdf: PdfJsDocument | null = null;
     try {
       pdf = await loadingTask.promise;

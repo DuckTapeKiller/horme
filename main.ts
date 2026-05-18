@@ -96,6 +96,39 @@ export default class HormePlugin extends Plugin {
     return p === "claude" || p === "gemini" || p === "openai" || p === "groq" || p === "openrouter" || p === "mistral";
   }
 
+  private getSecretIdForProvider(p: AiProvider): string | null {
+    const s = this.settings;
+    if (p === "claude") return (s.claudeSecretId || "").trim() || null;
+    if (p === "gemini") return (s.geminiSecretId || "").trim() || null;
+    if (p === "openai") return (s.openaiSecretId || "").trim() || null;
+    if (p === "groq") return (s.groqSecretId || "").trim() || null;
+    if (p === "openrouter") return (s.openRouterSecretId || "").trim() || null;
+    if (p === "mistral") return (s.mistralSecretId || "").trim() || null;
+    return null;
+  }
+
+  getApiKeyForProvider(p: AiProvider): string {
+    const secretId = this.getSecretIdForProvider(p);
+    if (!secretId) return "";
+    try {
+      return this.app.secretStorage.getSecret(secretId) ?? "";
+    } catch {
+      return "";
+    }
+  }
+
+  debugLog(...args: unknown[]) {
+    if (!this.settings?.debugLoggingEnabled) return;
+    // eslint-disable-next-line no-console
+    console.log(...args);
+  }
+
+  debugWarn(...args: unknown[]) {
+    if (!this.settings?.debugLoggingEnabled) return;
+    // eslint-disable-next-line no-console
+    console.warn(...args);
+  }
+
   private isLikelyOllamaEmbeddingModel(tag: OllamaTagsModel): boolean {
     const name = tag.name.toLowerCase();
     const family = (tag.details?.family ?? "").toLowerCase();
@@ -1030,28 +1063,34 @@ RULES:
       if (p === "lmstudio") return (await requestUrl({ url: `${this.settings.lmStudioUrl}/v1/models` })).status === 200;
       
       // Live Cloud Provider Check
-      if (p === "openai" && this.settings.openaiApiKey) {
+      const apiKey = this.getApiKeyForProvider(p);
+
+      if (p === "openai" && apiKey) {
         const res = await requestUrl({
           url: "https://api.openai.com/v1/models",
-          headers: { "Authorization": `Bearer ${this.settings.openaiApiKey}` }
+          headers: { "Authorization": `Bearer ${apiKey}` },
+          throw: false,
         });
         return res.status === 200;
       }
-      if (p === "gemini" && this.settings.geminiApiKey) {
+      if (p === "gemini" && apiKey) {
         const res = await requestUrl({
-          url: `https://generativelanguage.googleapis.com/v1beta/models?key=${this.settings.geminiApiKey}`
+          url: "https://generativelanguage.googleapis.com/v1beta/models",
+          headers: { "x-goog-api-key": apiKey },
+          throw: false,
         });
         return res.status === 200;
       }
-      if (p === "claude" && this.settings.claudeApiKey) {
+      if (p === "claude" && apiKey) {
         const res = await requestUrl({
           url: "https://api.anthropic.com/v1/messages",
           method: "POST",
           headers: {
-            "x-api-key": this.settings.claudeApiKey,
+            "x-api-key": apiKey,
             "anthropic-version": "2023-06-01",
             "Content-Type": "application/json"
           },
+          throw: false,
           body: JSON.stringify({ 
             model: this.settings.claudeModel,
             max_tokens: 1, 
@@ -1061,24 +1100,27 @@ RULES:
         // We accept 200 or even a 400 (if it's a model mismatch) as "connected" if it's not a 401/403
         return res.status >= 200 && res.status < 401;
       }
-      if (p === "groq" && this.settings.groqApiKey) {
+      if (p === "groq" && apiKey) {
         const res = await requestUrl({
           url: "https://api.groq.com/openai/v1/models",
-          headers: { "Authorization": `Bearer ${this.settings.groqApiKey}` }
+          headers: { "Authorization": `Bearer ${apiKey}` },
+          throw: false,
         });
         return res.status === 200;
       }
-      if (p === "openrouter" && this.settings.openRouterApiKey) {
+      if (p === "openrouter" && apiKey) {
         const res = await requestUrl({
           url: "https://openrouter.ai/api/v1/models",
-          headers: { "Authorization": `Bearer ${this.settings.openRouterApiKey}` }
+          headers: { "Authorization": `Bearer ${apiKey}` },
+          throw: false,
         });
         return res.status === 200;
       }
-      if (p === "mistral" && this.settings.mistralApiKey) {
+      if (p === "mistral" && apiKey) {
         const res = await requestUrl({
           url: "https://api.mistral.ai/v1/models",
-          headers: { "Authorization": `Bearer ${this.settings.mistralApiKey}` }
+          headers: { "Authorization": `Bearer ${apiKey}` },
+          throw: false,
         });
         return res.status === 200;
       }
@@ -1197,9 +1239,70 @@ RULES:
     }
   }
 
+  private migrateLegacyApiKeysToSecretStorage(loaded: Record<string, unknown>): boolean {
+    const mappings: Array<{
+      legacyField: string;
+      secretIdField: string;
+      defaultSecretId: string;
+    }> = [
+      { legacyField: "claudeApiKey", secretIdField: "claudeSecretId", defaultSecretId: "horme-claude-api-key" },
+      { legacyField: "geminiApiKey", secretIdField: "geminiSecretId", defaultSecretId: "horme-gemini-api-key" },
+      { legacyField: "openaiApiKey", secretIdField: "openaiSecretId", defaultSecretId: "horme-openai-api-key" },
+      { legacyField: "groqApiKey", secretIdField: "groqSecretId", defaultSecretId: "horme-groq-api-key" },
+      { legacyField: "openRouterApiKey", secretIdField: "openRouterSecretId", defaultSecretId: "horme-openrouter-api-key" },
+      { legacyField: "mistralApiKey", secretIdField: "mistralSecretId", defaultSecretId: "horme-mistral-api-key" },
+    ];
+
+    let changed = false;
+    let migratedCount = 0;
+
+    for (const m of mappings) {
+      const hadLegacyField = Object.prototype.hasOwnProperty.call(loaded, m.legacyField);
+      const legacyRaw = loaded[m.legacyField];
+      const legacyValue = typeof legacyRaw === "string" ? legacyRaw.trim() : "";
+
+      if (hadLegacyField) {
+        delete loaded[m.legacyField];
+        changed = true;
+      }
+
+      if (!legacyValue) continue;
+
+      const existingSecretRaw = loaded[m.secretIdField];
+      const existingSecretId = typeof existingSecretRaw === "string" ? existingSecretRaw.trim() : "";
+      const secretId = existingSecretId || m.defaultSecretId;
+
+      try {
+        this.app.secretStorage.setSecret(secretId, legacyValue);
+        loaded[m.secretIdField] = secretId;
+        changed = true;
+        migratedCount++;
+      } catch {
+        // If the secret id is invalid or storage fails, keep settings migrated (keys removed)
+        // but don't block plugin startup.
+      }
+    }
+
+    if (migratedCount > 0) {
+      new Notice(`Horme: Migrated ${migratedCount} API key${migratedCount === 1 ? "" : "s"} to Obsidian Secret Storage.`);
+    }
+
+    return changed;
+  }
+
   async loadSettings() {
-    const loaded: unknown = await this.loadData();
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, (loaded && typeof loaded === "object") ? loaded : {});
+    const loadedUnknown: unknown = await this.loadData();
+    const loaded: Record<string, unknown> =
+      (loadedUnknown && typeof loadedUnknown === "object")
+        ? { ...(loadedUnknown as Record<string, unknown>) }
+        : {};
+
+    const migrated = this.migrateLegacyApiKeysToSecretStorage(loaded);
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, loaded);
+    if (migrated) {
+      // Persist the sanitized settings immediately so API keys never remain in data.json.
+      await this.saveData(this.settings);
+    }
     // Track the provider last saved to disk so we can apply privacy guards on change.
     this._lastPersistedAiProvider = this.settings.aiProvider;
   }

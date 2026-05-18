@@ -8,6 +8,7 @@ import { OpenAIProvider } from "./OpenAIProvider";
 import { GroqProvider } from "./GroqProvider";
 import { OpenRouterProvider } from "./OpenRouterProvider";
 import { MistralProvider } from "./MistralProvider";
+import { AiProvider as AiProviderId } from "../types";
 export class AiGateway {
   private plugin: HormePlugin;
 
@@ -18,13 +19,14 @@ export class AiGateway {
   public getProvider(): AiProvider {
     const settings = this.plugin.settings;
     const provider = settings.aiProvider;
+    const apiKey = this.plugin.getApiKeyForProvider(provider);
     switch (provider) {
-      case "claude": return new ClaudeProvider(settings.claudeApiKey, settings.temperature, settings.maxTokens);
-      case "gemini": return new GeminiProvider(settings.geminiApiKey, settings.temperature, settings.maxTokens);
-      case "openai": return new OpenAIProvider(settings.openaiApiKey, settings.temperature, settings.maxTokens);
-      case "groq": return new GroqProvider(settings.groqApiKey, settings.temperature, settings.maxTokens);
-      case "openrouter": return new OpenRouterProvider(settings.openRouterApiKey, settings.temperature, settings.maxTokens);
-      case "mistral": return new MistralProvider(settings.mistralApiKey, settings.temperature, settings.maxTokens);
+      case "claude": return new ClaudeProvider(apiKey, settings.temperature, settings.maxTokens);
+      case "gemini": return new GeminiProvider(apiKey, settings.temperature, settings.maxTokens);
+      case "openai": return new OpenAIProvider(apiKey, settings.temperature, settings.maxTokens);
+      case "groq": return new GroqProvider(apiKey, settings.temperature, settings.maxTokens);
+      case "openrouter": return new OpenRouterProvider(apiKey, settings.temperature, settings.maxTokens);
+      case "mistral": return new MistralProvider(apiKey, settings.temperature, settings.maxTokens);
       case "lmstudio": return new LmStudioProvider(settings.lmStudioUrl, settings.temperature, settings.maxTokens);
       default: return new OllamaProvider(settings.ollamaBaseUrl, settings.temperature, settings.maxTokens);
     }
@@ -115,24 +117,25 @@ export class AiGateway {
   ): Promise<string> {
     const settings = this.plugin.settings;
     let provider: AiProvider;
+    const apiKey = this.plugin.getApiKeyForProvider(providerName as AiProviderId);
     switch (providerName) {
       case "claude":
-        provider = new ClaudeProvider(settings.claudeApiKey, settings.temperature, settings.maxTokens);
+        provider = new ClaudeProvider(apiKey, settings.temperature, settings.maxTokens);
         break;
       case "gemini":
-        provider = new GeminiProvider(settings.geminiApiKey, settings.temperature, settings.maxTokens);
+        provider = new GeminiProvider(apiKey, settings.temperature, settings.maxTokens);
         break;
       case "openai":
-        provider = new OpenAIProvider(settings.openaiApiKey, settings.temperature, settings.maxTokens);
+        provider = new OpenAIProvider(apiKey, settings.temperature, settings.maxTokens);
         break;
       case "groq":
-        provider = new GroqProvider(settings.groqApiKey, settings.temperature, settings.maxTokens);
+        provider = new GroqProvider(apiKey, settings.temperature, settings.maxTokens);
         break;
       case "openrouter":
-        provider = new OpenRouterProvider(settings.openRouterApiKey, settings.temperature, settings.maxTokens);
+        provider = new OpenRouterProvider(apiKey, settings.temperature, settings.maxTokens);
         break;
       case "mistral":
-        provider = new MistralProvider(settings.mistralApiKey, settings.temperature, settings.maxTokens);
+        provider = new MistralProvider(apiKey, settings.temperature, settings.maxTokens);
         break;
       case "lmstudio":
         provider = new LmStudioProvider(settings.lmStudioUrl, settings.temperature, settings.maxTokens);

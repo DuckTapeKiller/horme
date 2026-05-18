@@ -161,7 +161,9 @@ export class SkillManager {
       } catch (e: unknown) {
         const msg = `Failed to parse parameters for skill ${skillId}. Invalid JSON.`;
         this.plugin.diagnosticService.report("Skill Parser", msg, "warning");
-        console.error(msg, paramsText, e);
+        const preview = paramsText.length > 500 ? `${paramsText.slice(0, 500)}…` : paramsText;
+        this.plugin.debugLog(`${msg} Params preview:`, preview);
+        console.error(msg, e);
       }
     }
 
@@ -177,7 +179,7 @@ export class SkillManager {
     }
 
     try {
-      console.log(`Horme: Executing skill "${skill.name}" with params:`, call.parameters);
+      this.plugin.debugLog(`Horme: Executing skill "${skill.name}"`);
       return await skill.execute(call.parameters);
     } catch (e: unknown) {
       const errorMessage = e instanceof Error ? e.message : String(e);
@@ -215,7 +217,7 @@ export class SkillManager {
           this.plugin.diagnosticService.report("Skill Loader", `Invalid custom skill definition: ${def.name || "Unknown"}`, "warning");
           continue;
         }
-        this.skills.set(def.id, new CustomSkill(def));
+        this.skills.set(def.id, new CustomSkill(this.plugin.app, def));
       }
       // Refresh the dropdown in any open chat views
       this.plugin.app.workspace.iterateAllLeaves(leaf => {

@@ -25,7 +25,7 @@ export class CustomSkillModal extends Modal {
 
     contentEl.createEl("p", {
       cls: "horme-settings-muted",
-      text: "Use {{query}} as a placeholder for the user's input in the URL and body."
+      text: "Use {{query}} as a placeholder for the user's input in the URL and body. For sensitive values (API keys/tokens), use {{secret:your-secret-id}} in headers/body to pull from Obsidian Secret Storage."
     });
 
     new Setting(contentEl)
@@ -68,9 +68,9 @@ export class CustomSkillModal extends Modal {
 
     const headersSetting = new Setting(contentEl)
       .setName("Headers")
-      .setDesc("One per line: Key: Value. Leave empty if not needed.")
+      .setDesc("One per line: Key: Value. Use {{secret:your-secret-id}} to avoid storing tokens in data.json.")
       .addTextArea(t => {
-        t.setPlaceholder("Authorization: Bearer sk-...\nX-Custom: value");
+        t.setPlaceholder("Authorization: Bearer {{secret:horme-openai-api-key}}\nX-Custom: value");
         t.inputEl.rows = 3;
         t.inputEl.setCssProps({ width: "100%" });
         t.inputEl.setCssProps({ resize: "vertical" });

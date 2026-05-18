@@ -43,7 +43,7 @@ export class TagIndexer {
         this.indexedModel = getStringProp(parsed, "model") ?? "";
         const currentModel = this.plugin.settings.ragEmbeddingModel;
         if (this.indexedModel && this.indexedModel !== currentModel) {
-          console.log(`Horme Tags: Model changed (${this.indexedModel} → ${currentModel}). Index cleared.`);
+          this.plugin.debugLog(`Horme Tags: Model changed (${this.indexedModel} → ${currentModel}). Index cleared.`);
           this.index = [];
           this.indexedModel = currentModel;
           return;
@@ -170,7 +170,7 @@ export class TagIndexer {
       }
 
       const tagList = Array.from(allTags);
-      console.log(`Horme: Indexing ${tagList.length} unique tags...`);
+      this.plugin.debugLog(`Horme: Indexing ${tagList.length} unique tags...`);
       
       const newIndex: TagEntry[] = [];
       
@@ -199,7 +199,7 @@ export class TagIndexer {
       await this.saveIndex();
       this.plugin.setIndexingStatus(null);
       new Notice(`✅ Tag Index Ready (${this.index.length} tags)`);
-      console.log("Horme: Tag index rebuilt successfully.");
+      this.plugin.debugLog("Horme: Tag index rebuilt successfully.");
     } finally {
       this.isIndexing = false;
     }
