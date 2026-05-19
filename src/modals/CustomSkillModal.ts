@@ -25,89 +25,111 @@ export class CustomSkillModal extends Modal {
 
     contentEl.createEl("p", {
       cls: "horme-settings-muted",
-      text: "Use {{query}} as a placeholder for the user's input in the URL and body. For sensitive values (API keys/tokens), use {{secret:your-secret-id}} in headers/body to pull from Obsidian Secret Storage."
+      text: "Use {{query}} as a placeholder for the user's input in the URL and body. For sensitive values (API keys/tokens), use {{secret:your-secret-id}} in headers/body to pull from Obsidian Secret Storage.",
     });
 
     new Setting(contentEl)
       .setName("Skill Name")
       .setDesc("Shown in the Skills dropdown.")
-      .addText(t => t
-        .setPlaceholder("RAE Dictionary")
-        .onChange(v => { this.name = v.trim(); })
+      .addText((t) =>
+        t.setPlaceholder("RAE Dictionary").onChange((v) => {
+          this.name = v.trim();
+        }),
       );
 
     new Setting(contentEl)
       .setName("Description")
       .setDesc("One line shown under the name.")
-      .addText(t => t
-        .setPlaceholder("Look up Spanish words in the RAE dictionary.")
-        .onChange(v => { this.description = v.trim(); })
+      .addText((t) =>
+        t.setPlaceholder("Look up Spanish words in the RAE dictionary.").onChange((v) => {
+          this.description = v.trim();
+        }),
       );
 
-    new Setting(contentEl)
-      .setName("Method")
-      .addDropdown(d => d
+    new Setting(contentEl).setName("Method").addDropdown((d) =>
+      d
         .addOption("GET", "GET")
         .addOption("POST", "POST")
         .setValue(this.method)
-        .onChange(v => {
+        .onChange((v) => {
           this.method = v as "GET" | "POST";
           bodySetting.settingEl.setCssProps({ display: v === "POST" ? "" : "none" });
-        })
-      );
+        }),
+    );
 
     const urlSetting = new Setting(contentEl)
       .setName("URL")
       .setDesc("Use {{query}} where the user's input should go.")
-      .addText(t => {
+      .addText((t) => {
         t.setPlaceholder("https://api.example.com/search?q={{query}}");
         t.inputEl.setCssProps({ width: "100%" });
-        t.onChange(v => { this.url = v.trim(); });
+        t.onChange((v) => {
+          this.url = v.trim();
+        });
       });
     urlSetting.settingEl.addClass("horme-modal-vertical-setting");
 
     const headersSetting = new Setting(contentEl)
       .setName("Headers")
-      .setDesc("One per line: Key: Value. Use {{secret:your-secret-id}} to avoid storing tokens in data.json.")
-      .addTextArea(t => {
+      .setDesc(
+        "One per line: Key: Value. Use {{secret:your-secret-id}} to avoid storing tokens in data.json.",
+      )
+      .addTextArea((t) => {
         t.setPlaceholder("Authorization: Bearer {{secret:horme-openai-api-key}}\nX-Custom: value");
         t.inputEl.rows = 3;
         t.inputEl.setCssProps({ width: "100%" });
         t.inputEl.setCssProps({ resize: "vertical" });
-        t.onChange(v => { this.headersRaw = v; });
+        t.onChange((v) => {
+          this.headersRaw = v;
+        });
       });
     headersSetting.settingEl.addClass("horme-modal-vertical-setting");
 
     const bodySetting = new Setting(contentEl)
       .setName("Request Body (POST only)")
       .setDesc("JSON body template. Use {{query}} for the user's input.")
-      .addTextArea(t => {
+      .addTextArea((t) => {
         t.setPlaceholder('{"q": "{{query}}", "source": "en", "target": "fr"}');
         t.inputEl.rows = 4;
         t.inputEl.setCssProps({ width: "100%" });
         t.inputEl.setCssProps({ resize: "vertical" });
-        t.onChange(v => { this.body = v; });
+        t.onChange((v) => {
+          this.body = v;
+        });
       });
     bodySetting.settingEl.addClass("horme-modal-vertical-setting");
     bodySetting.settingEl.setCssProps({ display: this.method === "POST" ? "" : "none" });
 
     new Setting(contentEl)
       .setName("Response Path")
-      .setDesc("Dot-path to extract data from JSON response (e.g. results[0].text). Leave empty to use full response.")
-      .addText(t => {
+      .setDesc(
+        "Dot-path to extract data from JSON response (e.g. results[0].text). Leave empty to use full response.",
+      )
+      .addText((t) => {
         t.setPlaceholder("data.items[0].content");
         t.inputEl.setCssProps({ width: "100%" });
-        t.onChange(v => { this.responsePath = v.trim(); });
+        t.onChange((v) => {
+          this.responsePath = v.trim();
+        });
       });
 
-    new Setting(contentEl)
-      .addButton(btn => btn
+    new Setting(contentEl).addButton((btn) =>
+      btn
         .setButtonText("Save Skill")
         .setCta()
         .onClick(() => {
-          if (!this.name) { new Notice("Skill name is required."); return; }
-          if (!this.description) { new Notice("Description is required."); return; }
-          if (!this.url) { new Notice("URL is required."); return; }
+          if (!this.name) {
+            new Notice("Skill name is required.");
+            return;
+          }
+          if (!this.description) {
+            new Notice("Description is required.");
+            return;
+          }
+          if (!this.url) {
+            new Notice("URL is required.");
+            return;
+          }
           if (!this.url.includes("{{query}}") && this.method === "GET") {
             new Notice("URL must include {{query}} placeholder for GET requests.");
             return;
@@ -116,7 +138,7 @@ export class CustomSkillModal extends Modal {
           const id = "custom_" + this.name.toLowerCase().replace(/[^a-z0-9]+/g, "_");
 
           // Prevent duplicate IDs
-          const exists = this.plugin.settings.customSkills.some(s => s.id === id);
+          const exists = this.plugin.settings.customSkills.some((s) => s.id === id);
           if (exists) {
             new Notice(`A custom skill named "${this.name}" already exists.`);
             return;
@@ -142,8 +164,8 @@ export class CustomSkillModal extends Modal {
             responsePath: this.responsePath,
           });
           this.close();
-        })
-      );
+        }),
+    );
   }
 
   onClose() {

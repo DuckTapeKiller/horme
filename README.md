@@ -6,72 +6,75 @@
 
 # <span style="color:#7c3aed">&#9653; Horme</span>
 
-*In Greek mythology, Horme (/ˈhɔːrmiː/; Ancient Greek: Ὁρμή) is the Greek spirit personifying energetic activity, impulse or effort (to do a thing), eagerness, setting oneself in motion, and starting an action, and particularly onrush in battle.*
+_In Greek mythology, Horme (/ˈhɔːrmiː/; Ancient Greek: Ὁρμή) is the Greek spirit personifying energetic activity, impulse or effort (to do a thing), eagerness, setting oneself in motion, and starting an action, and particularly onrush in battle._
 
 ![Illustration](images/illustration.png)
 
 ---
+
 > [!IMPORTANT]
+>
 > # Quick start
-> 
+>
 > ## TLDR — For Non-Technical Users
-> 
+>
 > To use this plugin's full capabilities, you need two local models:
+>
 > 1.  **An Indexing Model:** This model allows the plugin to interact with and index your notes.
 > 2.  **An Interaction Model:** This is the model you will actually chat or “speak” with.
-> 
+>
 > ---
-> 
+>
 > ### Prerequisites: Setting up Ollama
-> 
+>
 > We recommend using **Ollama** to manage your local models. You can download it here: [Download Ollama](https://ollama.com/download).
-> 
+>
 > **1. Download the Indexing Model:**
-> This model is *only* for indexing your vault in a compressed format; you cannot chat with it.
-> *   **Recommended Model:** `nomic-embed-text:latest` (274 MB).
-> *   **Command (in your terminal):**
->     ```bash
->     ollama pull nomic-embed-text:latest
->     ```
-> **2. Download the Interaction Model:**
+> This model is _only_ for indexing your vault in a compressed format; you cannot chat with it.
+>
+> - **Recommended Model:** `nomic-embed-text:latest` (274 MB).
+> - **Command (in your terminal):**
+>   `bash
+
+    ollama pull nomic-embed-text:latest
+    ` > **2. Download the Interaction Model:**
+
 > This is the model you will use for asking questions.
-> *   **Strong Recommendation:** `gemma4:e4b` (9.6 GB)
-> *   **Command (in your terminal):**
->     ```bash
->     ollama pull gemma4:e4b
->     ```
-> 
-> 
+>
+> - **Strong Recommendation:** `gemma4:e4b` (9.6 GB)
+> - **Command (in your terminal):**
+>   ```bash
+>   ollama pull gemma4:e4b
+>   ```
+>
 > ### Manual Installation Steps
-> 
+>
 > Once both models are downloaded, follow these steps to install Horme:
-> 
+>
 > 1.  **Create Plugin Folder:**
->     *   Navigate to your hidden Obsidian folder: `.obsidian/plugins`
->     *   Create a new folder named `horme`.
-> 
+>     - Navigate to your hidden Obsidian folder: `.obsidian/plugins`
+>     - Create a new folder named `horme`.
 > 2.  **Download Plugin Files:**
->     *   Go to the repository releases page: [Horme Releases](https://github.com/DuckTapeKiller/horme/releases).
->     *   Download the three files from the most recent release:
->         *   `main.js`
->         *   `manifest.json`
->         *   `styles.css`
-> 
+>     - Go to the repository releases page: [Horme Releases](https://github.com/DuckTapeKiller/horme/releases).
+>     - Download the three files from the most recent release:
+>       - `main.js`
+>       - `manifest.json`
+>       - `styles.css`
 > 3.  **Activate in Obsidian:**
->     *   Go to **Settings** in Obsidian.
->     *   Scroll down and toggle on **“Enable Local Vault Memory”**.
->     *   Select the indexing model you just downloaded: **`nomic-embed-text:latest`**.
->     *   Wait for the count in the status bar to finish processing.
-> 
+>     - Go to **Settings** in Obsidian.
+>     - Scroll down and toggle on **“Enable Local Vault Memory”**.
+>     - Select the indexing model you just downloaded: **`nomic-embed-text:latest`**.
+>     - Wait for the count in the status bar to finish processing.
+>
 > ### Ready to Use
-> 
+>
 > Once the indexing is complete, go to the **Horme chat box** and ask any question about your notes.
-> 
+>
 > **Example Query:**
+>
 > > “I want to write an essay on modern art, help me find which of my notes can help me.”
 >
-> When using local providers (Ollama/LM Studio), no data leaves your machine and no API keys are required. If you use a cloud provider, Horme stores API keys via Obsidian Secret Storage (not in `data.json`). 
-
+> When using local providers (Ollama/LM Studio), no data leaves your machine and no API keys are required. If you use a cloud provider, Horme stores API keys via Obsidian Secret Storage (not in `data.json`).
 
 ---
 
@@ -119,12 +122,12 @@
 
 ## <span style="color:#7c3aed">&#9670; Requirements</span>
 
-| Dependency | Details |
-|---|---|
-| **Ollama** | Must be running locally at `http://127.0.0.1:11434` (configurable). |
+| Dependency          | Details                                                                                 |
+| ------------------- | --------------------------------------------------------------------------------------- |
+| **Ollama**          | Must be running locally at `http://127.0.0.1:11434` (configurable).                     |
 | **Embedding Model** | Specialized model for RAG (e.g. `ollama pull nomic-embed-text` or `mxbai-embed-large`). |
-| **Chat Model** | Pull a model with `ollama pull <model>` (e.g. `gemma3`, `llama3`). |
-| **Obsidian** | v1.11.4 or later (required for Secret Storage API keys). |
+| **Chat Model**      | Pull a model with `ollama pull <model>` (e.g. `gemma3`, `llama3`).                      |
+| **Obsidian**        | v1.11.4 or later (required for Secret Storage API keys).                                |
 
 ---
 
@@ -144,35 +147,36 @@ The Vault Brain gives the AI long-term memory of your entire knowledge base. It 
 
 #### <span style="color:#6d28d9">&#9655; Search Relevance & Mathematics</span>
 
-The search engine uses a hybrid relevance scoring formula combining semantic embeddings, structured metadata matching, and a content-aware "deep scan". 
+The search engine uses a hybrid relevance scoring formula combining semantic embeddings, structured metadata matching, and a content-aware "deep scan".
 
 The total score for any candidate chunk is:
 $$\text{Total Score} = \text{Vector Score} + \text{Metadata Bonus} + \text{Content Bonus}$$
 
 With a maximum possible score of **$1.45$**, the relevance weights are precisely allocated as follows:
 
-| Element | Max Score Contribution | Precise Relative Weight |
-| :--- | :---: | :---: |
-| **Semantic Vector Similarity (Embeddings)** | `1.00` | **$69.0\%$** |
-| **Metadata Keyword Matching** | `0.25` | **$17.2\%$** |
-| **Content Body Keyword Matching (Deep Scan)** | `0.20` | **$13.8\%$** |
-| **Total** | **`1.45`** | **$100\%$** |
+| Element                                       | Max Score Contribution | Precise Relative Weight |
+| :-------------------------------------------- | :--------------------: | :---------------------: |
+| **Semantic Vector Similarity (Embeddings)**   |         `1.00`         |      **$69.0\%$**       |
+| **Metadata Keyword Matching**                 |         `0.25`         |      **$17.2\%$**       |
+| **Content Body Keyword Matching (Deep Scan)** |         `0.20`         |      **$13.8\%$**       |
+| **Total**                                     |       **`1.45`**       |       **$100\%$**       |
 
 ##### Precise Breakdown of the Scoring Components
+
 1. **Semantic Vector Score (Max Contribution: `1.00`, $69\%$ Weight):**
-   * Calculated using cosine similarity between the query embedding and the chunk embedding (which mathematically ranges from `-1.0` to `1.0`).
+   - Calculated using cosine similarity between the query embedding and the chunk embedding (which mathematically ranges from `-1.0` to `1.0`).
 2. **Metadata Keyword Bonus (Max Cap: `0.25`, $17.2\%$ Weight):**
-   * Rewards exact matches in the note's structured fields (File Path, Summary, Tags, Headings).
-   * **Quoted Terms Boost (e.g., `"exact search"`):** `+0.15` per term.
-   * **Regular Keyword Terms Boost:**
-     * File Path (Title): `+0.05` per matching word.
-     * YAML Summary (`resumen`): `+0.04` per matching word.
-     * Heading Hierarchy: `+0.04` per matching word.
-     * Tags: `+0.03` per matching word.
+   - Rewards exact matches in the note's structured fields (File Path, Summary, Tags, Headings).
+   - **Quoted Terms Boost (e.g., `"exact search"`):** `+0.15` per term.
+   - **Regular Keyword Terms Boost:**
+     - File Path (Title): `+0.05` per matching word.
+     - YAML Summary (`resumen`): `+0.04` per matching word.
+     - Heading Hierarchy: `+0.04` per matching word.
+     - Tags: `+0.03` per matching word.
 3. **Content Body Keyword Bonus (Max Cap: `0.20`, $13.8\%$ Weight):**
-   * Done as a "Deep Scan" on the actual body text for the top 50 candidates:
-   * **Quoted Terms Boost inside body:** `+0.15` per term.
-   * **Regular Keyword Terms inside body:** `+0.05` per term.
+   - Done as a "Deep Scan" on the actual body text for the top 50 candidates:
+   - **Quoted Terms Boost inside body:** `+0.15` per term.
+   - **Regular Keyword Terms inside body:** `+0.05` per term.
 
 ### <span style="color:#6d28d9">&#9655; Live Connections</span>
 
@@ -190,7 +194,7 @@ Manage large tag collections (3,000+ tags) with ease using the **Hybrid Tag Sugg
 
 - **Keyword + Semantic:** Combines traditional word-matching with mathematical topic-matching. It finds specific names (like "Hernán Cortés") AND broad themes (like "Spanish History") simultaneously.
 - **Intelligent Candidates:** From a collection of thousands, it selects the most relevant candidates and lets your local LLM make the final, precise selection.
-- **Shadow Tagging (Bilingual):** Translate your tags automatically during indexing. Keep your vault in one language (e.g. Spanish `#pájaros`) but retrieve them using another (e.g. English "birds"). This is fully decoupled from the chat model, allowing you to use a dedicated local model just for translations. This does not affect your real tags in any way. It is just for the index. 
+- **Shadow Tagging (Bilingual):** Translate your tags automatically during indexing. Keep your vault in one language (e.g. Spanish `#pájaros`) but retrieve them using another (e.g. English "birds"). This is fully decoupled from the chat model, allowing you to use a dedicated local model just for translations. This does not affect your real tags in any way. It is just for the index.
 - **Tag Index:** Dedicated tag brain that maps your entire hierarchy for instant retrieval. Use `Rebuild Tag Index` in settings to refresh.
 - **Tag Button:** Quick access via the "Tags" button in the chat header.
 
@@ -221,20 +225,22 @@ Automatically generate concise summaries and write them directly into your notes
 
 Horme extends the LLM with modular skills that it can invoke autonomously during conversations and actions. Skills are tool calls the model emits when it needs external information.
 
-| Skill | Type | Description |
-|---|---|---|
-| **Wikipedia Search** | &#127760; Web | Searches Wikipedia for factual verification. Supports multiple languages (`en`, `es`, `fr`, etc.). Returns summaries and relevant article sections with source URLs. |
-| **Wiktionary Lookup** | &#127760; Web | Looks up word definitions, etymology, and usage notes. Useful for distinguishing false friends and verifying word existence. Multi-language. |
-| **DuckDuckGo Instant Answer** | &#127760; Web | Quick facts and topic summaries for recent events, technical specs, and niche topics not covered by Wikipedia. No API key required. |
-| **Date Calculator** | &#128187; Local | Computes time differences between dates, verifies day-of-week for historical dates, and checks chronological consistency. Pure computation, zero latency. |
-| **Vault Linker** | &#128218; Index | Finds semantically related notes within your vault. Privacy-guarded — only available to local providers (or with explicit cloud opt-in). |
-| **Taxonomy Scholar** | &#128218; Index | Retrieves the full list of existing tags to ensure consistent tagging. |
-| **Grammar Scholar** | &#128218; Index | Consults your local grammar and orthography manuals for precision checks on syntax, false friends, and orthotypography. |
+| Skill                         | Type            | Description                                                                                                                                                          |
+| ----------------------------- | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Wikipedia Search**          | &#127760; Web   | Searches Wikipedia for factual verification. Supports multiple languages (`en`, `es`, `fr`, etc.). Returns summaries and relevant article sections with source URLs. |
+| **Wiktionary Lookup**         | &#127760; Web   | Looks up word definitions, etymology, and usage notes. Useful for distinguishing false friends and verifying word existence. Multi-language.                         |
+| **DuckDuckGo Instant Answer** | &#127760; Web   | Quick facts and topic summaries for recent events, technical specs, and niche topics not covered by Wikipedia. No API key required.                                  |
+| **Date Calculator**           | &#128187; Local | Computes time differences between dates, verifies day-of-week for historical dates, and checks chronological consistency. Pure computation, zero latency.            |
+| **Vault Linker**              | &#128218; Index | Finds semantically related notes within your vault. Privacy-guarded — only available to local providers (or with explicit cloud opt-in).                             |
+| **Taxonomy Scholar**          | &#128218; Index | Retrieves the full list of existing tags to ensure consistent tagging.                                                                                               |
+| **Grammar Scholar**           | &#128218; Index | Consults your local grammar and orthography manuals for precision checks on syntax, false friends, and orthotypography.                                              |
 
 #### Custom HTTP Skills
+
 Beyond the built-in skills, you can create your own HTTP-based skills to connect Horme to any REST API (local or public). You just configure the URL, method, headers, and a response path.
 
 **Example: Open Library Book Search**
+
 - **Method:** `GET`
 - **URL:** `https://openlibrary.org/search.json?q={{query}}&limit=3`
 - **Response Path:** `docs`
@@ -282,15 +288,15 @@ Send multiple notes as context to the AI in a single conversation.
 
 Select text in any note to access professional editing tools via right-click &#10132; **Horme**:
 
-| Action | Description |
-|---|---|
-| **Proofread** | Fixes grammar, spelling, and punctuation. Consults your grammar manuals for the configured language. |
-| **Rewrite** | Opens a tone picker: Formal, Friendly, Academic, Sarcastic, Aggressive, or Humanise. |
-| **Expand** | Adds detail while preserving meaning. |
-| **Summarize** | Condenses text to key points. |
-| **Beautify Format** | Fixes heading hierarchy, normalizes lists and spacing. |
-| **Fact Check** | Verifies each claim against Wikipedia. Returns structured verdicts with source citations. |
-| **Translate** | Opens a language input modal. Translates to any language. |
+| Action              | Description                                                                                          |
+| ------------------- | ---------------------------------------------------------------------------------------------------- |
+| **Proofread**       | Fixes grammar, spelling, and punctuation. Consults your grammar manuals for the configured language. |
+| **Rewrite**         | Opens a tone picker: Formal, Friendly, Academic, Sarcastic, Aggressive, or Humanise.                 |
+| **Expand**          | Adds detail while preserving meaning.                                                                |
+| **Summarize**       | Condenses text to key points.                                                                        |
+| **Beautify Format** | Fixes heading hierarchy, normalizes lists and spacing.                                               |
+| **Fact Check**      | Verifies each claim against Wikipedia. Returns structured verdicts with source citations.            |
+| **Translate**       | Opens a language input modal. Translates to any language.                                            |
 
 ---
 
@@ -303,6 +309,7 @@ Before any text is changed, Horme shows a side-by-side **Original vs. Replacemen
 ### <span style="color:#6d28d9">&#9655; Status Bar Progress</span>
 
 A professional progress indicator appears in the Obsidian status bar during background tasks:
+
 - **&#9679; Indexing 47 / 3210**
 
 The indicator is color-coded and disappears automatically when the task is finished.
@@ -323,13 +330,14 @@ Toggle **"Use current note as context"** to inject the active note's content. Th
 
 ### <span style="color:#6d28d9">&#9655; Document Upload</span>
 
-Upload PDF and DOCX files directly into the chat. Horme extracts the text content (including structural metadata for PDFs) and injects it as context for the model.
+Upload `.txt` and `.md` files directly into the chat. Horme injects the file content as context for the model.
 
 ---
 
 ### <span style="color:#6d28d9">&#9655; Chat History</span>
 
 Manage your past conversations via the History panel (&#128337;):
+
 - **Debounced Saving:** History is saved every 2 seconds during active chat to minimize disk I/O.
 - **Capped Storage:** Retains up to 200 conversations; oldest entries are automatically trimmed.
 - **Flush on Close:** In-progress conversations are guaranteed to save when the chat panel is closed.
@@ -364,34 +372,34 @@ horme-prompt: "You are an expert in constitutional law. Always cite legal preced
 
 Horme supports multiple AI providers. Local providers are recommended for privacy.
 
-| Provider | Type | Notes |
-|---|---|---|
-| **Ollama** | &#127968; Local | Default. Full feature access including Vault Brain. |
-| **LM Studio** | &#127968; Local | Full feature access including Vault Brain. |
-| **Claude** | &#9729; Cloud | Vault Brain requires explicit opt-in. |
-| **Gemini** | &#9729; Cloud | Vault Brain requires explicit opt-in. |
-| **OpenAI** | &#9729; Cloud | Vault Brain requires explicit opt-in. |
-| **Groq** | &#9729; Cloud | Vault Brain requires explicit opt-in. |
-| **OpenRouter** | &#9729; Cloud | Vault Brain requires explicit opt-in. |
+| Provider       | Type            | Notes                                               |
+| -------------- | --------------- | --------------------------------------------------- |
+| **Ollama**     | &#127968; Local | Default. Full feature access including Vault Brain. |
+| **LM Studio**  | &#127968; Local | Full feature access including Vault Brain.          |
+| **Claude**     | &#9729; Cloud   | Vault Brain requires explicit opt-in.               |
+| **Gemini**     | &#9729; Cloud   | Vault Brain requires explicit opt-in.               |
+| **OpenAI**     | &#9729; Cloud   | Vault Brain requires explicit opt-in.               |
+| **Groq**       | &#9729; Cloud   | Vault Brain requires explicit opt-in.               |
+| **OpenRouter** | &#9729; Cloud   | Vault Brain requires explicit opt-in.               |
 
 ---
 
 ## <span style="color:#7c3aed">&#9881; Settings</span>
 
-| Setting | Default | Description |
-|---|---|---|
-| **Ollama Base URL** | `http://127.0.0.1:11434` | Endpoint for the Ollama API. |
-| **Embedding Model** | `nomic-embed-text` | Model used for indexing (e.g. `nomic-embed-text`, `mxbai-embed-large`). |
-| **Vault Brain** | `Off` | Toggle for the semantic RAG engine and background indexer. |
-| **Allow Cloud RAG** | `Off` | Explicitly allow vault content to be sent to cloud providers. |
-| **Cloud API Keys** | — | Stored in Obsidian Secret Storage (not in `data.json`). |
-| **Grammar Manual Folder** | `Gramática` | Folder containing your grammar reference notes. |
-| **Grammar Language** | `Español` | Language your grammar manuals cover. Proofreading only consults manuals for this language. |
-| **Summary Field** | `summary` | Frontmatter key where generated summaries are stored. |
-| **Summary Language** | `Español` | Language summaries are written in. |
-| **Max Tag Candidates** | `250` | Number of existing tags considered for semantic suggestions. |
-| **Debug logging** | `Off` | Enables extra developer-console logs (may include file paths). |
-| **Export Folder** | `HORME` | Vault-relative path for saved notes and exports. |
+| Setting                   | Default                  | Description                                                                                |
+| ------------------------- | ------------------------ | ------------------------------------------------------------------------------------------ |
+| **Ollama Base URL**       | `http://127.0.0.1:11434` | Endpoint for the Ollama API.                                                               |
+| **Embedding Model**       | `nomic-embed-text`       | Model used for indexing (e.g. `nomic-embed-text`, `mxbai-embed-large`).                    |
+| **Vault Brain**           | `Off`                    | Toggle for the semantic RAG engine and background indexer.                                 |
+| **Allow Cloud RAG**       | `Off`                    | Explicitly allow vault content to be sent to cloud providers.                              |
+| **Cloud API Keys**        | —                        | Stored in Obsidian Secret Storage (not in `data.json`).                                    |
+| **Grammar Manual Folder** | `Gramática`              | Folder containing your grammar reference notes.                                            |
+| **Grammar Language**      | `Español`                | Language your grammar manuals cover. Proofreading only consults manuals for this language. |
+| **Summary Field**         | `summary`                | Frontmatter key where generated summaries are stored.                                      |
+| **Summary Language**      | `Español`                | Language summaries are written in.                                                         |
+| **Max Tag Candidates**    | `250`                    | Number of existing tags considered for semantic suggestions.                               |
+| **Debug logging**         | `Off`                    | Enables extra developer-console logs (may include file paths).                             |
+| **Export Folder**         | `HORME`                  | Vault-relative path for saved notes and exports.                                           |
 
 ---
 
@@ -399,10 +407,10 @@ Horme supports multiple AI providers. Local providers are recommended for privac
 
 To install Horme, you need exactly three files:
 
-| File | Purpose |
-|---|---|
-| `main.js` | Bundled plugin logic (includes `pdfjs-dist`). |
-| `styles.css` | Chat panel and modal styling. |
+| File            | Purpose                       |
+| --------------- | ----------------------------- |
+| `main.js`       | Bundled plugin logic.         |
+| `styles.css`    | Chat panel and modal styling. |
 | `manifest.json` | Plugin metadata for Obsidian. |
 
 ---

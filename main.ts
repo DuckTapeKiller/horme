@@ -1,6 +1,5 @@
 import {
   Editor,
-  MarkdownRenderer,
   MarkdownView,
   Menu,
   Notice,
@@ -11,21 +10,16 @@ import {
   TFolder,
   requestUrl,
   Platform,
-  Component,
   addIcon,
-  setIcon,
 } from "obsidian";
-import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf";
 
 // Modals
 import { TranslateModal } from "./src/modals/TranslateModal";
 import { RewriteModal } from "./src/modals/RewriteModal";
 import { ConfirmReplaceModal } from "./src/modals/ConfirmReplaceModal";
-import { ConversionModal } from "./src/modals/ConversionModal";
 import { HormeErrorModal } from "./src/modals/HormeErrorModal";
 
 // Services
-import { PdfService } from "./src/services/PdfService";
 import { DocxService } from "./src/services/DocxService";
 import { HistoryManager } from "./src/services/HistoryManager";
 import { TagService } from "./src/services/TagService";
@@ -46,10 +40,15 @@ import { HormeConnectionsView } from "./src/views/HormeConnectionsView";
 import { HormeSettingTab } from "./src/views/HormeSettingTab";
 
 // Constants & Types
-import { DEFAULT_SETTINGS, VIEW_TYPE, CONNECTIONS_VIEW_TYPE, ACTIONS, PROVIDER_MODELS, DEFAULT_SYSTEM_PROMPT } from "./src/constants";
+import {
+  DEFAULT_SETTINGS,
+  VIEW_TYPE,
+  CONNECTIONS_VIEW_TYPE,
+  ACTIONS,
+  PROVIDER_MODELS,
+  DEFAULT_SYSTEM_PROMPT,
+} from "./src/constants";
 import { HormeSettings, AiProvider } from "./src/types";
-
-declare const __PDF_WORKER_CODE__: string;
 
 interface OllamaTagsModel {
   name: string;
@@ -63,9 +62,7 @@ export default class HormePlugin extends Plugin {
   lastActiveMarkdownLeaf: WorkspaceLeaf | null = null;
   mobileModel: string;
   contextCloudWarningShown: boolean;
-  workerUrl: string;
-  
-  pdfService: PdfService;
+
   docxService: DocxService;
   historyManager: HistoryManager;
   tagService: TagService;
@@ -93,7 +90,14 @@ export default class HormePlugin extends Plugin {
   }
 
   private isCloudProvider(p: AiProvider): boolean {
-    return p === "claude" || p === "gemini" || p === "openai" || p === "groq" || p === "openrouter" || p === "mistral";
+    return (
+      p === "claude" ||
+      p === "gemini" ||
+      p === "openai" ||
+      p === "groq" ||
+      p === "openrouter" ||
+      p === "mistral"
+    );
   }
 
   private getSecretIdForProvider(p: AiProvider): string | null {
@@ -132,7 +136,12 @@ export default class HormePlugin extends Plugin {
   private isLikelyOllamaEmbeddingModel(tag: OllamaTagsModel): boolean {
     const name = tag.name.toLowerCase();
     const family = (tag.details?.family ?? "").toLowerCase();
-    return name.includes("embed") || name.includes("embedding") || family.includes("bert") || family.includes("embed");
+    return (
+      name.includes("embed") ||
+      name.includes("embedding") ||
+      family.includes("bert") ||
+      family.includes("embed")
+    );
   }
 
   private pickAutoOllamaDefaultModel(tagsModels: OllamaTagsModel[]): string | null {
@@ -225,7 +234,11 @@ export default class HormePlugin extends Plugin {
     await this.saveSettings();
 
     if (prev) {
-      this.diagnosticService?.report("Ollama", `Default model "${prev}" not found. Auto-selected "${picked}".`, "warning");
+      this.diagnosticService?.report(
+        "Ollama",
+        `Default model "${prev}" not found. Auto-selected "${picked}".`,
+        "warning",
+      );
       new Notice(`Horme: Ollama model "${prev}" not found. Switched to "${picked}".`);
     } else {
       this.diagnosticService?.report("Ollama", `Auto-selected default model "${picked}".`, "info");
@@ -234,9 +247,12 @@ export default class HormePlugin extends Plugin {
 
   async onload() {
     await this.loadSettings();
-    
+
     // Register Custom Icons
-    addIcon("horme-shell", `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 11a2 2 0 1 1-4 0 4 4 0 0 1 8 0 6 6 0 0 1-12 0 8 8 0 0 1 16 0 10 10 0 1 1-20 0 11.93 11.93 0 0 1 2.42-7.22 2 2 0 1 1 3.16 2.44"/></svg>`);
+    addIcon(
+      "horme-shell",
+      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 11a2 2 0 1 1-4 0 4 4 0 0 1 8 0 6 6 0 0 1-12 0 8 8 0 0 1 16 0 10 10 0 1 1-20 0 11.93 11.93 0 0 1 2.42-7.22 2 2 0 1 1 3.16 2.44"/></svg>`,
+    );
 
     // Apply Mobile Overrides on startup
     if (Platform.isMobile && this.settings.useMobileOverride) {
@@ -245,7 +261,7 @@ export default class HormePlugin extends Plugin {
       this.settings.aiProvider = this.settings.mobileProvider;
       const p = this.settings.mobileProvider;
       const m = this.settings.mobileModel;
-      
+
       if (p === "claude") {
         this._originalModel = this.settings.claudeModel;
         this.settings.claudeModel = m;
@@ -269,15 +285,9 @@ export default class HormePlugin extends Plugin {
         this.settings.defaultModel = m;
       }
     }
-    
-    // PDF extraction worker setup
-    const workerBlob = new Blob([__PDF_WORKER_CODE__], { type: 'application/javascript' });
-    this.workerUrl = URL.createObjectURL(workerBlob);
-    (pdfjsLib as unknown as { GlobalWorkerOptions: { workerSrc: string } }).GlobalWorkerOptions.workerSrc = this.workerUrl;
 
     // Initialize Services
     this.diagnosticService = new DiagnosticService(this);
-    this.pdfService = new PdfService(this.app);
     this.docxService = new DocxService();
     this.historyManager = new HistoryManager(this);
     this.tagService = new TagService(this.app);
@@ -292,22 +302,26 @@ export default class HormePlugin extends Plugin {
     this.registerView(CONNECTIONS_VIEW_TYPE, (leaf) => new HormeConnectionsView(leaf, this));
 
     this.addRibbonIcon("cone", "Open Horme chat", () => {
-      void this.activateChat().catch(e => this.handleError(e));
+      void this.activateChat().catch((e) => this.handleError(e));
     });
     this.addRibbonIcon("cable", "Open Horme connections", () => {
-      void this.activateConnections().catch(e => this.handleError(e));
+      void this.activateConnections().catch((e) => this.handleError(e));
     });
 
     this.addCommand({
       id: "open-chat",
       name: "Open chat panel",
-      callback: () => { void this.activateChat().catch(e => this.handleError(e)); },
+      callback: () => {
+        void this.activateChat().catch((e) => this.handleError(e));
+      },
     });
 
     this.addCommand({
       id: "open-connections",
       name: "Open connections panel",
-      callback: () => { void this.activateConnections().catch(e => this.handleError(e)); },
+      callback: () => {
+        void this.activateConnections().catch((e) => this.handleError(e));
+      },
     });
 
     // Register text actions
@@ -321,7 +335,7 @@ export default class HormePlugin extends Plugin {
             new Notice("Horme: Select some text first.");
             return;
           }
-          void this.runAction(editor, sel, a.prompt, a.id).catch(e => this.handleError(e));
+          void this.runAction(editor, sel, a.prompt, a.id).catch((e) => this.handleError(e));
         },
       });
     }
@@ -332,10 +346,13 @@ export default class HormePlugin extends Plugin {
       name: "Rewrite",
       editorCallback: (editor: Editor) => {
         const sel = editor.getSelection();
-        if (!sel) { new Notice("Horme: Select some text first."); return; }
+        if (!sel) {
+          new Notice("Horme: Select some text first.");
+          return;
+        }
         new RewriteModal(this.app, (tone) => {
           const prompt = `Rewrite the following text in a ${tone} tone. Preserve the original meaning. Return only the rewritten text.`;
-          void this.runAction(editor, sel, prompt, "rewrite").catch(e => this.handleError(e));
+          void this.runAction(editor, sel, prompt, "rewrite").catch((e) => this.handleError(e));
         }).open();
       },
     });
@@ -344,7 +361,9 @@ export default class HormePlugin extends Plugin {
     this.addCommand({
       id: "generate-summary",
       name: "Generate frontmatter summary",
-      callback: () => { void this.generateFrontmatterSummary().catch(e => this.handleError(e)); },
+      callback: () => {
+        void this.generateFrontmatterSummary().catch((e) => this.handleError(e));
+      },
     });
 
     this.registerEvent(
@@ -356,33 +375,39 @@ export default class HormePlugin extends Plugin {
           const sub = (item as unknown as { setSubmenu: () => Menu }).setSubmenu();
           this.buildSubmenu(sub, editor, sel);
         });
-      })
+      }),
     );
-
 
     // --- Vault Brain Auto-Pilot ---
     this.registerEvent(
       this.app.vault.on("modify", (file) => {
         if (!(file instanceof TFile) || !file.path.endsWith(".md")) return;
-        
+
         // Debounce 2 seconds per file
         const existing = this.indexDebounceMap.get(file.path);
         if (existing !== undefined) window.clearTimeout(existing);
         const timeout = window.setTimeout(() => {
-          void this.vaultIndexer.enqueueIndex(file)
-            .catch(e => this.diagnosticService.report("Vault Brain", `Auto-index failed: ${e instanceof Error ? e.message : String(e)}`, "warning"))
+          void this.vaultIndexer
+            .enqueueIndex(file)
+            .catch((e) =>
+              this.diagnosticService.report(
+                "Vault Brain",
+                `Auto-index failed: ${e instanceof Error ? e.message : String(e)}`,
+                "warning",
+              ),
+            )
             .finally(() => this.indexDebounceMap.delete(file.path));
         }, 2000);
         this.indexDebounceMap.set(file.path, timeout);
-      })
+      }),
     );
 
     this.registerEvent(
       this.app.vault.on("create", (file) => {
         if (file instanceof TFile && file.path.endsWith(".md")) {
-          void this.vaultIndexer.enqueueIndex(file).catch(e => this.handleError(e));
+          void this.vaultIndexer.enqueueIndex(file).catch((e) => this.handleError(e));
         }
-      })
+      }),
     );
 
     this.registerEvent(
@@ -395,7 +420,7 @@ export default class HormePlugin extends Plugin {
           }
           this.vaultIndexer.removeEntriesForPath(file.path);
         }
-      })
+      }),
     );
 
     this.registerEvent(
@@ -407,16 +432,16 @@ export default class HormePlugin extends Plugin {
             this.indexDebounceMap.delete(oldPath);
           }
           this.vaultIndexer.removeEntriesForPath(oldPath);
-          void this.vaultIndexer.enqueueIndex(file).catch(e => this.handleError(e));
+          void this.vaultIndexer.enqueueIndex(file).catch((e) => this.handleError(e));
         }
-      })
+      }),
     );
 
     this.addSettingTab(new HormeSettingTab(this.app, this));
-    
+
     // Load indexes
     await this.grammarIndexer.loadIndex();
-    
+
     this.statusBarItem = this.addStatusBarItem();
     this.statusBarItem.setCssStyles({ display: "none" });
 
@@ -430,11 +455,14 @@ export default class HormePlugin extends Plugin {
       id: "suggest-frontmatter-tags",
       name: "Suggest frontmatter tags",
       checkCallback: (checking) => {
-        const view = this.app.workspace.getActiveViewOfType(MarkdownView) || 
-                     (this.lastActiveMarkdownLeaf?.view instanceof MarkdownView ? this.lastActiveMarkdownLeaf.view : null);
+        const view =
+          this.app.workspace.getActiveViewOfType(MarkdownView) ||
+          (this.lastActiveMarkdownLeaf?.view instanceof MarkdownView
+            ? this.lastActiveMarkdownLeaf.view
+            : null);
         const hasFile = Boolean(view?.file);
         if (checking) return hasFile;
-        if (hasFile) void this.suggestTagsForActiveNote().catch(e => this.handleError(e));
+        if (hasFile) void this.suggestTagsForActiveNote().catch((e) => this.handleError(e));
         return true;
       },
     });
@@ -443,8 +471,11 @@ export default class HormePlugin extends Plugin {
       id: "convert-note-to-docx",
       name: "Convert active note to DOCX",
       checkCallback: (checking: boolean) => {
-        const view = this.app.workspace.getActiveViewOfType(MarkdownView) || 
-                     (this.lastActiveMarkdownLeaf?.view instanceof MarkdownView ? this.lastActiveMarkdownLeaf.view : null);
+        const view =
+          this.app.workspace.getActiveViewOfType(MarkdownView) ||
+          (this.lastActiveMarkdownLeaf?.view instanceof MarkdownView
+            ? this.lastActiveMarkdownLeaf.view
+            : null);
         if (view) {
           if (!checking) void this.convertActiveNoteToDocx(view);
           return true;
@@ -453,54 +484,47 @@ export default class HormePlugin extends Plugin {
       },
     });
 
-    this.addCommand({
-      id: "convert-note-to-pdf",
-      name: "Convert active note to PDF",
-      checkCallback: (checking: boolean) => {
-        const view = this.app.workspace.getActiveViewOfType(MarkdownView) || 
-                     (this.lastActiveMarkdownLeaf?.view instanceof MarkdownView ? this.lastActiveMarkdownLeaf.view : null);
-        if (view) {
-          if (!checking) void this.convertActiveNoteToPdf(view);
-          return true;
-        }
-        return false;
-      },
-    });
-
     this.registerEvent(
       this.app.workspace.on("file-menu", (menu: Menu, file: TAbstractFile) => {
-        if (file instanceof TFile && (file.extension === "md" || file.extension === "pdf")) {
-              menu.addItem((item) => {
-                item.setTitle("Horme: Convert document format").setIcon("refresh-cw")
-                  .onClick(() => { void this.startFileConversion(file); });
+        if (file instanceof TFile && file.extension === "md") {
+          menu.addItem((item) => {
+            item
+              .setTitle("Horme: Convert to DOCX")
+              .setIcon("download")
+              .onClick(() => {
+                void this.convertMarkdownFileToDocx(file);
               });
-            }
-          })
-        );
+          });
+        }
+      }),
+    );
 
     // LIVE NOTE TRACKING: Ensure Horme always knows which note is active for Tagging/Context
     this.registerEvent(
       this.app.workspace.on("active-leaf-change", (leaf) => {
         if (leaf?.view instanceof MarkdownView) {
           this.lastActiveMarkdownLeaf = leaf;
-          
+
           // Trigger connections view refresh if it's open
           if (this.settings.connectionsEnabled) {
             const connLeaves = this.app.workspace.getLeavesOfType(CONNECTIONS_VIEW_TYPE);
             if (connLeaves.length > 0) {
-              const connView = connLeaves[0].view as unknown as { updateConnections?: (path: string) => Promise<void> | void };
+              const connView = connLeaves[0].view as unknown as {
+                updateConnections?: (path: string) => Promise<void> | void;
+              };
               if (leaf.view.file && typeof connView.updateConnections === "function") {
-                void Promise.resolve(connView.updateConnections(leaf.view.file.path)).catch(e => this.handleError(e));
+                void Promise.resolve(connView.updateConnections(leaf.view.file.path)).catch((e) =>
+                  this.handleError(e),
+                );
               }
             }
           }
         }
-      })
+      }),
     );
   }
 
   onunload() {
-    URL.revokeObjectURL(this.workerUrl);
     for (const handle of this.indexDebounceMap.values()) window.clearTimeout(handle);
     this.indexDebounceMap.clear();
     void this.vaultIndexer?.flush();
@@ -521,81 +545,15 @@ export default class HormePlugin extends Plugin {
     }
   }
 
-  private async convertActiveNoteToPdf(view: MarkdownView): Promise<void> {
-    const file = view.file;
-    if (!file) return;
+  private async convertMarkdownFileToDocx(file: TFile): Promise<void> {
     try {
-      await this.saveAsPdf(view.getViewData(), file.name);
-      new Notice(`Note converted to PDF successfully.`);
+      const content = await this.app.vault.read(file);
+      const buffer = await this.docxService.generateBuffer(content);
+      await this.saveBinaryFile(file.name.replace(/\.md$/, ".docx"), buffer);
+      new Notice(`${file.name} converted to DOCX successfully.`);
     } catch (err: unknown) {
       this.handleError(err);
     }
-  }
-
-  async startFileConversion(file: TFile | File): Promise<void> {
-    const fileName = file.name;
-    const extension = file instanceof TFile ? file.extension : fileName.split(".").pop()?.toLowerCase();
-
-    const modal = new ConversionModal(this.app, fileName, extension === "md" ? "md" : "pdf", (targetFormat) => {
-      modal.setStarted();
-      void (async () => {
-        try {
-        if (extension === "pdf") {
-          const rawText = await this.pdfService.extractText(file, (p, s) => modal.updateProgress(p, s));
-          if (rawText) {
-            modal.updateProgress(0.9, "AI is reconstructing document structure...");
-            const prompt = `You are a world-class document reconstruction assistant, similar to 'Marker'. 
-I will provide you with structural text extracted from a PDF. 
-- Coordinates [x, y] are normalized to a 0-1000 scale (0,0 is top-left).
-- Font sizes and styles (bold, italic) are provided.
-- Pages are marked with '--- PAGE X ---'.
-
-Your Goal: Reconstruct the document into clean, professional Markdown.
-- Merge paragraphs and tables that are split across page breaks.
-- Identify the logical heading hierarchy (#, ##, ###) based on font size and positioning (e.g., centered large text is likely a Title).
-- Format tables using standard Markdown pipe syntax.
-- Extract math/equations into LaTeX blocks ($$ ... $$) if they appear in the text.
-- REMOVE all coordinate metadata [x:..., y:...] from the final output.
-- Return ONLY the clean markdown content.`;
-
-            const reconstructedMd = await this.aiGateway.generate(rawText, prompt, undefined, true);
-            
-            if (targetFormat === "markdown") {
-              await this.saveTextFile(fileName.replace(/\.pdf$/, ".md"), reconstructedMd);
-            } else if (targetFormat === "docx") {
-              modal.updateProgress(0.95, "Compiling DOCX...");
-              const buffer = await this.docxService.generateBuffer(reconstructedMd);
-              await this.saveBinaryFile(fileName.replace(/\.pdf$/, ".docx"), buffer);
-            }
-          }
-        } else if (extension === "md") {
-          const content = file instanceof TFile ? await this.app.vault.read(file) : await file.text();
-          if (targetFormat === "pdf") {
-            modal.updateProgress(0.5, "Generating PDF...");
-            await this.saveAsPdf(content, fileName);
-          } else if (targetFormat === "docx") {
-            modal.updateProgress(0.5, "Compiling DOCX...");
-            const buffer = await this.docxService.generateBuffer(content);
-            await this.saveBinaryFile(fileName.replace(/\.md$/, ".docx"), buffer);
-          }
-        }
-        new Notice(`${fileName} converted successfully.`);
-        modal.close();
-        } catch (err: unknown) {
-          this.handleError(err);
-          modal.close();
-        }
-      })();
-    });
-    modal.open();
-  }
-
-  private async saveTextFile(name: string, content: string) {
-    const folder = this.settings.exportFolder.trim() || "HORME";
-    if (!(await this.app.vault.adapter.exists(folder))) await this.app.vault.createFolder(folder);
-    let path = `${folder}/${name}`;
-    if (await this.app.vault.adapter.exists(path)) path = `${folder}/${new Date().getTime()}_${name}`;
-    await this.app.vault.create(path, content);
   }
 
   private async saveBinaryFile(name: string, buffer: Buffer | ArrayBuffer) {
@@ -606,42 +564,24 @@ Your Goal: Reconstruct the document into clean, professional Markdown.
     await this.app.vault.createBinary(path, buffer);
   }
 
-  private async saveAsPdf(markdown: string, originalName: string) {
-    const html2pdf = (await import("html2pdf.js")).default;
-    const div = activeDocument.createElement("div");
-    div.setCssProps({
-      fontFamily: "Inter, sans-serif",
-      fontSize: "11pt",
-      padding: "20mm",
-      width: "210mm",
-      background: "#fff"
-    });
-    const comp = new Component();
-    comp.load();
-    await MarkdownRenderer.render(this.app, markdown, div, "", comp);
-    activeDocument.body.appendChild(div);
-    try {
-      const blob: Blob = await html2pdf().from(div).set({
-        margin: 10, filename: originalName.replace(/\.md$/, ".pdf"),
-        jsPDF: { unit: "mm", format: "a4", orientation: "portrait" }
-      }).output("blob");
-      await this.saveBinaryFile(originalName.replace(/\.md$/, ".pdf"), await blob.arrayBuffer());
-    } finally {
-      activeDocument.body.removeChild(div);
-      comp.unload();
-    }
-  }
-
   /* ── Tagging ── */
 
   async suggestTagsForActiveNote() {
     const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
-    const view = activeView || (this.lastActiveMarkdownLeaf?.view instanceof MarkdownView ? this.lastActiveMarkdownLeaf.view : null);
+    const view =
+      activeView ||
+      (this.lastActiveMarkdownLeaf?.view instanceof MarkdownView ? this.lastActiveMarkdownLeaf.view : null);
     const file = view?.file;
-    if (!file) { new Notice("Horme: Open a note first."); return; }
+    if (!file) {
+      new Notice("Horme: Open a note first.");
+      return;
+    }
 
     const tags = await this.loadAllowedTags();
-    if (!tags.length) { new Notice("Horme: No tags found in vault."); return; }
+    if (!tags.length) {
+      new Notice("Horme: No tags found in vault.");
+      return;
+    }
 
     const raw = view.editor ? view.editor.getValue() : view.getViewData();
     const body = this.tagService.stripFrontmatter(raw);
@@ -649,7 +589,7 @@ Your Goal: Reconstruct the document into clean, professional Markdown.
 
     const keywordCandidates = this.tagService.rankCandidates(context, tags).slice(0, 60);
     const semanticCandidates = await this.tagIndexer.getSemanticCandidates(context, 60);
-    
+
     const candidates = Array.from(new Set([...keywordCandidates, ...semanticCandidates]));
 
     const prompt = `You are a tagging engine. Generate a newline-separated list of tags for the provided note content.
@@ -660,7 +600,7 @@ RULES:
 3. ZERO CHATTER: Return ONLY the raw tags. Do not include greetings, explanations, or stylistic comments.
 
 Allowed Tags:
-${candidates.map(t => `- ${t}`).join("\n")}`;
+${candidates.map((t) => `- ${t}`).join("\n")}`;
 
     new Notice("Horme: Generating tags…");
     this.setIndexingStatus("Generating tags...");
@@ -670,31 +610,38 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
       const response = tagsModel
         ? await this.aiGateway.generateWith(context, prompt, this.settings.tagsProvider, tagsModel)
         : await this.aiGateway.generate(context, prompt, undefined, true);
-      
-      const suggested = response.split("\n")
-        .map(t => {
+
+      const suggested = response
+        .split("\n")
+        .map((t) => {
           let tag = t.trim();
           // Clean out formatting bullet points or numbering sequences
-          tag = tag.replace(/^\s*(?:\d+\.|[\-\*])\s+/, "");
+          tag = tag.replace(/^\s*(?:\d+\.|[-*])\s+/, "");
           // Clean decorative boundaries and hash markers
-          tag = tag.replace(/^[\s\_\*\`\"\'\[\]\(\)#]+/, "").replace(/[\s\_\*\`\"\'\[\]\(\)]+$/, "");
+          tag = tag.replace(/^[\s_*`"'_[\]()#\]]+/, "").replace(/[\s_*`"'_[\]()\]]+$/, "");
           return tag;
         })
-        .filter(t => t.length > 0 && !t.includes(" "));
-      
-      if (!suggested.length) { new Notice("Horme: No valid tags generated."); return; }
+        .filter((t) => t.length > 0 && !t.includes(" "));
+
+      if (!suggested.length) {
+        new Notice("Horme: No valid tags generated.");
+        return;
+      }
 
       new ConfirmReplaceModal(
         this.app,
         "Add these tags?",
-        suggested.map(t => `#${t}`).join("\n"),
+        suggested.map((t) => `#${t}`).join("\n"),
         (edited) => {
           void (async () => {
-            const finalTags = edited.split("\n").map(t => t.trim().replace(/^#/, "")).filter(Boolean);
+            const finalTags = edited
+              .split("\n")
+              .map((t) => t.trim().replace(/^#/, ""))
+              .filter(Boolean);
             await this.tagService.applyTags(file, finalTags);
             new Notice("Horme: Tags updated ✓");
-          })().catch(err => this.handleError(err));
-        }
+          })().catch((err) => this.handleError(err));
+        },
       ).open();
     } catch (e: unknown) {
       this.handleError(e);
@@ -706,16 +653,17 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
   async loadAllowedTags(): Promise<string[]> {
     const path = this.settings.tagsFilePath.trim();
     if (!path) {
-      const tagMap = (this.app.metadataCache as unknown as { getTags?: () => Record<string, unknown> }).getTags?.() ?? {};
-      return Object.keys(tagMap).map(t => t.replace(/^#/, "").toLowerCase());
+      const tagMap =
+        (this.app.metadataCache as unknown as { getTags?: () => Record<string, unknown> }).getTags?.() ?? {};
+      return Object.keys(tagMap).map((t) => t.replace(/^#/, "").toLowerCase());
     }
     const file = this.app.vault.getAbstractFileByPath(path);
     if (file instanceof TFile) {
-        const content = await this.app.vault.read(file);
-        return content
-          .split("\n")
-          .map(l => l.trim().replace(/^#+/, "").toLowerCase())
-          .filter(l => l.length > 0 && !l.startsWith("//"));
+      const content = await this.app.vault.read(file);
+      return content
+        .split("\n")
+        .map((l) => l.trim().replace(/^#+/, "").toLowerCase())
+        .filter((l) => l.length > 0 && !l.startsWith("//"));
     }
     return [];
   }
@@ -724,24 +672,27 @@ ${candidates.map(t => `- ${t}`).join("\n")}`;
 
   private async runAction(editor: Editor, sel: string, sysPrompt: string, actionId?: string) {
     const STATUS_MESSAGES: Record<string, string> = {
-      proofread:  "Proofreading...",
-      expand:     "Expanding...",
-      summarize:  "Summarizing...",
-      beautify:   "Beautifying format...",
+      proofread: "Proofreading...",
+      expand: "Expanding...",
+      summarize: "Summarizing...",
+      beautify: "Beautifying format...",
       "fact-check": "Fact checking...",
-      rewrite:    "Rewriting...",
-      translate:  "Translating...",
+      rewrite: "Rewriting...",
+      translate: "Translating...",
     };
     const statusMsg = (actionId && STATUS_MESSAGES[actionId]) ?? "Processing...";
     new Notice("Horme: Thinking…");
     this.setIndexingStatus(statusMsg);
     try {
-      let messages = [
-        { role: "user", content: sel }
-      ];
+      const messages = [{ role: "user", content: sel }];
 
       // Skill Bypass: These actions should never use skills and should be fast.
-      const skipSkills = actionId === "summarize" || actionId === "beautify" || actionId === "translate" || actionId === "expand" || actionId === "rewrite";
+      const skipSkills =
+        actionId === "summarize" ||
+        actionId === "beautify" ||
+        actionId === "translate" ||
+        actionId === "expand" ||
+        actionId === "rewrite";
 
       if (skipSkills) {
         let finalPrompt = sysPrompt;
@@ -757,7 +708,7 @@ CRITICAL RULES:
 
 TARGET LANGUAGE: ${lang}`;
         }
-          
+
         const response = await this.aiGateway.generate(messages, finalPrompt, undefined, true);
         new ConfirmReplaceModal(this.app, sel, response, (edited) => {
           editor.replaceSelection(edited);
@@ -783,17 +734,18 @@ RULES:
       // Fact-check injection: force Wikipedia verification for every claim
       if (actionId === "fact-check") {
         targetSkillId = "wikipedia";
-        effectivePrompt += `\n\nCRITICAL INSTRUCTIONS FOR FACT-CHECKING:`
-          + `\n1. Extract EACH verifiable factual claim from the text (dates, names, events, statistics, scientific facts).`
-          + `\n2. For EACH claim, you MUST call the wikipedia skill to verify it. Do NOT rely on your training data alone.`
-          + `\n3. If the text is in Spanish, use {"language": "es"} for better coverage. Use "en" for English text.`
-          + `\n4. You may call the wikipedia skill MULTIPLE TIMES — once per claim or group of related claims.`
-          + `\n5. Format your final response as:`
-          + `\n\n**Claim:** [the exact claim from the text]`
-          + `\n**Verdict:** ✅ Accurate / ❌ Inaccurate / ⚠️ Unverifiable`
-          + `\n**Source:** [relevant Wikipedia excerpt]`
-          + `\n**Note:** [brief explanation of match or discrepancy]`
-          + `\n\nRepeat for each claim. End with an overall assessment.`;
+        effectivePrompt +=
+          `\n\nCRITICAL INSTRUCTIONS FOR FACT-CHECKING:` +
+          `\n1. Extract EACH verifiable factual claim from the text (dates, names, events, statistics, scientific facts).` +
+          `\n2. For EACH claim, you MUST call the wikipedia skill to verify it. Do NOT rely on your training data alone.` +
+          `\n3. If the text is in Spanish, use {"language": "es"} for better coverage. Use "en" for English text.` +
+          `\n4. You may call the wikipedia skill MULTIPLE TIMES — once per claim or group of related claims.` +
+          `\n5. Format your final response as:` +
+          `\n\n**Claim:** [the exact claim from the text]` +
+          `\n**Verdict:** ✅ Accurate / ❌ Inaccurate / ⚠️ Unverifiable` +
+          `\n**Source:** [relevant Wikipedia excerpt]` +
+          `\n**Note:** [brief explanation of match or discrepancy]` +
+          `\n\nRepeat for each claim. End with an overall assessment.`;
       }
 
       let skillIterations = 0;
@@ -807,11 +759,11 @@ RULES:
         // Use non-streaming generation for context-menu actions
         // PASS THE ENTIRE HISTORY so the model doesn't lose context after a skill call
         const response = await this.aiGateway.generate(
-          messages, 
+          messages,
           effectivePrompt,
           undefined,
           false,
-          targetSkillId
+          targetSkillId,
         );
 
         const skillCalls = this.skillManager.parseSkillCalls(response);
@@ -829,12 +781,12 @@ RULES:
         for (const call of skillCalls) {
           new Notice(`Horme Skill: ${call.skillId}...`);
           const result = await this.skillManager.executeSkill(call);
-          messages.push({ 
-            role: "system", 
-            content: `RESULT FROM SKILL "${call.skillId}":\n\n${result}\n\nBased on this, finish your task.` 
+          messages.push({
+            role: "system",
+            content: `RESULT FROM SKILL "${call.skillId}":\n\n${result}\n\nBased on this, finish your task.`,
           });
         }
-        
+
         // Loop continues to feed the result back to the model
         new Notice("Horme: Processing skill results...");
       }
@@ -871,7 +823,9 @@ RULES:
       }
 
       const prompt = `Summarise the following note in ${lang}. Write a concise 1-2 sentence summary that captures the core topic and key points. Return ONLY the summary text — no quotes, no formatting, no explanation.`;
-      const summary = (await this.aiGateway.generate(bodyContent.slice(0, 6000), prompt, undefined, true)).trim();
+      const summary = (
+        await this.aiGateway.generate(bodyContent.slice(0, 6000), prompt, undefined, true)
+      ).trim();
 
       if (!summary) {
         new Notice("Horme: AI returned an empty summary.");
@@ -900,22 +854,20 @@ RULES:
         const afterFm = fullContent.slice(fmEndIndex);
 
         if (existingMatch) {
-          const oldSummary = existingMatch[0].replace(`${field}:`, "").trim().replace(/^[''"]|[''"]$/g, "");
-          new ConfirmReplaceModal(
-            this.app,
-            oldSummary,
-            summary,
-            (edited) => {
-              void (async () => {
-                const finalSummary = edited.trim();
-                const updatedFieldValue = `${field}: "${finalSummary.replace(/"/g, '\\"')}"`;
-                const updatedFm = fmBlock.replace(fieldRegex, () => updatedFieldValue);
-                const finalContent = `---\n${updatedFm}\n---\n${afterFm}`;
-                await this.app.vault.modify(file, finalContent);
-                new Notice(`Horme: Summary updated in "${field}" field.`);
-              })().catch(e => this.handleError(e));
-            }
-          ).open();
+          const oldSummary = existingMatch[0]
+            .replace(`${field}:`, "")
+            .trim()
+            .replace(/^[''"]|[''"]$/g, "");
+          new ConfirmReplaceModal(this.app, oldSummary, summary, (edited) => {
+            void (async () => {
+              const finalSummary = edited.trim();
+              const updatedFieldValue = `${field}: "${finalSummary.replace(/"/g, '\\"')}"`;
+              const updatedFm = fmBlock.replace(fieldRegex, () => updatedFieldValue);
+              const finalContent = `---\n${updatedFm}\n---\n${afterFm}`;
+              await this.app.vault.modify(file, finalContent);
+              new Notice(`Horme: Summary updated in "${field}" field.`);
+            })().catch((e) => this.handleError(e));
+          }).open();
           return;
         } else {
           // Field doesn't exist yet — append it to the existing frontmatter block
@@ -940,24 +892,26 @@ RULES:
 
   private buildSubmenu(menu: Menu, editor: Editor, sel: string) {
     for (const a of ACTIONS) {
-      menu.addItem(item => {
+      menu.addItem((item) => {
         item.setTitle(a.title).onClick(() => {
-          void this.runAction(editor, sel, a.prompt, a.id).catch(e => this.handleError(e));
+          void this.runAction(editor, sel, a.prompt, a.id).catch((e) => this.handleError(e));
         });
       });
     }
-    menu.addItem(item => {
+    menu.addItem((item) => {
       item.setTitle("Rewrite").onClick(() => {
         new RewriteModal(this.app, (tone) => {
           const prompt = `Rewrite the following text in a ${tone} tone. Preserve the original meaning. Return only the rewritten text.`;
-          void this.runAction(editor, sel, prompt, "rewrite").catch(e => this.handleError(e));
+          void this.runAction(editor, sel, prompt, "rewrite").catch((e) => this.handleError(e));
         }).open();
       });
     });
-    menu.addItem(item => {
+    menu.addItem((item) => {
       item.setTitle("Translate").onClick(() => {
         new TranslateModal(this.app, (lang) => {
-          void this.runAction(editor, sel, `Translate to ${lang}:`, "translate").catch(e => this.handleError(e));
+          void this.runAction(editor, sel, `Translate to ${lang}:`, "translate").catch((e) =>
+            this.handleError(e),
+          );
         }).open();
       });
     });
@@ -973,20 +927,20 @@ RULES:
   async activateChat() {
     let leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
     if (!leaf) {
-        // Explicitly try to get the right sidebar leaf
-        leaf = this.app.workspace.getRightLeaf(false) as WorkspaceLeaf;
-        if (!leaf) {
-          new Notice("Horme: Could not open chat panel.");
-          return;
-        }
-        await leaf.setViewState({ type: VIEW_TYPE, active: true });
+      // Explicitly try to get the right sidebar leaf
+      leaf = this.app.workspace.getRightLeaf(false) as WorkspaceLeaf;
+      if (!leaf) {
+        new Notice("Horme: Could not open chat panel.");
+        return;
+      }
+      await leaf.setViewState({ type: VIEW_TYPE, active: true });
     }
-    
+
     // On mobile, ensure the right sidebar is actually opened
     if (Platform.isMobile) {
       this.app.workspace.rightSplit.expand();
     }
-    
+
     await this.app.workspace.revealLeaf(leaf);
   }
 
@@ -998,23 +952,24 @@ RULES:
 
     let leaf = this.app.workspace.getLeavesOfType(CONNECTIONS_VIEW_TYPE)[0];
     if (!leaf) {
-        leaf = this.app.workspace.getRightLeaf(false) as WorkspaceLeaf;
-        if (!leaf) {
-          new Notice("Horme: Could not open connections panel.");
-          return;
-        }
-        await leaf.setViewState({ type: CONNECTIONS_VIEW_TYPE, active: true });
+      leaf = this.app.workspace.getRightLeaf(false) as WorkspaceLeaf;
+      if (!leaf) {
+        new Notice("Horme: Could not open connections panel.");
+        return;
+      }
+      await leaf.setViewState({ type: CONNECTIONS_VIEW_TYPE, active: true });
     }
-    
+
     if (Platform.isMobile) {
       this.app.workspace.rightSplit.expand();
     }
-    
+
     await this.app.workspace.revealLeaf(leaf);
-    
+
     // Initial load
-    const activeView = this.app.workspace.getActiveViewOfType(MarkdownView) || 
-                       (this.lastActiveMarkdownLeaf?.view instanceof MarkdownView ? this.lastActiveMarkdownLeaf.view : null);
+    const activeView =
+      this.app.workspace.getActiveViewOfType(MarkdownView) ||
+      (this.lastActiveMarkdownLeaf?.view instanceof MarkdownView ? this.lastActiveMarkdownLeaf.view : null);
     if (activeView && activeView.file) {
       await (leaf.view as HormeConnectionsView).updateConnections(activeView.file.path);
     }
@@ -1034,14 +989,12 @@ RULES:
         if (res.status === 200) {
           const json: unknown = res.json;
           const dataArr = asArray(getRecordProp(json, "data")) ?? [];
-          fetchedModels = dataArr
-            .map((m) => getStringProp(m, "id"))
-            .filter((m): m is string => Boolean(m));
+          fetchedModels = dataArr.map((m) => getStringProp(m, "id")).filter((m): m is string => Boolean(m));
         }
       } else {
         fetchedModels = PROVIDER_MODELS[provider] || [];
       }
-      
+
       this.models = fetchedModels;
       return fetchedModels;
     } catch (e: unknown) {
@@ -1060,15 +1013,16 @@ RULES:
         const res = await requestUrl({ url, throw: false });
         return res.status === 200;
       }
-      if (p === "lmstudio") return (await requestUrl({ url: `${this.settings.lmStudioUrl}/v1/models` })).status === 200;
-      
+      if (p === "lmstudio")
+        return (await requestUrl({ url: `${this.settings.lmStudioUrl}/v1/models` })).status === 200;
+
       // Live Cloud Provider Check
       const apiKey = this.getApiKeyForProvider(p);
 
       if (p === "openai" && apiKey) {
         const res = await requestUrl({
           url: "https://api.openai.com/v1/models",
-          headers: { "Authorization": `Bearer ${apiKey}` },
+          headers: { Authorization: `Bearer ${apiKey}` },
           throw: false,
         });
         return res.status === 200;
@@ -1088,14 +1042,14 @@ RULES:
           headers: {
             "x-api-key": apiKey,
             "anthropic-version": "2023-06-01",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
           },
           throw: false,
-          body: JSON.stringify({ 
+          body: JSON.stringify({
             model: this.settings.claudeModel,
-            max_tokens: 1, 
-            messages: [{ role: "user", content: "hi" }] 
-          })
+            max_tokens: 1,
+            messages: [{ role: "user", content: "hi" }],
+          }),
         });
         // We accept 200 or even a 400 (if it's a model mismatch) as "connected" if it's not a 401/403
         return res.status >= 200 && res.status < 401;
@@ -1103,7 +1057,7 @@ RULES:
       if (p === "groq" && apiKey) {
         const res = await requestUrl({
           url: "https://api.groq.com/openai/v1/models",
-          headers: { "Authorization": `Bearer ${apiKey}` },
+          headers: { Authorization: `Bearer ${apiKey}` },
           throw: false,
         });
         return res.status === 200;
@@ -1111,7 +1065,7 @@ RULES:
       if (p === "openrouter" && apiKey) {
         const res = await requestUrl({
           url: "https://openrouter.ai/api/v1/models",
-          headers: { "Authorization": `Bearer ${apiKey}` },
+          headers: { Authorization: `Bearer ${apiKey}` },
           throw: false,
         });
         return res.status === 200;
@@ -1119,24 +1073,26 @@ RULES:
       if (p === "mistral" && apiKey) {
         const res = await requestUrl({
           url: "https://api.mistral.ai/v1/models",
-          headers: { "Authorization": `Bearer ${apiKey}` },
+          headers: { Authorization: `Bearer ${apiKey}` },
           throw: false,
         });
         return res.status === 200;
       }
 
       return false; // No key or failed check
-    } catch { return false; }
+    } catch {
+      return false;
+    }
   }
 
   handleError(e: unknown, context?: string) {
     console.error("Horme Error:", e);
     const title = context || "Plugin Error";
     const message = errorToMessage(e) || "An unknown error occurred.";
-    
+
     // Log to Intelligence Hub
     this.diagnosticService.report(title, message, "error");
-    
+
     // Visual alert
     new HormeErrorModal(this.app, title, message).open();
   }
@@ -1152,14 +1108,19 @@ RULES:
           if (content.trim()) prompt = content;
         } catch (e: unknown) {
           console.error("Horme: Failed to read system prompt note", e);
-          this.diagnosticService.report("System Prompt", `Failed to read prompt note: ${errorToMessage(e)}`, "warning");
+          this.diagnosticService.report(
+            "System Prompt",
+            `Failed to read prompt note: ${errorToMessage(e)}`,
+            "warning",
+          );
         }
       }
     }
-    
+
     // Always append mandatory quotation rules by language
-    prompt += "\n\nQuotation marks by language: If responding in Spanish, use angled quotation marks (« ») for normal quotations and do not use standard double quotes (\" \") except where technically required (code, commands, file paths, JSON/YAML, programming syntax) or for inner quotations nested within « ». If responding in English, use standard double quotes (\" \") for normal quotations and do not use « ». Preserve code and technical syntax exactly as required.";
-    
+    prompt +=
+      '\n\nQuotation marks by language: If responding in Spanish, use angled quotation marks (« ») for normal quotations and do not use standard double quotes (" ") except where technically required (code, commands, file paths, JSON/YAML, programming syntax) or for inner quotations nested within « ». If responding in English, use standard double quotes (" ") for normal quotations and do not use « ». Preserve code and technical syntax exactly as required.';
+
     return prompt;
   }
 
@@ -1186,36 +1147,44 @@ RULES:
     return presets;
   }
 
-  private async addPresetFromFile(file: TFile, presets: Array<{ name: string; prompt: string }>, seenPaths: Set<string>) {
+  private async addPresetFromFile(
+    file: TFile,
+    presets: Array<{ name: string; prompt: string }>,
+    seenPaths: Set<string>,
+  ) {
     if (seenPaths.has(file.path)) return;
     try {
       const content = await this.app.vault.read(file);
       presets.push({
         name: file.basename,
-        prompt: content.trim()
+        prompt: content.trim(),
       });
       seenPaths.add(file.path);
     } catch (e: unknown) {
       console.error(`Horme: Failed to read preset note ${file.path}`, e);
-      this.diagnosticService.report("Presets", `Failed to read preset: ${file.path} — ${errorToMessage(e)}`, "warning");
+      this.diagnosticService.report(
+        "Presets",
+        `Failed to read preset: ${file.path} — ${errorToMessage(e)}`,
+        "warning",
+      );
     }
   }
 
   setIndexingStatus(text: string | null) {
     if (!this.statusBarItem) return;
 
-    const isBackgroundPattern = text && (
-      text.includes("Indexing") || 
-      text.includes("Scanning") || 
-      text.includes("Pre-translating") || 
-      text.includes("Loading Vault Index") ||
-      text.includes("Saving brain index") ||
-      text.includes("Waiting for brain index") ||
-      text.includes("Initializing")
-    );
+    const isBackgroundPattern =
+      text &&
+      (text.includes("Indexing") ||
+        text.includes("Scanning") ||
+        text.includes("Pre-translating") ||
+        text.includes("Loading Vault Index") ||
+        text.includes("Saving brain index") ||
+        text.includes("Waiting for brain index") ||
+        text.includes("Initializing"));
 
     if (text === null) {
-      const isBackgroundActive = Boolean(this.vaultIndexer?.isIndexing || this.vaultIndexer?.isProcessingQueue);
+      const isBackgroundActive = this.vaultIndexer?.isIndexing || this.vaultIndexer?.isProcessingQueue;
       if (!isBackgroundActive) {
         this.backgroundStatusText = null;
       }
@@ -1228,7 +1197,11 @@ RULES:
       }
     }
 
-    const displayValue = this.foregroundStatusText ?? (Boolean(this.vaultIndexer?.isIndexing || this.vaultIndexer?.isProcessingQueue) ? this.backgroundStatusText : null);
+    const displayValue =
+      this.foregroundStatusText ??
+      (this.vaultIndexer?.isIndexing || this.vaultIndexer?.isProcessingQueue
+        ? this.backgroundStatusText
+        : null);
 
     if (displayValue === null) {
       this.statusBarItem.setCssStyles({ display: "none" });
@@ -1245,12 +1218,32 @@ RULES:
       secretIdField: string;
       defaultSecretId: string;
     }> = [
-      { legacyField: "claudeApiKey", secretIdField: "claudeSecretId", defaultSecretId: "horme-claude-api-key" },
-      { legacyField: "geminiApiKey", secretIdField: "geminiSecretId", defaultSecretId: "horme-gemini-api-key" },
-      { legacyField: "openaiApiKey", secretIdField: "openaiSecretId", defaultSecretId: "horme-openai-api-key" },
+      {
+        legacyField: "claudeApiKey",
+        secretIdField: "claudeSecretId",
+        defaultSecretId: "horme-claude-api-key",
+      },
+      {
+        legacyField: "geminiApiKey",
+        secretIdField: "geminiSecretId",
+        defaultSecretId: "horme-gemini-api-key",
+      },
+      {
+        legacyField: "openaiApiKey",
+        secretIdField: "openaiSecretId",
+        defaultSecretId: "horme-openai-api-key",
+      },
       { legacyField: "groqApiKey", secretIdField: "groqSecretId", defaultSecretId: "horme-groq-api-key" },
-      { legacyField: "openRouterApiKey", secretIdField: "openRouterSecretId", defaultSecretId: "horme-openrouter-api-key" },
-      { legacyField: "mistralApiKey", secretIdField: "mistralSecretId", defaultSecretId: "horme-mistral-api-key" },
+      {
+        legacyField: "openRouterApiKey",
+        secretIdField: "openRouterSecretId",
+        defaultSecretId: "horme-openrouter-api-key",
+      },
+      {
+        legacyField: "mistralApiKey",
+        secretIdField: "mistralSecretId",
+        defaultSecretId: "horme-mistral-api-key",
+      },
     ];
 
     let changed = false;
@@ -1284,7 +1277,9 @@ RULES:
     }
 
     if (migratedCount > 0) {
-      new Notice(`Horme: Migrated ${migratedCount} API key${migratedCount === 1 ? "" : "s"} to Obsidian Secret Storage.`);
+      new Notice(
+        `Horme: Migrated ${migratedCount} API key${migratedCount === 1 ? "" : "s"} to Obsidian Secret Storage.`,
+      );
     }
 
     return changed;
@@ -1293,7 +1288,7 @@ RULES:
   async loadSettings() {
     const loadedUnknown: unknown = await this.loadData();
     const loaded: Record<string, unknown> =
-      (loadedUnknown && typeof loadedUnknown === "object")
+      loadedUnknown && typeof loadedUnknown === "object"
         ? { ...(loadedUnknown as Record<string, unknown>) }
         : {};
 
@@ -1311,7 +1306,7 @@ RULES:
     // If the user switches to a different *cloud* provider, force the warning flags back to false
     // so they must acknowledge again before any note/document content leaves the device.
     const providerToPersist =
-      (this._mobileProviderOverrideActive && this._originalProvider !== null)
+      this._mobileProviderOverrideActive && this._originalProvider !== null
         ? this._originalProvider
         : this.settings.aiProvider;
 
@@ -1330,20 +1325,37 @@ RULES:
     if (this._mobileProviderOverrideActive && this._originalProvider !== null) {
       const overriddenProvider = this.settings.aiProvider;
       this.settings.aiProvider = this._originalProvider;
-      
+
       let overriddenModel = "";
       const p = this._originalProvider;
-      if (p === "claude") { overriddenModel = this.settings.claudeModel; this.settings.claudeModel = this._originalModel || ""; }
-      else if (p === "gemini") { overriddenModel = this.settings.geminiModel; this.settings.geminiModel = this._originalModel || ""; }
-      else if (p === "openai") { overriddenModel = this.settings.openaiModel; this.settings.openaiModel = this._originalModel || ""; }
-      else if (p === "groq") { overriddenModel = this.settings.groqModel; this.settings.groqModel = this._originalModel || ""; }
-      else if (p === "openrouter") { overriddenModel = this.settings.openRouterModel; this.settings.openRouterModel = this._originalModel || ""; }
-      else if (p === "mistral") { overriddenModel = this.settings.mistralModel; this.settings.mistralModel = this._originalModel || ""; }
-      else if (p === "lmstudio") { overriddenModel = this.settings.lmStudioModel; this.settings.lmStudioModel = this._originalModel || ""; }
-      else { overriddenModel = this.settings.defaultModel; this.settings.defaultModel = this._originalModel || ""; }
+      if (p === "claude") {
+        overriddenModel = this.settings.claudeModel;
+        this.settings.claudeModel = this._originalModel || "";
+      } else if (p === "gemini") {
+        overriddenModel = this.settings.geminiModel;
+        this.settings.geminiModel = this._originalModel || "";
+      } else if (p === "openai") {
+        overriddenModel = this.settings.openaiModel;
+        this.settings.openaiModel = this._originalModel || "";
+      } else if (p === "groq") {
+        overriddenModel = this.settings.groqModel;
+        this.settings.groqModel = this._originalModel || "";
+      } else if (p === "openrouter") {
+        overriddenModel = this.settings.openRouterModel;
+        this.settings.openRouterModel = this._originalModel || "";
+      } else if (p === "mistral") {
+        overriddenModel = this.settings.mistralModel;
+        this.settings.mistralModel = this._originalModel || "";
+      } else if (p === "lmstudio") {
+        overriddenModel = this.settings.lmStudioModel;
+        this.settings.lmStudioModel = this._originalModel || "";
+      } else {
+        overriddenModel = this.settings.defaultModel;
+        this.settings.defaultModel = this._originalModel || "";
+      }
 
       await this.saveData(this.settings);
-      
+
       this.settings.aiProvider = overriddenProvider;
       if (p === "claude") this.settings.claudeModel = overriddenModel;
       else if (p === "gemini") this.settings.geminiModel = overriddenModel;
@@ -1357,7 +1369,7 @@ RULES:
       await this.saveData(this.settings);
     }
     this._lastPersistedAiProvider = providerToPersist;
-    this.settingsChangeListeners.forEach(cb => cb());
+    this.settingsChangeListeners.forEach((cb) => cb());
     this.skillManager?.loadCustomSkills();
   }
 }

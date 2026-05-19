@@ -79,30 +79,43 @@ export const DEFAULT_SETTINGS: HormeSettings = {
   conceptNoteSourceField: "Source",
 
   searchMetadataCap: 0.25,
-  searchContentCap: 0.20,
+  searchContentCap: 0.2,
   tagTranslationDictionary: {},
   tagCacheSanitised: false,
 };
 
 export const PROVIDER_MODELS: Record<string, string[]> = {
   gemini: ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.5-pro"],
-  claude: ["claude-3-5-haiku-latest", "claude-3-5-sonnet-latest", "claude-3-opus-latest", "claude-haiku-4-5-20251001"],
+  claude: [
+    "claude-3-5-haiku-latest",
+    "claude-3-5-sonnet-latest",
+    "claude-3-opus-latest",
+    "claude-haiku-4-5-20251001",
+  ],
   openai: ["gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo"],
   groq: ["llama-3.1-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768", "gemma2-9b-it"],
   openrouter: ["mistralai/mistral-7b-instruct:free", "google/gemma-7b-it:free", "openchat/openchat-7b:free"],
-  mistral: ["mistral-large-latest", "mistral-small-latest", "pixtral-large-latest", "open-mistral-nemo", "codestral-latest"]
+  mistral: [
+    "mistral-large-latest",
+    "mistral-small-latest",
+    "pixtral-large-latest",
+    "open-mistral-nemo",
+    "codestral-latest",
+  ],
 };
 
 export const ACTIONS: Array<{ id: string; title: string; prompt: string }> = [
   {
     id: "proofread",
     title: "Proofread",
-    prompt: "Proofread the following text. Fix grammar, spelling, and punctuation errors. Return only the corrected text with no explanation.",
+    prompt:
+      "Proofread the following text. Fix grammar, spelling, and punctuation errors. Return only the corrected text with no explanation.",
   },
   {
     id: "expand",
     title: "Expand",
-    prompt: "You are a text-expansion engine. Your task is to add detail while maintaining the original meaning and tone.\n\nRULES:\n1. ZERO CHATTER: Return EXCLUSIVELY the raw expanded text. No explanations, no feedback, no preamble.",
+    prompt:
+      "You are a text-expansion engine. Your task is to add detail while maintaining the original meaning and tone.\n\nRULES:\n1. ZERO CHATTER: Return EXCLUSIVELY the raw expanded text. No explanations, no feedback, no preamble.",
   },
   {
     id: "summarize",
@@ -112,12 +125,14 @@ export const ACTIONS: Array<{ id: string; title: string; prompt: string }> = [
   {
     id: "beautify",
     title: "Beautify Format",
-    prompt: "You are a Markdown formatting engine. Your task is to fix the structure (headings, lists, spacing) of the provided text.\n\nRULES:\n1. Never alter the actual words or meaning.\n2. ZERO CHATTER: Return EXCLUSIVELY the raw beautified markdown. Do not include greetings, explanations, or preamble.",
+    prompt:
+      "You are a Markdown formatting engine. Your task is to fix the structure (headings, lists, spacing) of the provided text.\n\nRULES:\n1. Never alter the actual words or meaning.\n2. ZERO CHATTER: Return EXCLUSIVELY the raw beautified markdown. Do not include greetings, explanations, or preamble.",
   },
   {
     id: "fact-check",
     title: "Fact check",
-    prompt: "Fact-check the following text. For each claim, state whether it is accurate, inaccurate, or unverifiable, and briefly explain why. Return only the fact-check analysis.",
+    prompt:
+      "Fact-check the following text. For each claim, state whether it is accurate, inaccurate, or unverifiable, and briefly explain why. Return only the fact-check analysis.",
   },
 ];
 

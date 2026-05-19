@@ -5,17 +5,18 @@ import { asArray, errorToMessage, getRecordProp, getStringProp } from "../utils/
 export class DuckDuckGoSkill implements Skill {
   id = "ddg_search";
   name = "DuckDuckGo Instant Answer";
-  description = "Searches DuckDuckGo for instant answers, quick facts, and topic summaries. Useful for recent events, technical specs, and claims not covered by Wikipedia.";
+  description =
+    "Searches DuckDuckGo for instant answers, quick facts, and topic summaries. Useful for recent events, technical specs, and claims not covered by Wikipedia.";
   terminal = true;
   primaryParam = "query";
-  
+
   parameters: SkillParameter[] = [
     {
       name: "query",
       type: "string",
       description: "The search query or claim to look up.",
-      required: true
-    }
+      required: true,
+    },
   ];
 
   instructions = `To use this skill, output exactly: <call:ddg_search>{"query": "your search query"}</call>. Use this as a complement to Wikipedia when you need to verify recent events, technical specifications, or niche topics that Wikipedia may not cover. This skill is also useful as a second opinion to cross-reference Wikipedia findings.`;
@@ -24,7 +25,7 @@ export class DuckDuckGoSkill implements Skill {
     try {
       const query = getStringProp(params, "query");
       if (!query) return `Invalid parameters for ${this.name}: expected {"query": string}.`;
-      
+
       const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`;
       const res = await requestUrlWithTimeout({ url });
       const data: unknown = res.json;
@@ -73,7 +74,7 @@ export class DuckDuckGoSkill implements Skill {
             return Boolean(text && text.trim().length > 0);
           })
           .slice(0, 3);
-        
+
         if (topics.length > 0) {
           output += "**Related:**\n";
           for (const topic of topics) {
@@ -96,7 +97,6 @@ export class DuckDuckGoSkill implements Skill {
 
       return output;
     } catch (e: unknown) {
-
       console.error("Horme DuckDuckGo Skill Error:", e);
       throw new Error(errorToMessage(e));
     }

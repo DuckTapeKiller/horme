@@ -27,16 +27,16 @@ export class GroqProvider implements AiProvider {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${this.apiKey}`
+        Authorization: `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify({
         model,
         messages: [
           { role: "system", content: system },
-          { role: "user", content: prompt }
+          { role: "user", content: prompt },
         ],
         temperature: this.temperature,
-        max_tokens: this.maxTokens
+        max_tokens: this.maxTokens,
       }),
       throw: false,
     });
@@ -51,26 +51,30 @@ export class GroqProvider implements AiProvider {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${this.apiKey}`
+        Authorization: `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify({
         model,
         messages: msgs,
         temperature: this.temperature,
-        max_tokens: this.maxTokens
+        max_tokens: this.maxTokens,
       }),
       throw: false,
     });
     if (res.status !== 200) throw new Error(`Groq error: ${res.status}`);
     return this.extractContent(res.json as unknown);
   }
-  async stream(msgs: Array<{ role: string; content: string }>, model: string, signal?: AbortSignal): Promise<ReadableStreamDefaultReader<Uint8Array>> {
+  async stream(
+    msgs: Array<{ role: string; content: string }>,
+    model: string,
+    signal?: AbortSignal,
+  ): Promise<ReadableStreamDefaultReader<Uint8Array>> {
     if (!this.apiKey) throw new Error("No Groq API Key");
     const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${this.apiKey}`,
+        Authorization: `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify({
         model,

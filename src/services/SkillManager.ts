@@ -37,17 +37,19 @@ export class SkillManager {
 
   getSkillInstructions(suppressVaultSkill = false, targetSkillId?: string): string {
     // Privacy guard: never advertise vault_links if vault search is locked
-    const vaultLocked = !this.plugin.settings.vaultBrainEnabled
-      || (!this.plugin.isLocalProviderActive() && !this.plugin.settings.allowCloudRAG);
+    const vaultLocked =
+      !this.plugin.settings.vaultBrainEnabled ||
+      (!this.plugin.isLocalProviderActive() && !this.plugin.settings.allowCloudRAG);
 
     let instructions = "## AGENT SKILLS\n";
-    instructions += "You have access to specialized skills. To invoke a skill, you MUST output a specific tag in your response. " +
-                    "Do not explain the skill call, just output the tag. You can think first, then call the skill.\n\n";
+    instructions +=
+      "You have access to specialized skills. To invoke a skill, you MUST output a specific tag in your response. " +
+      "Do not explain the skill call, just output the tag. You can think first, then call the skill.\n\n";
 
     for (const skill of this.skills.values()) {
       // If a specific skill is targeted, skip all others
       if (targetSkillId && skill.id !== targetSkillId) continue;
-      
+
       // Suppress vault_links when RAG context has already been injected OR vault is privacy-locked
       if ((suppressVaultSkill || vaultLocked) && skill.id === "vault_links") continue;
       instructions += `### Skill: ${skill.name} (id: ${skill.id})\n`;
@@ -71,7 +73,7 @@ export class SkillManager {
       this.plugin.diagnosticService.report(
         "Skill Parser",
         `Refusing to parse skill calls. Text length (${text.length} bytes) exceeds 200KB limit.`,
-        "warning"
+        "warning",
       );
       return [];
     }
@@ -84,7 +86,7 @@ export class SkillManager {
     const isEscaped = (str: string, index: number): boolean => {
       let count = 0;
       for (let i = index - 1; i >= 0; i--) {
-        if (str[i] === '\\') count++;
+        if (str[i] === "\\") count++;
         else break;
       }
       return count % 2 !== 0;
@@ -98,11 +100,11 @@ export class SkillManager {
       let jsonStart = -1;
       for (let i = startIdx; i < text.length; i++) {
         const char = text[i];
-        if (char === '{') {
+        if (char === "{") {
           jsonStart = i;
           break;
         }
-        if (char === '<') {
+        if (char === "<") {
           break;
         }
       }
@@ -122,9 +124,9 @@ export class SkillManager {
           inString = !inString;
         }
         if (!inString) {
-          if (char === '{') {
+          if (char === "{") {
             braceCount++;
-          } else if (char === '}') {
+          } else if (char === "}") {
             braceCount--;
             if (braceCount === 0) {
               jsonEnd = i;
@@ -187,7 +189,7 @@ export class SkillManager {
       this.plugin.diagnosticService.report(
         "Skill Engine",
         `Skill: ${skill.name} / Execution failed: ${errorMessage}`,
-        "error"
+        "error",
       );
       console.error(`Horme Skill Error [${skill.name}]:`, e);
       return `Error: ${skill.name} failed. ${errorMessage}`;
@@ -214,13 +216,17 @@ export class SkillManager {
       // Register each custom skill from settings
       for (const def of this.plugin.settings.customSkills) {
         if (!def.id || !def.name) {
-          this.plugin.diagnosticService.report("Skill Loader", `Invalid custom skill definition: ${def.name || "Unknown"}`, "warning");
+          this.plugin.diagnosticService.report(
+            "Skill Loader",
+            `Invalid custom skill definition: ${def.name || "Unknown"}`,
+            "warning",
+          );
           continue;
         }
         this.skills.set(def.id, new CustomSkill(this.plugin.app, def));
       }
       // Refresh the dropdown in any open chat views
-      this.plugin.app.workspace.iterateAllLeaves(leaf => {
+      this.plugin.app.workspace.iterateAllLeaves((leaf) => {
         const view = leaf.view as unknown as { buildSkillsMenu?: () => void };
         if (typeof view.buildSkillsMenu === "function") {
           view.buildSkillsMenu();

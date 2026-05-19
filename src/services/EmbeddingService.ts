@@ -22,16 +22,14 @@ export class EmbeddingService {
    */
   async getEmbeddings(texts: string[]): Promise<number[][]> {
     const chatProvider = this.plugin.settings.aiProvider;
-    const embedProvider = (chatProvider === "ollama" || chatProvider === "lmstudio") 
-      ? chatProvider 
-      : "ollama";
+    const embedProvider = chatProvider === "ollama" || chatProvider === "lmstudio" ? chatProvider : "ollama";
 
     const BATCH_SIZE = 32;
     const allEmbeddings: number[][] = [];
 
     for (let i = 0; i < texts.length; i += BATCH_SIZE) {
-      const batch = texts.slice(i, i + BATCH_SIZE).map(t => t.replace(/\0/g, "").trim());
-      
+      const batch = texts.slice(i, i + BATCH_SIZE).map((t) => t.replace(/\0/g, "").trim());
+
       if (embedProvider === "ollama") {
         const result = await this.getOllamaEmbeddingsBatch(batch);
         allEmbeddings.push(...result);
@@ -47,7 +45,7 @@ export class EmbeddingService {
     try {
       const data = JSON.stringify({
         model: this.plugin.settings.ragEmbeddingModel || "nomic-embed-text",
-        input: inputs
+        input: inputs,
       });
 
       const res = await requestUrl({
@@ -55,7 +53,7 @@ export class EmbeddingService {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: data,
-        throw: false
+        throw: false,
       });
 
       if (res.status === 200) {
@@ -74,7 +72,11 @@ export class EmbeddingService {
       }
     } catch (e: unknown) {
       this.plugin.debugWarn("Horme: Batch embed failed, falling back to sequential.", e);
-      this.plugin.diagnosticService.report("Embeddings", `Batch embed failed, falling back to sequential: ${errorToMessage(e)}`, "warning");
+      this.plugin.diagnosticService.report(
+        "Embeddings",
+        `Batch embed failed, falling back to sequential: ${errorToMessage(e)}`,
+        "warning",
+      );
     }
 
     // Fallback: sequential one-at-a-time with dynamic dimension recovery
@@ -106,8 +108,14 @@ export class EmbeddingService {
       const msg = errorToMessage(e);
       const isContextError = msg.includes("context length") || msg.includes("400");
       if (isContextError && attempt < 3) {
-        this.plugin.debugWarn(`Horme: Chunk too long (attempt ${attempt + 1}), retrying at ${limits[attempt + 1]} chars...`);
-        this.plugin.diagnosticService.report("Embeddings", `Chunk too long (attempt ${attempt + 1}), retrying at ${limits[attempt + 1]} chars`, "warning");
+        this.plugin.debugWarn(
+          `Horme: Chunk too long (attempt ${attempt + 1}), retrying at ${limits[attempt + 1]} chars...`,
+        );
+        this.plugin.diagnosticService.report(
+          "Embeddings",
+          `Chunk too long (attempt ${attempt + 1}), retrying at ${limits[attempt + 1]} chars`,
+          "warning",
+        );
         return await this.getOllamaEmbeddingSafe(text, attempt + 1);
       }
       throw e;
@@ -118,7 +126,7 @@ export class EmbeddingService {
     const defaultModel = this.plugin.settings.ragEmbeddingModel || "nomic-embed-text";
     const data = JSON.stringify({
       model: defaultModel,
-      input: text
+      input: text,
     });
 
     const res = await requestUrl({
@@ -126,7 +134,7 @@ export class EmbeddingService {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: data,
-      throw: false
+      throw: false,
     });
 
     if (res.status === 200) {
@@ -148,7 +156,7 @@ export class EmbeddingService {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model: defaultModel, prompt: text }),
-        throw: false
+        throw: false,
       });
       if (legacyRes.status === 200) {
         const json: unknown = legacyRes.json;
@@ -171,14 +179,15 @@ export class EmbeddingService {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: this.plugin.settings.lmStudioModel || "local-model",
-          input: inputs
-        })
+          input: inputs,
+        }),
       });
       if (res.status !== 200) throw new Error(`LM Studio Error: ${res.status} - ${res.text}`);
       const json: unknown = res.json;
       const dataArr = asArray(getRecordProp(json, "data"));
-      if (!dataArr || dataArr.length !== inputs.length) throw new Error("LM Studio response data missing or length mismatch");
-      
+      if (!dataArr || dataArr.length !== inputs.length)
+        throw new Error("LM Studio response data missing or length mismatch");
+
       const out: number[][] = [];
       for (const item of dataArr) {
         const embedding = asNumberArray(getRecordProp(item, "embedding"));
@@ -207,8 +216,10 @@ export class EmbeddingService {
         let foundBoundary = false;
         for (let i = end; i >= midpoint; i--) {
           const ch = text[i];
-          if ((ch === "." || ch === "!" || ch === "?") &&
-              (i + 1 >= text.length || text[i + 1] === " " || text[i + 1] === "\n")) {
+          if (
+            (ch === "." || ch === "!" || ch === "?") &&
+            (i + 1 >= text.length || text[i + 1] === " " || text[i + 1] === "\n")
+          ) {
             end = i + 1;
             foundBoundary = true;
             break;
@@ -240,7 +251,7 @@ export class EmbeddingService {
   chunkTextWithOffsets(
     text: string,
     chunkSize = 1000,
-    overlap = 150
+    overlap = 150,
   ): { text: string; start: number; end: number }[] {
     const chunks: { text: string; start: number; end: number }[] = [];
     let start = 0;

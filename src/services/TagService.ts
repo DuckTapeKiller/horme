@@ -10,16 +10,21 @@ export class TagService {
 
   async applyTags(file: TFile, tags: string[]) {
     const toAdd = Array.from(new Set(tags.map((t) => t.toLowerCase())));
-    const fileManager = (this.app as unknown as { fileManager?: { processFrontMatter?: (file: TFile, cb: (fm: UnknownRecord) => void) => Promise<void> } })
-      .fileManager;
+    const fileManager = (
+      this.app as unknown as {
+        fileManager?: {
+          processFrontMatter?: (file: TFile, cb: (fm: UnknownRecord) => void) => Promise<void>;
+        };
+      }
+    ).fileManager;
     const fmApi = fileManager?.processFrontMatter;
 
     if (typeof fmApi === "function") {
       await fmApi(file, (fm) => {
         const existing = this.toArray(fm["tags"]);
-        const seen = new Set(existing.map(t => this.normalizeKey(t)));
+        const seen = new Set(existing.map((t) => this.normalizeKey(t)));
         const merged = [...existing];
-        
+
         for (const t of toAdd) {
           const key = this.normalizeKey(t);
           if (!seen.has(key)) {
@@ -39,7 +44,11 @@ export class TagService {
     if (typeof v === "string") {
       const s = v.trim();
       if (!s) return [];
-      if (s.includes(",")) return s.split(",").map((x) => x.trim()).filter(Boolean);
+      if (s.includes(","))
+        return s
+          .split(",")
+          .map((x) => x.trim())
+          .filter(Boolean);
       return [s];
     }
     return [];
@@ -74,7 +83,7 @@ export class TagService {
         .replace(/[`~!@%^&*()=+[{\]}\\|;:'",.<>/?]/g, " ")
         .split(/\s+/)
         .map((t) => t.trim())
-        .filter((t) => t.length >= 3)
+        .filter((t) => t.length >= 3),
     );
 
     const scored: Array<{ tag: string; score: number }> = [];
@@ -93,8 +102,8 @@ export class TagService {
     }
 
     scored.sort((a, b) => b.score - a.score || a.tag.localeCompare(b.tag));
-    const scoredSet = new Set(scored.map(s => s.tag));
-    const rest = tags.filter(t => !scoredSet.has(t));
-    return [...scored.map(s => s.tag), ...rest];
+    const scoredSet = new Set(scored.map((s) => s.tag));
+    const rest = tags.filter((t) => !scoredSet.has(t));
+    return [...scored.map((s) => s.tag), ...rest];
   }
 }

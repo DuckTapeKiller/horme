@@ -5,7 +5,7 @@ import {
   cosineSimilarityFloatInt8,
   decompressEmbeddingToInt8,
   getModelPrefixes,
-  quantizeEmbeddingToInt8
+  quantizeEmbeddingToInt8,
 } from "../utils/VectorUtils";
 import { asArray, asNumberArray, errorToMessage, getRecordProp, getStringProp } from "../utils/TypeGuards";
 
@@ -26,7 +26,9 @@ export class GrammarIndexer {
     this.plugin = plugin;
     // Explicitly place in the plugin folder so the user can find it
     const configDir = this.plugin.app.vault.configDir;
-    this.indexPath = normalizePath(`${configDir}/plugins/${this.plugin.manifest.id}/Grammar Index/grammar_index.json`);
+    this.indexPath = normalizePath(
+      `${configDir}/plugins/${this.plugin.manifest.id}/Grammar Index/grammar_index.json`,
+    );
     this.plugin.debugLog(`Horme Grammar: Initializing index at ${this.indexPath}`);
   }
 
@@ -40,14 +42,18 @@ export class GrammarIndexer {
         // Support both old (raw array) and new (object with model) formats
         const isNewFormat = !Array.isArray(parsed) && Boolean(getStringProp(parsed, "model"));
         const rawChunks = isNewFormat
-          ? (asArray(getRecordProp(parsed, "chunks")) ?? [])
-          : (Array.isArray(parsed) ? parsed : []);
+          ? asArray(getRecordProp(parsed, "chunks")) ?? []
+          : Array.isArray(parsed)
+            ? parsed
+            : [];
 
         // Check model compatibility
-        this.indexedModel = isNewFormat ? (getStringProp(parsed, "model") ?? "") : "";
+        this.indexedModel = isNewFormat ? getStringProp(parsed, "model") ?? "" : "";
         const currentModel = this.plugin.settings.ragEmbeddingModel;
         if (this.indexedModel && this.indexedModel !== currentModel) {
-          this.plugin.debugLog(`Horme Grammar: Model changed (${this.indexedModel} → ${currentModel}). Index cleared.`);
+          this.plugin.debugLog(
+            `Horme Grammar: Model changed (${this.indexedModel} → ${currentModel}). Index cleared.`,
+          );
           this.chunks = [];
           this.indexedModel = currentModel;
           return;
@@ -72,7 +78,7 @@ export class GrammarIndexer {
           chunks.push({ path, content, embedding: new Int8Array() });
         }
         this.chunks = chunks;
-        
+
         this.plugin.debugLog(`Horme: Loaded ${this.chunks.length} grammar vectors.`);
       } else {
         this.plugin.debugLog("Horme Grammar: No index found. Use 'Rebuild Grammar Index' in settings.");
@@ -95,33 +101,37 @@ export class GrammarIndexer {
 
       if (!folder || !(folder instanceof TFolder)) {
         this.plugin.debugWarn(`Horme: Grammar folder "${folderPath}" not found.`);
-        this.plugin.diagnosticService.report("Grammar", `Grammar folder "${folderPath}" not found.`, "warning");
+        this.plugin.diagnosticService.report(
+          "Grammar",
+          `Grammar folder "${folderPath}" not found.`,
+          "warning",
+        );
         return;
       }
 
       new Notice("Horme: Generating Grammar Index (view progress in status bar)...");
       const newChunks: GrammarChunk[] = [];
-      
+
       const files = this.getFilesRecursively(folder);
       let totalChunks = 0;
       let errorCount = 0;
       const { doc: docPrefix } = getModelPrefixes(this.plugin.settings.ragEmbeddingModel);
-      
+
       this.plugin.debugLog(`Horme Grammar: Scanning ${files.length} files in "${folderPath}"...`);
 
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
         this.plugin.setIndexingStatus(`Grammar: ${i + 1}/${files.length}`);
-        
+
         if (file.extension === "md") {
           this.plugin.debugLog(`Horme Grammar: [${i + 1}/${files.length}] Processing ${file.path}`);
           const content = await this.plugin.app.vault.read(file);
           const chunks = this.plugin.embeddingService.chunkTextWithOffsets(content, 600, 100);
-          const validChunks = chunks.filter(c => c.text.trim().length > 0);
+          const validChunks = chunks.filter((c) => c.text.trim().length > 0);
 
           if (validChunks.length > 0) {
             // Batch embed with document prefix
-            const embeddingTexts = validChunks.map(c => `${docPrefix}${file.basename}\n\n${c.text}`);
+            const embeddingTexts = validChunks.map((c) => `${docPrefix}${file.basename}\n\n${c.text}`);
 
             try {
               const embeddings = await this.plugin.embeddingService.getEmbeddings(embeddingTexts);
@@ -131,13 +141,17 @@ export class GrammarIndexer {
                   newChunks.push({
                     path: file.path,
                     content: validChunks[j].text,
-                    embedding: quantizeEmbeddingToInt8(embeddings[j])
+                    embedding: quantizeEmbeddingToInt8(embeddings[j]),
                   });
                 }
               }
             } catch (e: unknown) {
               errorCount += validChunks.length;
-              this.plugin.diagnosticService.report("Grammar", `Failed to index ${file.path}: ${errorToMessage(e)}`, "warning");
+              this.plugin.diagnosticService.report(
+                "Grammar",
+                `Failed to index ${file.path}: ${errorToMessage(e)}`,
+                "warning",
+              );
             }
           }
         }
@@ -146,9 +160,9 @@ export class GrammarIndexer {
       this.chunks = newChunks;
       this.indexedModel = this.plugin.settings.ragEmbeddingModel;
       await this.saveIndex();
-      
+
       this.plugin.setIndexingStatus(null);
-      
+
       if (errorCount > 0) {
         new Notice(`⚠️ Grammar Index Built with ${errorCount} errors. Check console.`);
       } else {
@@ -167,17 +181,17 @@ export class GrammarIndexer {
       if (!(await adapter.exists(folderPathToMake))) await adapter.mkdir(folderPathToMake);
 
       // Compress on save, store with model metadata
-      const serialized = this.chunks.map(c => ({
+      const serialized = this.chunks.map((c) => ({
         ...c,
-        embedding: typeof c.embedding === "string" ? c.embedding : compressEmbedding(c.embedding)
+        embedding: typeof c.embedding === "string" ? c.embedding : compressEmbedding(c.embedding),
       }));
 
       const data = JSON.stringify({
         model: this.plugin.settings.ragEmbeddingModel,
-        chunks: serialized
+        chunks: serialized,
       });
       await adapter.write(this.indexPath, data);
-      
+
       this.plugin.debugLog(`Horme Grammar: SUCCESS. Index saved to: ${this.indexPath}`);
     } catch (e: unknown) {
       this.plugin.diagnosticService.report("Grammar", `Failed to save index: ${errorToMessage(e)}`);
@@ -205,7 +219,11 @@ export class GrammarIndexer {
         this.plugin.diagnosticService.report("Grammar", "Grammar index deleted by user.", "info");
         return "deleted";
       }
-      this.plugin.diagnosticService.report("Grammar", "Delete requested, but no grammar index was found.", "info");
+      this.plugin.diagnosticService.report(
+        "Grammar",
+        "Delete requested, but no grammar index was found.",
+        "info",
+      );
       return "missing";
     } catch (e: unknown) {
       this.plugin.diagnosticService.report("Grammar", `Failed to delete index: ${errorToMessage(e)}`);
@@ -230,19 +248,21 @@ export class GrammarIndexer {
       // Use query prefix for asymmetric models
       const { query: qPrefix } = getModelPrefixes(this.plugin.settings.ragEmbeddingModel);
       const queryEmbedding = await this.plugin.embeddingService.getEmbedding(`${qPrefix}${query}`);
-      
+
       // Cosine similarity ranking
-      const scored = this.chunks.map(chunk => ({
+      const scored = this.chunks.map((chunk) => ({
         ...chunk,
         score: cosineSimilarityFloatInt8(
           queryEmbedding,
-          typeof chunk.embedding === "string" ? decompressEmbeddingToInt8(chunk.embedding) : chunk.embedding
-        )
+          typeof chunk.embedding === "string" ? decompressEmbeddingToInt8(chunk.embedding) : chunk.embedding,
+        ),
       }));
 
       scored.sort((a, b) => b.score - a.score);
-      
-      return scored.slice(0, 3).map(s => `[Manual: ${s.path}] (Relevance: ${s.score.toFixed(2)})\n${s.content}`);
+
+      return scored
+        .slice(0, 3)
+        .map((s) => `[Manual: ${s.path}] (Relevance: ${s.score.toFixed(2)})\n${s.content}`);
     } catch (e: unknown) {
       console.error("Grammar Search Error:", e);
       this.plugin.diagnosticService.report("Grammar", `Search failed: ${errorToMessage(e)}`);

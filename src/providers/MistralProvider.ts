@@ -27,7 +27,7 @@ export class MistralProvider implements AiProvider {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${this.apiKey}`,
+        Authorization: `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify({
         model,
@@ -51,7 +51,7 @@ export class MistralProvider implements AiProvider {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${this.apiKey}`,
+        Authorization: `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify({
         model,
@@ -65,13 +65,17 @@ export class MistralProvider implements AiProvider {
     return this.extractContent(res.json as unknown);
   }
 
-  async stream(msgs: Array<{ role: string; content: string }>, model: string, signal?: AbortSignal): Promise<ReadableStreamDefaultReader<Uint8Array>> {
+  async stream(
+    msgs: Array<{ role: string; content: string }>,
+    model: string,
+    signal?: AbortSignal,
+  ): Promise<ReadableStreamDefaultReader<Uint8Array>> {
     if (!this.apiKey) throw new Error("No Mistral API Key");
     const res = await fetch("https://api.mistral.ai/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${this.apiKey}`,
+        Authorization: `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify({
         model,

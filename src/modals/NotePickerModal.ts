@@ -10,8 +10,7 @@ export class NotePickerModal extends FuzzySuggestModal<TFile> {
   }
 
   getItems(): TFile[] {
-    return this.app.vault.getMarkdownFiles()
-      .sort((a, b) => a.basename.localeCompare(b.basename));
+    return this.app.vault.getMarkdownFiles().sort((a, b) => a.basename.localeCompare(b.basename));
   }
 
   getItemText(item: TFile): string {

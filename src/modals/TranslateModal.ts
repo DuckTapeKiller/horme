@@ -19,7 +19,7 @@ export class TranslateModal extends Modal {
     input.addClass("horme-input");
     input.setCssProps({
       width: "100%",
-      marginBottom: "12px"
+      marginBottom: "12px",
     });
     input.focus();
 

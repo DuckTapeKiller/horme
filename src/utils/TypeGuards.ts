@@ -64,4 +64,3 @@ export function errorToMessage(err: unknown): string {
     return String(err);
   }
 }
-

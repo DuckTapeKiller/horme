@@ -26,7 +26,7 @@ export class RewriteModal extends Modal {
       display: "grid",
       gridTemplateColumns: "1fr 1fr",
       gap: "8px",
-      marginTop: "8px"
+      marginTop: "8px",
     });
 
     for (const tone of TONES) {
@@ -35,7 +35,7 @@ export class RewriteModal extends Modal {
       btn.setCssProps({
         padding: "10px 16px",
         fontSize: "14px",
-        cursor: "pointer"
+        cursor: "pointer",
       });
       btn.addEventListener("click", () => {
         this.onSubmit(tone.value);

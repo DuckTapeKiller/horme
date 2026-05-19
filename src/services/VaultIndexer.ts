@@ -7,11 +7,18 @@ import {
   cosineSimilarityInt8,
   decompressEmbeddingToInt8,
   getModelPrefixes,
-  quantizeEmbeddingToInt8
+  quantizeEmbeddingToInt8,
 } from "../utils/VectorUtils";
 import { OllamaProvider } from "../providers/OllamaProvider";
 import { LmStudioProvider } from "../providers/LmStudioProvider";
-import { asArray, asNumberArray, errorToMessage, getNumberProp, getRecordProp, getStringProp } from "../utils/TypeGuards";
+import {
+  asArray,
+  asNumberArray,
+  errorToMessage,
+  getNumberProp,
+  getRecordProp,
+  getStringProp,
+} from "../utils/TypeGuards";
 
 interface IndexEntry {
   path: string;
@@ -24,12 +31,73 @@ interface IndexEntry {
   headingPath?: string;
 }
 
-
 const STOP_WORDS = new Set([
-  "ayudame", "encontrar", "podrias", "busca", "encuentra", "dime", "sobre", "hablame", "tienes", "algo", "articulo", "nota", "notas", "vault", "boveda", "mi", "mis",
-  "the", "and", "for", "with", "from", "that", "this", "these", "those", "about", "find", "help", "note", "search", "does", "what", "where", "when", "how", "why", "who", "which",
-  "un", "una", "unos", "unas", "el", "la", "los", "las", "en", "con", "por", "para", "que", "del", "al", "was", "were", "been", "have", "has", "had",
-  "pais", "paises", "estilos", "generos", "periodos", "estructuras"
+  "ayudame",
+  "encontrar",
+  "podrias",
+  "busca",
+  "encuentra",
+  "dime",
+  "sobre",
+  "hablame",
+  "tienes",
+  "algo",
+  "articulo",
+  "nota",
+  "notas",
+  "vault",
+  "boveda",
+  "mi",
+  "mis",
+  "the",
+  "and",
+  "for",
+  "with",
+  "from",
+  "that",
+  "this",
+  "these",
+  "those",
+  "about",
+  "find",
+  "help",
+  "note",
+  "search",
+  "does",
+  "what",
+  "where",
+  "when",
+  "how",
+  "why",
+  "who",
+  "which",
+  "un",
+  "una",
+  "unos",
+  "unas",
+  "el",
+  "la",
+  "los",
+  "las",
+  "en",
+  "con",
+  "por",
+  "para",
+  "que",
+  "del",
+  "al",
+  "was",
+  "were",
+  "been",
+  "have",
+  "has",
+  "had",
+  "pais",
+  "paises",
+  "estilos",
+  "generos",
+  "periodos",
+  "estructuras",
 ]);
 
 export class VaultIndexer {
@@ -121,7 +189,7 @@ export class VaultIndexer {
   async saveTagCache(): Promise<void> {
     const path = this.getCachePath();
     const adapter = this.plugin.app.vault.adapter;
-    const folderPath = path.substring(0, path.lastIndexOf('/'));
+    const folderPath = path.substring(0, path.lastIndexOf("/"));
 
     if (!(await adapter.exists(folderPath))) {
       await adapter.mkdir(folderPath);
@@ -146,7 +214,9 @@ export class VaultIndexer {
     this.tagTranslationCache = new Map(); // Will be populated async via loadTagCache()
     // Explicitly resolve the plugin directory relative to the vault root
     const configDir = this.plugin.app.vault.configDir;
-    this.indexPath = normalizePath(`${configDir}/plugins/${this.plugin.manifest.id}/Vault Index/vault-index.json`);
+    this.indexPath = normalizePath(
+      `${configDir}/plugins/${this.plugin.manifest.id}/Vault Index/vault-index.json`,
+    );
     this.plugin.debugLog(`Horme Brain: Initializing index at ${this.indexPath}`);
     void this.loadIndex();
 
@@ -154,11 +224,16 @@ export class VaultIndexer {
     this.plugin.onSettingsChange(() => {
       const current = this.plugin.settings.ragEmbeddingModel;
       if (this.indexedModel && this.indexedModel !== current) {
-        this.plugin.debugLog(`Horme Brain: Model changed to ${current}. Clearing in-memory index and shard files.`);
+        this.plugin.debugLog(
+          `Horme Brain: Model changed to ${current}. Clearing in-memory index and shard files.`,
+        );
         this.clearIndex();
         this.indexedModel = current;
         this.deleteAllShards().catch((e: unknown) => {
-          this.plugin.diagnosticService.report("Vault Brain", `Failed to delete stale shard files: ${errorToMessage(e)}`);
+          this.plugin.diagnosticService.report(
+            "Vault Brain",
+            `Failed to delete stale shard files: ${errorToMessage(e)}`,
+          );
         });
         new Notice("Vault Brain: Embedding model changed. Index cleared — please rebuild.");
       }
@@ -170,7 +245,7 @@ export class VaultIndexer {
   private getShardPath(shardIndex: number): string {
     const configDir = this.plugin.app.vault.configDir;
     return normalizePath(
-      `${configDir}/plugins/${this.plugin.manifest.id}/Vault Index/vault-index-shard-${String(shardIndex).padStart(3, "0")}.json`
+      `${configDir}/plugins/${this.plugin.manifest.id}/Vault Index/vault-index-shard-${String(shardIndex).padStart(3, "0")}.json`,
     );
   }
 
@@ -208,7 +283,9 @@ export class VaultIndexer {
         // Save in new sharded format and remove the old monolithic file
         await this.saveIndex();
         await this.plugin.app.vault.adapter.remove(this.indexPath);
-        this.plugin.debugLog(`Horme Brain: Migration complete. ${this.index.length} entries across ${Math.ceil(this.index.length / this.SHARD_SIZE)} shards.`);
+        this.plugin.debugLog(
+          `Horme Brain: Migration complete. ${this.index.length} entries across ${Math.ceil(this.index.length / this.SHARD_SIZE)} shards.`,
+        );
         return;
       }
 
@@ -281,7 +358,9 @@ export class VaultIndexer {
           this.indexedModel = getStringProp(parsed, "model") ?? "";
           const currentModel = this.plugin.settings.ragEmbeddingModel;
           if (this.indexedModel !== currentModel) {
-            this.plugin.debugLog(`Horme Brain: Embedding model changed (${this.indexedModel} → ${currentModel}). Wiping all shards.`);
+            this.plugin.debugLog(
+              `Horme Brain: Embedding model changed (${this.indexedModel} → ${currentModel}). Wiping all shards.`,
+            );
             this.clearIndex();
             this.indexedModel = currentModel;
             await this.deleteAllShards();
@@ -293,7 +372,10 @@ export class VaultIndexer {
         // Use a safe concat to avoid "Maximum call stack size exceeded" errors on large vaults
         this.index = this.index.concat(decompressed);
       } catch (e: unknown) {
-        this.plugin.diagnosticService.report("Vault Brain", `Failed to read index shard ${shardIndex}: ${errorToMessage(e)}`);
+        this.plugin.diagnosticService.report(
+          "Vault Brain",
+          `Failed to read index shard ${shardIndex}: ${errorToMessage(e)}`,
+        );
         partialLoadFailed = true;
         failedShardInfo = { shard: shardIndex, path };
         break;
@@ -308,13 +390,9 @@ export class VaultIndexer {
       this.clearIndex();
 
       const errorMsg = `The Vault Brain index failed to load completely because shard ${failedShardInfo.shard} was corrupted or unreadable.\n\nPath: ${failedShardInfo.path}\n\nTo prevent data loss or silently operating on truncated/corrupted search indexes, the in-memory index has been cleared. Please perform a full rebuild of the Vault Index to restore search functionality.`;
-      
-      new HormeErrorModal(
-        this.plugin.app,
-        "Vault Index Load Failure",
-        errorMsg
-      ).open();
-      
+
+      new HormeErrorModal(this.plugin.app, "Vault Index Load Failure", errorMsg).open();
+
       return;
     }
 
@@ -322,12 +400,15 @@ export class VaultIndexer {
     this.loadWasPartial = false;
 
     this.rebuildPathIndex();
-    this.plugin.debugLog(`Horme Brain: Loaded ${this.index.length} entries from ${shardIndex} shards (model: ${this.indexedModel}).`);
+    this.plugin.debugLog(
+      `Horme Brain: Loaded ${this.index.length} entries from ${shardIndex} shards (model: ${this.indexedModel}).`,
+    );
   }
 
   private async saveIndex(): Promise<void> {
     if (this.loadWasPartial) {
-      const errMsg = "Refusing to save index because the last index load was partial (shard failure). Saving now would corrupt/truncate the stored index.";
+      const errMsg =
+        "Refusing to save index because the last index load was partial (shard failure). Saving now would corrupt/truncate the stored index.";
       this.plugin.diagnosticService.report("Vault Brain", errMsg, "error");
       console.error(`Horme Brain: ${errMsg}`);
       return;
@@ -357,20 +438,16 @@ export class VaultIndexer {
         const finalPaths: string[] = [];
 
         for (let i = 0; i < totalShards; i++) {
-          const shardEntries = this.index
-            .slice(i * this.SHARD_SIZE, (i + 1) * this.SHARD_SIZE)
-            .map(e => ({
-              path: e.path,
-              chunkStart: e.chunkStart,
-              chunkEnd: e.chunkEnd,
-              embedding: typeof e.embedding === "string"
-                ? e.embedding
-                : compressEmbedding(e.embedding),
-              mtime: e.mtime,
-              ...(e.summaryText ? { summaryText: e.summaryText } : {}),
-              ...(e.tagsText ? { tagsText: e.tagsText } : {}),
-              ...(e.headingPath ? { headingPath: e.headingPath } : {}),
-            }));
+          const shardEntries = this.index.slice(i * this.SHARD_SIZE, (i + 1) * this.SHARD_SIZE).map((e) => ({
+            path: e.path,
+            chunkStart: e.chunkStart,
+            chunkEnd: e.chunkEnd,
+            embedding: typeof e.embedding === "string" ? e.embedding : compressEmbedding(e.embedding),
+            mtime: e.mtime,
+            ...(e.summaryText ? { summaryText: e.summaryText } : {}),
+            ...(e.tagsText ? { tagsText: e.tagsText } : {}),
+            ...(e.headingPath ? { headingPath: e.headingPath } : {}),
+          }));
 
           const shardData = JSON.stringify({
             model: currentModel,
@@ -423,7 +500,7 @@ export class VaultIndexer {
           this.plugin.app,
           "Vault Brain: Index save failed",
           "Horme could not save the vault index to disk. Indexing has been paused to prevent data loss.",
-          String(e)
+          String(e),
         ).open();
       }
     } finally {
@@ -502,7 +579,11 @@ export class VaultIndexer {
         this.plugin.diagnosticService.report("Vault Brain", "Vault index deleted by user.", "info");
         return "deleted";
       }
-      this.plugin.diagnosticService.report("Vault Brain", "Delete requested, but no vault index was found.", "info");
+      this.plugin.diagnosticService.report(
+        "Vault Brain",
+        "Delete requested, but no vault index was found.",
+        "info",
+      );
       return "missing";
     } catch (e: unknown) {
       this.plugin.diagnosticService.report("Vault Brain", `Failed to delete index: ${errorToMessage(e)}`);
@@ -519,7 +600,7 @@ export class VaultIndexer {
     if (!this.isIndexing && !this.isProcessingQueue) return;
     this.plugin.debugLog("Horme Brain: Obsidian closing mid-index — flushing progress...");
     this.plugin.settings.indexStatus = "Interrupted — resume rebuild to continue";
-    void this.plugin.saveSettings().catch(e => this.plugin.handleError(e, "Vault Brain"));
+    void this.plugin.saveSettings().catch((e) => this.plugin.handleError(e, "Vault Brain"));
     this.saveIndex()
       .then(() => this.plugin.debugLog("Horme Brain: Emergency flush complete."))
       .catch((e: unknown) => {
@@ -527,8 +608,6 @@ export class VaultIndexer {
         this.plugin.diagnosticService.report("Vault Brain", `Emergency flush failed: ${errorToMessage(e)}`);
       });
   }
-
-
 
   isIndexing = false;
   public isLoaded = false;
@@ -538,7 +617,7 @@ export class VaultIndexer {
     const headings: Array<{ level: number; text: string; offset: number }> = [];
 
     // Mask code blocks with spaces to preserve character offsets while hiding comments
-    const maskedContent = content.replace(/```[\s\S]*?```/g, match => " ".repeat(match.length));
+    const maskedContent = content.replace(/```[\s\S]*?```/g, (match) => " ".repeat(match.length));
 
     const regex = /^(#{1,6})\s+(.+)$/gm;
     let match;
@@ -549,7 +628,10 @@ export class VaultIndexer {
   }
 
   /** Returns the heading hierarchy path at a given character offset */
-  private getHeadingPathAtOffset(headings: Array<{ level: number; text: string; offset: number }>, offset: number): string {
+  private getHeadingPathAtOffset(
+    headings: Array<{ level: number; text: string; offset: number }>,
+    offset: number,
+  ): string {
     const stack: string[] = [];
     const levelStack: number[] = [];
     for (const h of headings) {
@@ -561,7 +643,7 @@ export class VaultIndexer {
       stack.push(h.text);
       levelStack.push(h.level);
     }
-    return stack.join(' > ');
+    return stack.join(" > ");
   }
 
   /**
@@ -581,15 +663,15 @@ export class VaultIndexer {
     const stripped = raw.replace(/^#+/, "").trim();
     const segments = stripped
       .split("/")
-      .map(s => s.replace(/_/g, " ").trim())
-      .filter(s => s.length > 0);
+      .map((s) => s.replace(/_/g, " ").trim())
+      .filter((s) => s.length > 0);
 
     if (segments.length === 0) return { path: [], leaf: "" };
     if (segments.length === 1) return { path: [], leaf: segments[0] };
 
     return {
       path: segments.slice(0, segments.length - 1),
-      leaf: segments[segments.length - 1]
+      leaf: segments[segments.length - 1],
     };
   }
 
@@ -601,8 +683,18 @@ export class VaultIndexer {
    * "país" the leaf value), it contributes nothing to discriminating search.
    */
   private static readonly GENERIC_TAG_NODES = new Set([
-    "país", "países", "estilos", "géneros", "períodos", "estructuras",
-    "región", "regiones", "tipo", "tipos", "categoría", "categorías"
+    "país",
+    "países",
+    "estilos",
+    "géneros",
+    "períodos",
+    "estructuras",
+    "región",
+    "regiones",
+    "tipo",
+    "tipos",
+    "categoría",
+    "categorías",
   ]);
 
   private extractTagValues(raw: unknown): string[] {
@@ -633,10 +725,7 @@ export class VaultIndexer {
    * Collects tags for shadow-tagging from metadata cache (inline + YAML),
    * with frontmatter/raw-text fallbacks when cache is incomplete.
    */
-  private collectShadowTags(
-    content: string,
-    file: TFile
-  ): string[] {
+  private collectShadowTags(content: string, file: TFile): string[] {
     const rawTags: string[] = [];
     const add = (value: string) => {
       if (value && value.trim()) rawTags.push(value.trim());
@@ -701,13 +790,13 @@ export class VaultIndexer {
       const model = settings.tagTranslationModel.trim();
 
       if (model) {
-        const provider = settings.tagTranslationProvider === "lmstudio"
-          ? new LmStudioProvider(settings.lmStudioUrl, settings.temperature, 500)
-          : new OllamaProvider(settings.ollamaBaseUrl, settings.temperature, 500);
+        const provider =
+          settings.tagTranslationProvider === "lmstudio"
+            ? new LmStudioProvider(settings.lmStudioUrl, settings.temperature, 500)
+            : new OllamaProvider(settings.ollamaBaseUrl, settings.temperature, 500);
 
         const termsArray = Array.from(uniqueTagInputs);
         const CHUNK_SIZE = 8; // Safely throttled to eliminate model tracking fatigue
-        let translatedCount = 0;
         let lastSaveTime = Date.now();
 
         for (let i = 0; i < termsArray.length; i += CHUNK_SIZE) {
@@ -735,24 +824,25 @@ t1 -> Translation`;
             const result = await provider.generate(
               `Translate these anchored targets exactly:\n${chunkList}`,
               systemPrompt,
-              model
+              model,
             );
 
             // 1. Parse lines with space-resilient index token identification
-            const lines = result.split("\n")
-              .map(line => line.trim())
-              .filter(line => /t\s*\d+\s*(?:->|◈|:|=>|=)/.test(line));
+            const lines = result
+              .split("\n")
+              .map((line) => line.trim())
+              .filter((line) => /t\s*\d+\s*(?:->|◈|:|=>|=)/.test(line));
 
             // 2. Build the lookup map matching index values back to terms safely
             const translationMap = new Map<string, string>();
-            lines.forEach(line => {
+            lines.forEach((line) => {
               const match = line.match(/t\s*(\d+)\s*(?:->|◈|:|=>|=)\s*(.*)/);
               if (match) {
                 const idx = parseInt(match[1], 10);
                 if (idx >= 0 && idx < chunk.length) {
                   let trans = match[2].trim();
                   // Strip decorative markdown wrappers from boundary lines
-                  trans = trans.replace(/^[\s\_\*\`\"\'\[\]\(\)]+/, "").replace(/[\s\_\*\`\"\'\[\]\(\)]+$/, "");
+                  trans = trans.replace(/^[\s_*`"'_[\]()\]]+/, "").replace(/[\s_*`"'_[\]()\]]+$/, "");
                   trans = trans.replace(/[.,;]+$/, "");
 
                   if (trans) {
@@ -768,18 +858,19 @@ t1 -> Translation`;
               const combined = `${term}, ${translation}`;
               this.tagTranslationCache.set(term, combined);
             });
-
           } catch (e: unknown) {
-            this.plugin.diagnosticService.report("Vault Brain", `Tag translation chunk failed: ${errorToMessage(e)}`, "warning");
-            chunk.forEach(term => {
+            this.plugin.diagnosticService.report(
+              "Vault Brain",
+              `Tag translation chunk failed: ${errorToMessage(e)}`,
+              "warning",
+            );
+            chunk.forEach((term) => {
               this.tagTranslationCache.set(term, term);
             });
           }
 
-          translatedCount += chunk.length;
-
           // TIME-BASED CHECKPOINT: Guarantees at least 15 seconds between disk writes.
-          // This gives aggressive sync engines (iCloud/Dropbox) ample time to release 
+          // This gives aggressive sync engines (iCloud/Dropbox) ample time to release
           // file locks, entirely preventing file duplication on fast translation runs.
           const now = Date.now();
           if (now - lastSaveTime > 15000) {
@@ -788,7 +879,7 @@ t1 -> Translation`;
           }
 
           // Mandatory 400ms pacing delay to clear context queue on local server instances
-          await new Promise(resolve => setTimeout(resolve, 400));
+          await new Promise((resolve) => setTimeout(resolve, 400));
         }
 
         // 🟢 Final guaranteed storage commit after all chunks finish
@@ -803,27 +894,28 @@ t1 -> Translation`;
     return cached !== undefined ? cached : spanishTags;
   }
 
-
   /**
-     * Samples the vault to collect representative tag path components and
-     * leaf values, runs them through the translation model, and returns a
-     * structured result for display in the settings panel.
-     *
-     * This is a READ-ONLY diagnostic operation. It does not modify the index,
-     * the translation cache, or any settings.
-     *
-     * Returns an array of result rows, each containing:
-     * - type: "path" (generic category label) or "leaf" (specific value)
-     * - original: the Spanish input string
-     * - translated: what the model returned, or null on failure
-     * - warning: a human-readable warning if the output looks malformed
-     */
-  async testTagTranslation(): Promise<{
-    type: "path" | "leaf";
-    original: string;
-    translated: string | null;
-    warning: string | null;
-  }[]> {
+   * Samples the vault to collect representative tag path components and
+   * leaf values, runs them through the translation model, and returns a
+   * structured result for display in the settings panel.
+   *
+   * This is a READ-ONLY diagnostic operation. It does not modify the index,
+   * the translation cache, or any settings.
+   *
+   * Returns an array of result rows, each containing:
+   * - type: "path" (generic category label) or "leaf" (specific value)
+   * - original: the Spanish input string
+   * - translated: what the model returned, or null on failure
+   * - warning: a human-readable warning if the output looks malformed
+   */
+  async testTagTranslation(): Promise<
+    {
+      type: "path" | "leaf";
+      original: string;
+      translated: string | null;
+      warning: string | null;
+    }[]
+  > {
     const files = this.plugin.app.vault.getMarkdownFiles();
 
     // Scan vault in-memory cache to get real tags
@@ -902,20 +994,21 @@ t1 -> Translation`;
         const result = await provider.generate(
           `Translate these anchored targets exactly:\n${chunkList}`,
           systemPrompt,
-          model
+          model,
         );
 
-        const lines = result.split("\n")
-          .map(line => line.trim())
-          .filter(line => /t\s*\d+\s*(?:->|◈|:|=>|=)/.test(line));
+        const lines = result
+          .split("\n")
+          .map((line) => line.trim())
+          .filter((line) => /t\s*\d+\s*(?:->|◈|:|=>|=)/.test(line));
 
         const translationMap = new Map<number, string>();
-        lines.forEach(line => {
+        lines.forEach((line) => {
           const match = line.match(/t\s*(\d+)\s*(?:->|◈|:|=>|=)\s*(.*)/);
           if (match) {
             const idx = parseInt(match[1], 10);
             let trans = match[2].trim();
-            trans = trans.replace(/^[\s\_\*\`\"\'\[\]\(\)]+/, "").replace(/[\s\_\*\`\"\'\[\]\(\)]+$/, "");
+            trans = trans.replace(/^[\s_*`"'[\]()\]]+/, "").replace(/[\s_*`"'[\]()\]]+$/, "");
             trans = trans.replace(/[.,;]+$/, "");
             if (trans) {
               translationMap.set(idx, trans);
@@ -929,11 +1022,11 @@ t1 -> Translation`;
             type,
             original,
             translated,
-            warning: translated ? null : "Model omitted this anchor or failed to parse."
+            warning: translated ? null : "Model omitted this anchor or failed to parse.",
           });
         });
       } catch (e: unknown) {
-        sample.forEach(original => {
+        sample.forEach((original) => {
           results.push({ type, original, translated: null, warning: errorToMessage(e) });
         });
       }
@@ -949,10 +1042,9 @@ t1 -> Translation`;
     return results;
   }
 
-
   private extractFrontmatterSummary(
     content: string,
-    file: TFile
+    file: TFile,
   ): { fullText: string; summaryOnly: string; tagsOnly: string } | null {
     const cache = this.plugin.app.metadataCache.getFileCache(file);
     const frontmatter = cache?.frontmatter as Record<string, unknown> | undefined;
@@ -972,7 +1064,7 @@ t1 -> Translation`;
     let tagsOnly = "";
 
     if (tags.length > 0) {
-      tagsOnly = tags.map(t => this.translateTagsBilingually(t)).join(", ");
+      tagsOnly = tags.map((t) => this.translateTagsBilingually(t)).join(", ");
     }
 
     if (!summaryOnly && !tagsOnly) return null;
@@ -987,7 +1079,7 @@ t1 -> Translation`;
         if (typeof authorValue === "string") {
           parts.push("Autor: " + authorValue.trim());
         } else if (Array.isArray(authorValue)) {
-          parts.push("Autor: " + authorValue.map(a => String(a).trim()).join(", "));
+          parts.push("Autor: " + authorValue.map((a) => String(a).trim()).join(", "));
         }
       }
     }
@@ -995,7 +1087,7 @@ t1 -> Translation`;
     return {
       fullText: `${getModelPrefixes(this.plugin.settings.ragEmbeddingModel).doc}${parts.join("\n")}`,
       summaryOnly,
-      tagsOnly
+      tagsOnly,
     };
   }
 
@@ -1033,15 +1125,13 @@ t1 -> Translation`;
       this.plugin.debugLog(`Horme Brain: Rebuilding index for ${total} files...`);
 
       // Purge orphaned entries for files that were deleted or renamed while inactive
-      const validPaths = new Set(files.map(f => f.path));
+      const validPaths = new Set(files.map((f) => f.path));
       const knownPaths = Array.from(this.pathIndex.keys());
       for (const path of knownPaths) {
         if (!validPaths.has(path)) {
           this.removeEntriesForPath(path);
         }
       }
-
-
 
       let updatedCount = 0;
       let consecutiveErrors = 0;
@@ -1073,7 +1163,7 @@ t1 -> Translation`;
           }
 
           const chunksWithOffsets = this.plugin.embeddingService.chunkTextWithOffsets(content);
-          const validChunks = chunksWithOffsets.filter(c => c.text.trim().length > 0);
+          const validChunks = chunksWithOffsets.filter((c) => c.text.trim().length > 0);
 
           // 2. Remove "await" and the third parameter from this line
           const fmData = this.extractFrontmatterSummary(content, file);
@@ -1085,13 +1175,13 @@ t1 -> Translation`;
             const bilingualTags = fmData?.tagsOnly || "";
 
             // Build embedding texts with search_document prefix and heading context
-            const embeddingTexts = validChunks.map(c => {
+            const embeddingTexts = validChunks.map((c) => {
               const hp = this.getHeadingPathAtOffset(headings, c.start);
               const docPrefix = getModelPrefixes(this.plugin.settings.ragEmbeddingModel).doc;
               // Prepend bilingual tags to every chunk so the vector captures both languages.
               // Tags are brief (30–80 chars) and won't dilute the body content meaningfully.
               const tagLine = bilingualTags ? `Tags: ${bilingualTags}\n` : "";
-              return `${docPrefix}${file.basename}${hp ? ' > ' + hp : ''}\n${tagLine}\n${c.text}`;
+              return `${docPrefix}${file.basename}${hp ? " > " + hp : ""}\n${tagLine}\n${c.text}`;
             });
 
             // Add a dedicated frontmatter summary embedding (offset 0,0 = signals summary entry)
@@ -1100,7 +1190,9 @@ t1 -> Translation`;
             const embeddings = await this.plugin.embeddingService.getEmbeddings(embeddingTexts);
 
             if (!embeddings || embeddings.length !== embeddingTexts.length) {
-              throw new Error(`API returned ${embeddings?.length || 0} embeddings for ${embeddingTexts.length} chunks. Cancelling to prevent data loss.`);
+              throw new Error(
+                `API returned ${embeddings?.length || 0} embeddings for ${embeddingTexts.length} chunks. Cancelling to prevent data loss.`,
+              );
             }
 
             const newEntries: IndexEntry[] = [];
@@ -1114,7 +1206,7 @@ t1 -> Translation`;
                   embedding: quantizeEmbeddingToInt8(embeddings[0]),
                   mtime: file.stat.mtime,
                   summaryText: fmData.summaryOnly,
-                  tagsText: fmData.tagsOnly
+                  tagsText: fmData.tagsOnly,
                 });
               }
               embOffset = 1;
@@ -1132,7 +1224,7 @@ t1 -> Translation`;
                   embedding: quantizeEmbeddingToInt8(emb),
                   mtime: file.stat.mtime,
                   ...(hp ? { headingPath: hp } : {}),
-                  ...(bilingualTags ? { tagsText: bilingualTags } : {})
+                  ...(bilingualTags ? { tagsText: bilingualTags } : {}),
                 });
               }
             }
@@ -1151,7 +1243,11 @@ t1 -> Translation`;
             this.lastShardSaveTime = Date.now();
           }
         } catch (e: unknown) {
-          this.plugin.diagnosticService.report("Vault Brain", `Note skipped: ${file.path} (${errorToMessage(e)})`, "warning");
+          this.plugin.diagnosticService.report(
+            "Vault Brain",
+            `Note skipped: ${file.path} (${errorToMessage(e)})`,
+            "warning",
+          );
           consecutiveErrors++;
           // (e.g. one bad file) should not stop the entire rebuild.
           if (consecutiveErrors > 15) {
@@ -1159,7 +1255,7 @@ t1 -> Translation`;
               this.plugin.app,
               "Vault Brain: Indexing paused",
               `Indexing stopped after ${consecutiveErrors} consecutive failures. This usually means Ollama is unreachable or the embedding model is not loaded. Check that Ollama is running and that the model "${this.plugin.settings.ragEmbeddingModel}" is available.`,
-              `Last error: check the developer console (Ctrl+Shift+I) for details.`
+              `Last error: check the developer console (Ctrl+Shift+I) for details.`,
             ).open();
             this.plugin.settings.indexStatus = "Failed (too many consecutive errors)";
             await this.plugin.saveSettings();
@@ -1178,15 +1274,15 @@ t1 -> Translation`;
       // Log translation results to diagnostics panel for post-rebuild audit
       if (this.tagTranslationCache.size > 0) {
         const cacheEntries = Array.from(this.tagTranslationCache.entries())
-          .filter(([, v]) => v && v !== "")  // skip fallback (untranslated) entries
-          .slice(0, 30);                      // cap log length
+          .filter(([, v]) => v && v !== "") // skip fallback (untranslated) entries
+          .slice(0, 30); // cap log length
 
         if (cacheEntries.length > 0) {
           const logLines = cacheEntries.map(([k, v]) => `  ${k} → ${v}`).join("\n");
           this.plugin.diagnosticService.report(
             "Tag Translation",
             `Translation results (${cacheEntries.length} unique inputs):\n${logLines}`,
-            "info"
+            "info",
           );
         }
       }
@@ -1205,7 +1301,7 @@ t1 -> Translation`;
         this.plugin.app,
         "Vault Brain: Fatal indexing error",
         "Indexing stopped due to an unexpected error. Your partial progress has been saved and the next rebuild will resume from where it left off.",
-        errorToMessage(e)
+        errorToMessage(e),
       ).open();
     } finally {
       // Acquire the queue lock BEFORE releasing isIndexing to prevent a race
@@ -1227,7 +1323,11 @@ t1 -> Translation`;
           await this.processQueue();
         } catch (e) {
           this.isProcessingQueue = false;
-          this.plugin.diagnosticService.report("Vault Brain", `Post-rebuild queue failed: ${errorToMessage(e)}`, "warning");
+          this.plugin.diagnosticService.report(
+            "Vault Brain",
+            `Post-rebuild queue failed: ${errorToMessage(e)}`,
+            "warning",
+          );
         }
       }
     }
@@ -1250,11 +1350,15 @@ t1 -> Translation`;
     }
 
     this.plugin.debugLog(`Horme Brain: Enqueueing ${file.path} for indexing...`);
-    if (!this.indexingQueue.some(f => f.path === file.path)) {
+    if (!this.indexingQueue.some((f) => f.path === file.path)) {
       this.indexingQueue.push(file);
     }
-    void this.processQueue().catch(e => {
-      this.plugin.diagnosticService.report("Vault Brain", `Queue processing failed: ${errorToMessage(e)}`, "warning");
+    void this.processQueue().catch((e) => {
+      this.plugin.diagnosticService.report(
+        "Vault Brain",
+        `Queue processing failed: ${errorToMessage(e)}`,
+        "warning",
+      );
     });
   }
 
@@ -1270,11 +1374,17 @@ t1 -> Translation`;
       this.plugin.setIndexingStatus("Waiting for brain index...");
       const deadline = Date.now() + 5000;
       while (!this.isLoaded && Date.now() < deadline) {
-        await new Promise<void>(r => window.setTimeout(r, 100));
+        await new Promise<void>((r) => window.setTimeout(r, 100));
       }
       if (!this.isLoaded) {
-        console.error("Horme Brain: Index failed to load within timeout. Aborting queue to prevent data loss.");
-        this.plugin.diagnosticService.report("Vault Brain", "Queue aborted: Index failed to load after 5s timeout.", "error");
+        console.error(
+          "Horme Brain: Index failed to load within timeout. Aborting queue to prevent data loss.",
+        );
+        this.plugin.diagnosticService.report(
+          "Vault Brain",
+          "Queue aborted: Index failed to load after 5s timeout.",
+          "error",
+        );
         this.plugin.setIndexingStatus("Index load timeout");
         this.isProcessingQueue = false;
         return;
@@ -1289,7 +1399,7 @@ t1 -> Translation`;
         this.plugin.diagnosticService.report(
           "Vault Brain",
           "Incremental indexing skipped: index loaded partially. Please rebuild the Vault Brain to restore full functionality.",
-          "warning"
+          "warning",
         );
         this.isProcessingQueue = false;
         return;
@@ -1323,9 +1433,9 @@ t1 -> Translation`;
           // Only yield 50ms if heavy LLM work was actually done.
           // Otherwise, yield 0ms just to let the DOM repaint the status bar.
           if (didWork) {
-            await new Promise<void>(r => window.setTimeout(r, 50));
+            await new Promise<void>((r) => window.setTimeout(r, 50));
           } else if (processed % 50 === 0) {
-            await new Promise<void>(r => window.setTimeout(r, 0));
+            await new Promise<void>((r) => window.setTimeout(r, 0));
           }
         }
       }
@@ -1361,7 +1471,7 @@ t1 -> Translation`;
       }
 
       const chunksWithOffsets = this.plugin.embeddingService.chunkTextWithOffsets(content);
-      const validChunks = chunksWithOffsets.filter(c => c.text.trim().length > 0);
+      const validChunks = chunksWithOffsets.filter((c) => c.text.trim().length > 0);
 
       // Remove "await" and the third parameter from this line
       const fmData = this.extractFrontmatterSummary(content, file);
@@ -1371,13 +1481,13 @@ t1 -> Translation`;
         const headings = this.extractHeadings(content);
         const bilingualTags = fmData?.tagsOnly || "";
 
-        const embeddingTexts = validChunks.map(c => {
+        const embeddingTexts = validChunks.map((c) => {
           const hp = this.getHeadingPathAtOffset(headings, c.start);
           const docPrefix = getModelPrefixes(this.plugin.settings.ragEmbeddingModel).doc;
           // Prepend bilingual tags to every chunk so the vector captures both languages.
           // Tags are brief (30–80 chars) and won't dilute the body content meaningfully.
           const tagLine = bilingualTags ? `Tags: ${bilingualTags}\n` : "";
-          return `${docPrefix}${file.basename}${hp ? ' > ' + hp : ''}\n${tagLine}\n${c.text}`;
+          return `${docPrefix}${file.basename}${hp ? " > " + hp : ""}\n${tagLine}\n${c.text}`;
         });
 
         if (hasFmSummary) embeddingTexts.unshift(fmData.fullText);
@@ -1385,7 +1495,9 @@ t1 -> Translation`;
         const embeddings = await this.plugin.embeddingService.getEmbeddings(embeddingTexts);
 
         if (!embeddings || embeddings.length !== embeddingTexts.length) {
-          throw new Error(`API returned ${embeddings?.length || 0} embeddings for ${embeddingTexts.length} chunks. Cancelling to prevent data loss.`);
+          throw new Error(
+            `API returned ${embeddings?.length || 0} embeddings for ${embeddingTexts.length} chunks. Cancelling to prevent data loss.`,
+          );
         }
 
         const newEntries: IndexEntry[] = [];
@@ -1399,7 +1511,7 @@ t1 -> Translation`;
               embedding: quantizeEmbeddingToInt8(embeddings[0]),
               mtime: file.stat.mtime,
               summaryText: fmData.summaryOnly,
-              tagsText: fmData.tagsOnly
+              tagsText: fmData.tagsOnly,
             });
           }
           embOffset = 1;
@@ -1416,7 +1528,7 @@ t1 -> Translation`;
               embedding: quantizeEmbeddingToInt8(emb),
               mtime: file.stat.mtime,
               ...(hp ? { headingPath: hp } : {}),
-              ...(bilingualTags ? { tagsText: bilingualTags } : {})
+              ...(bilingualTags ? { tagsText: bilingualTags } : {}),
             });
           }
         }
@@ -1428,7 +1540,11 @@ t1 -> Translation`;
         return false;
       }
     } catch (e: unknown) {
-      this.plugin.diagnosticService.report("Vault Brain", `Auto-index failed for ${file.path}: ${errorToMessage(e)}`, "warning");
+      this.plugin.diagnosticService.report(
+        "Vault Brain",
+        `Auto-index failed for ${file.path}: ${errorToMessage(e)}`,
+        "warning",
+      );
       return false;
     }
   }
@@ -1448,7 +1564,12 @@ t1 -> Translation`;
     this.plugin.debugLog(`Horme Brain: Search called. Index size: ${this.index.length}`);
     const canAccess = this.plugin.isLocalProviderActive() || this.plugin.settings.allowCloudRAG;
     if (!this.plugin.settings.vaultBrainEnabled || !canAccess) {
-      if (!canAccess) this.plugin.diagnosticService.report("Horme Privacy Guard", "Vault search blocked (Cloud Provider Active & allowCloudRAG is OFF).", "warning");
+      if (!canAccess)
+        this.plugin.diagnosticService.report(
+          "Horme Privacy Guard",
+          "Vault search blocked (Cloud Provider Active & allowCloudRAG is OFF).",
+          "warning",
+        );
       return [];
     }
 
@@ -1458,21 +1579,26 @@ t1 -> Translation`;
     if (!this.isLoaded) {
       const deadline = Date.now() + 5000;
       while (!this.isLoaded && Date.now() < deadline) {
-        await new Promise<void>(r => window.setTimeout(r, 100));
+        await new Promise<void>((r) => window.setTimeout(r, 100));
       }
       if (!this.isLoaded) {
-        this.plugin.diagnosticService.report("Horme Brain", "Index not yet loaded, skipping search.", "warning");
+        this.plugin.diagnosticService.report(
+          "Horme Brain",
+          "Index not yet loaded, skipping search.",
+          "warning",
+        );
         return [];
       }
     }
 
     try {
       // 1. Refine query: remove conversational junk (Bilingual)
-      const refinedQuery = query.toLowerCase()
+      const refinedQuery = query
+        .toLowerCase()
         // Step 1: strip well-known leading conversational prefixes
         .replace(
           /^(?:ayúdame a encontrar|podrías ayudarme a encontrar|busca|encuentra|dime sobre|háblame de|tienes algo sobre|algún artículo sobre|alguna nota sobre|is it true that|can you help me find|tell me about|do you have anything on|search for|find|look for|i read that|i heard that|i was told that|can you confirm that|is it correct that|did you know that)\s+/i,
-          ""
+          "",
         )
         // Step 2: strip trailing conversational question closers
         .replace(/\?+$/, "")
@@ -1482,20 +1608,19 @@ t1 -> Translation`;
       // 1.5 Extract quoted terms for exact-match priority (normalized for accent-insensitivity)
       const normalizedQueryForQuotes = VaultIndexer.normalizeTextForSearch(query);
       const quotedMatches = normalizedQueryForQuotes.match(/"([^"]+)"/g) || [];
-      const quotedTerms = quotedMatches.map(m => m.replace(/"/g, ""));
+      const quotedTerms = quotedMatches.map((m) => m.replace(/"/g, ""));
 
       // Normalize refined query for robust keyword splitting (stripping accents)
       const normalizedRefinedQuery = VaultIndexer.normalizeTextForSearch(refinedQuery);
       const cleanedQuery = normalizedRefinedQuery.replace(/[.,/#!$%^&*;:{}=\-_`~()]/g, " ");
-      const searchTerms = cleanedQuery.split(/\s+/).filter(t => t.length > 2);
+      const searchTerms = cleanedQuery.split(/\s+/).filter((t) => t.length > 2);
 
       // 2. Truncate very long queries (e.g. user pasting whole articles) to a
       //    focused portion for embedding — models work best with focused queries.
       //    We keep the first 500 chars, which captures the topic without dilution.
       const MAX_EMBED_CHARS = 500;
-      const embeddingQuery = refinedQuery.length > MAX_EMBED_CHARS
-        ? refinedQuery.slice(0, MAX_EMBED_CHARS)
-        : refinedQuery;
+      const embeddingQuery =
+        refinedQuery.length > MAX_EMBED_CHARS ? refinedQuery.slice(0, MAX_EMBED_CHARS) : refinedQuery;
 
       // 3. Multi-query: full (truncated) query + keyword-distilled variant.
       // If Ollama rejects or times out (any error, not just "context length"),
@@ -1506,7 +1631,7 @@ t1 -> Translation`;
 
       try {
         primaryEmbedding = await this.plugin.embeddingService.getEmbedding(`${qPrefix}${embeddingQuery}`);
-        const keyTerms = searchTerms.filter(t => t.length > 3).join(' ');
+        const keyTerms = searchTerms.filter((t) => t.length > 3).join(" ");
         if (keyTerms && keyTerms !== embeddingQuery) {
           secondaryEmbedding = await this.plugin.embeddingService.getEmbedding(`${qPrefix}${keyTerms}`);
         }
@@ -1514,17 +1639,22 @@ t1 -> Translation`;
         // Embedding failed (Ollama down, model not loaded, long-text timeout, etc.)
         // Log and continue with vector scores zeroed out — keyword bonus alone will
         // Still surface obvious matches like the exact-title case.
-        this.plugin.diagnosticService.report("Search", "Embedding failed. Falling back to keyword search.", "warning");
+        this.plugin.diagnosticService.report(
+          "Search",
+          "Embedding failed. Falling back to keyword search.",
+          "warning",
+        );
       }
 
-      const MIN_SIMILARITY = 0.10; // Lowered: keyword-only searches can still score ~0.25+
+      const MIN_SIMILARITY = 0.1; // Lowered: keyword-only searches can still score ~0.25+
 
       // 4. Score all entries: max(primary, secondary) + metadata bonus
       const rawScored = this.index
-        .map(entry => {
-          const emb = typeof entry.embedding === "string"
-            ? decompressEmbeddingToInt8(entry.embedding)
-            : entry.embedding;
+        .map((entry) => {
+          const emb =
+            typeof entry.embedding === "string"
+              ? decompressEmbeddingToInt8(entry.embedding)
+              : entry.embedding;
 
           const primaryScore =
             primaryEmbedding.length > 0 ? cosineSimilarityFloatInt8(primaryEmbedding, emb) : 0;
@@ -1564,7 +1694,7 @@ t1 -> Translation`;
 
           return { entry, score: vectorScore + metadataBonus };
         })
-        .filter(s => s.score >= MIN_SIMILARITY)
+        .filter((s) => s.score >= MIN_SIMILARITY)
         .sort((a, b) => b.score - a.score);
 
       // 4.1 Content-Aware Boosting (The "Deep Scan")
@@ -1586,11 +1716,12 @@ t1 -> Translation`;
           }
 
           if (content) {
-            const chunkText = item.entry.chunkStart === 0 && item.entry.chunkEnd === 0
-              ? ((item.entry.summaryText || item.entry.tagsText)
-                ? ((item.entry.summaryText || "") + " " + (item.entry.tagsText || ""))
-                : content.slice(0, 800))
-              : content.slice(item.entry.chunkStart, item.entry.chunkEnd);
+            const chunkText =
+              item.entry.chunkStart === 0 && item.entry.chunkEnd === 0
+                ? item.entry.summaryText || item.entry.tagsText
+                  ? (item.entry.summaryText || "") + " " + (item.entry.tagsText || "")
+                  : content.slice(0, 800)
+                : content.slice(item.entry.chunkStart, item.entry.chunkEnd);
 
             const normalizedChunkText = VaultIndexer.normalizeTextForSearch(chunkText);
 
@@ -1606,11 +1737,13 @@ t1 -> Translation`;
               if (normalizedChunkText.includes(term)) contentBonus += 0.15;
             }
           }
-        } catch { /* skip if file read fails */ }
+        } catch {
+          /* skip if file read fails */
+        }
 
         scored.push({
           entry: item.entry,
-          score: item.score + Math.min(contentBonus, this.plugin.settings.searchContentCap)
+          score: item.score + Math.min(contentBonus, this.plugin.settings.searchContentCap),
         });
       }
 
@@ -1630,9 +1763,10 @@ t1 -> Translation`;
         if (item.entry.chunkStart === 0 && item.entry.chunkEnd === 0) {
           // This is a summary entry — find the best sibling content chunk
           const bestContent = scored.find(
-            s => s.entry.path === item.entry.path
-              && !(s.entry.chunkStart === 0 && s.entry.chunkEnd === 0)
-              && !injected.includes(s)
+            (s) =>
+              s.entry.path === item.entry.path &&
+              !(s.entry.chunkStart === 0 && s.entry.chunkEnd === 0) &&
+              !injected.includes(s),
           );
           if (bestContent) {
             injected.push(bestContent);
@@ -1669,14 +1803,15 @@ t1 -> Translation`;
       const results: string[] = [];
       this.plugin.debugLog(
         `%cHorme Brain: Top ${selected.length} search results:`,
-        "color: #34d399; font-weight: bold;"
+        "color: #34d399; font-weight: bold;",
       );
       selected.forEach((s, idx) => {
         this.plugin.debugLog(
-          `  %c${idx + 1}. [Score: ${s.score.toFixed(3)}]%c ${s.entry.path}${s.entry.headingPath ? " > " + s.entry.headingPath : ""
+          `  %c${idx + 1}. [Score: ${s.score.toFixed(3)}]%c ${s.entry.path}${
+            s.entry.headingPath ? " > " + s.entry.headingPath : ""
           }`,
           "color: #34d399; font-weight: bold;",
-          "color: inherit;"
+          "color: inherit;",
         );
       });
 
@@ -1699,7 +1834,10 @@ t1 -> Translation`;
             // Fallback: if no structured summary was stored, use first 600 chars
             // but strip the frontmatter block first.
             if (parts.length === 0) {
-              chunk = content.replace(/^---[\s\S]*?---\s*/m, "").slice(0, 600).trim();
+              chunk = content
+                .replace(/^---[\s\S]*?---\s*/m, "")
+                .slice(0, 600)
+                .trim();
             } else {
               chunk = parts.join("\n");
             }
@@ -1725,7 +1863,9 @@ t1 -> Translation`;
    * Retrieves semantically related notes for the active file.
    * Useful for the "Connections" side panel.
    */
-  async getConnections(activeFilePath: string): Promise<{ path: string, score: number }[] | null | undefined> {
+  async getConnections(
+    activeFilePath: string,
+  ): Promise<{ path: string; score: number }[] | null | undefined> {
     if (!this.plugin.settings.vaultBrainEnabled || !this.isLoaded) return null;
 
     const sourceEntries = this.getEntriesForPath(activeFilePath);
@@ -1734,16 +1874,18 @@ t1 -> Translation`;
     // Parse excluded folders
     const excludedPrefixes = this.plugin.settings.connectionsExcludedFolders
       .split(",")
-      .map(s => s.trim())
-      .filter(s => s.length > 0);
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
 
     // Find the most representative embedding for the file.
     // Prefer the summary entry (chunkStart: 0) or fallback to the first content chunk.
-    const representativeEntry = sourceEntries.find(e => e.chunkStart === 0 && e.chunkEnd === 0) || sourceEntries[0];
+    const representativeEntry =
+      sourceEntries.find((e) => e.chunkStart === 0 && e.chunkEnd === 0) || sourceEntries[0];
 
-    const sourceEmb = typeof representativeEntry.embedding === "string"
-      ? decompressEmbeddingToInt8(representativeEntry.embedding)
-      : representativeEntry.embedding;
+    const sourceEmb =
+      typeof representativeEntry.embedding === "string"
+        ? decompressEmbeddingToInt8(representativeEntry.embedding)
+        : representativeEntry.embedding;
 
     const pathScores = new Map<string, number>();
 
@@ -1751,13 +1893,12 @@ t1 -> Translation`;
       if (entry.path === activeFilePath) continue; // Skip source file
 
       // Check exclusions
-      if (excludedPrefixes.some(prefix => entry.path.startsWith(prefix))) {
+      if (excludedPrefixes.some((prefix) => entry.path.startsWith(prefix))) {
         continue;
       }
 
-      const emb = typeof entry.embedding === "string"
-        ? decompressEmbeddingToInt8(entry.embedding)
-        : entry.embedding;
+      const emb =
+        typeof entry.embedding === "string" ? decompressEmbeddingToInt8(entry.embedding) : entry.embedding;
 
       const score = cosineSimilarityInt8(sourceEmb, emb);
 
@@ -1769,7 +1910,7 @@ t1 -> Translation`;
 
     return Array.from(pathScores.entries())
       .map(([path, score]) => ({ path, score }))
-      .filter(s => s.score >= this.plugin.settings.connectionsThreshold)
+      .filter((s) => s.score >= this.plugin.settings.connectionsThreshold)
       .sort((a, b) => b.score - a.score)
       .slice(0, this.plugin.settings.connectionsMaxResults);
   }

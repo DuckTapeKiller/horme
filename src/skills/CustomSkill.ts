@@ -34,12 +34,14 @@ export class CustomSkill implements Skill {
     // a skill that the model itself cannot call.
     this.instructions = "";
     // Single generic parameter — receives the user's raw typed input.
-    this.parameters = [{
-      name: "input",
-      type: "string",
-      required: true,
-      description: "The text to process with this skill."
-    }];
+    this.parameters = [
+      {
+        name: "input",
+        type: "string",
+        required: true,
+        description: "The text to process with this skill.",
+      },
+    ];
   }
 
   private resolveSecrets(input: string, missing: Set<string>): string {
@@ -68,7 +70,7 @@ export class CustomSkill implements Skill {
     const missingSecrets = new Set<string>();
     const finalUrl = this.resolveSecrets(
       this.url.replace(/\{\{query\}\}/g, encodeURIComponent(query)),
-      missingSecrets
+      missingSecrets,
     );
 
     const headers: Record<string, string> = {};
@@ -83,14 +85,17 @@ export class CustomSkill implements Skill {
     };
 
     if (this.method === "POST" && this.body) {
-      const isJson = (!headers["Content-Type"] || headers["Content-Type"].includes("json"));
-      
+      const isJson = !headers["Content-Type"] || headers["Content-Type"].includes("json");
+
       if (isJson) {
         // Safely escape the query before injecting it to prevent breaking the JSON structure.
         // JSON.stringify("test") returns '"test"'. We slice off the outer quotes to get the escaped inner string.
         const escapedQuery = JSON.stringify(query).slice(1, -1);
-        reqOptions.body = this.resolveSecrets(this.body.replace(/\{\{query\}\}/g, escapedQuery), missingSecrets);
-        
+        reqOptions.body = this.resolveSecrets(
+          this.body.replace(/\{\{query\}\}/g, escapedQuery),
+          missingSecrets,
+        );
+
         if (!headers["Content-Type"]) {
           headers["Content-Type"] = "application/json";
         }

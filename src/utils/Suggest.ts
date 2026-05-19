@@ -14,7 +14,11 @@ export class FileSuggest extends AbstractInputSuggest<TFile> {
     const lowerCaseInputStr = inputStr.toLowerCase();
 
     abstractFiles.forEach((file: TAbstractFile) => {
-      if (file instanceof TFile && file.extension === "md" && file.path.toLowerCase().contains(lowerCaseInputStr)) {
+      if (
+        file instanceof TFile &&
+        file.extension === "md" &&
+        file.path.toLowerCase().contains(lowerCaseInputStr)
+      ) {
         files.push(file);
       }
     });
@@ -80,8 +84,10 @@ export class FileOrFolderSuggest extends AbstractInputSuggest<TAbstractFile> {
     const lowerCaseInputStr = inputStr.toLowerCase();
 
     abstractFiles.forEach((file: TAbstractFile) => {
-      if ((file instanceof TFolder || (file instanceof TFile && file.extension === "md")) && 
-          file.path.toLowerCase().contains(lowerCaseInputStr)) {
+      if (
+        (file instanceof TFolder || (file instanceof TFile && file.extension === "md")) &&
+        file.path.toLowerCase().contains(lowerCaseInputStr)
+      ) {
         suggestions.push(file);
       }
     });

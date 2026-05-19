@@ -27,18 +27,18 @@ export class OpenRouterProvider implements AiProvider {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${this.apiKey}`,
+        Authorization: `Bearer ${this.apiKey}`,
         "HTTP-Referer": "https://github.com/DuckTapeKiller/horme",
-        "X-Title": "Horme"
+        "X-Title": "Horme",
       },
       body: JSON.stringify({
         model,
         messages: [
           { role: "system", content: system },
-          { role: "user", content: prompt }
+          { role: "user", content: prompt },
         ],
         temperature: this.temperature,
-        max_tokens: this.maxTokens
+        max_tokens: this.maxTokens,
       }),
       throw: false,
     });
@@ -53,28 +53,32 @@ export class OpenRouterProvider implements AiProvider {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${this.apiKey}`,
+        Authorization: `Bearer ${this.apiKey}`,
         "HTTP-Referer": "https://github.com/DuckTapeKiller/horme",
-        "X-Title": "Horme"
+        "X-Title": "Horme",
       },
       body: JSON.stringify({
         model,
         messages: msgs,
         temperature: this.temperature,
-        max_tokens: this.maxTokens
+        max_tokens: this.maxTokens,
       }),
       throw: false,
     });
     if (res.status !== 200) throw new Error(`OpenRouter error: ${res.status}`);
     return this.extractContent(res.json as unknown);
   }
-  async stream(msgs: Array<{ role: string; content: string }>, model: string, signal?: AbortSignal): Promise<ReadableStreamDefaultReader<Uint8Array>> {
+  async stream(
+    msgs: Array<{ role: string; content: string }>,
+    model: string,
+    signal?: AbortSignal,
+  ): Promise<ReadableStreamDefaultReader<Uint8Array>> {
     if (!this.apiKey) throw new Error("No OpenRouter API Key");
     const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${this.apiKey}`,
+        Authorization: `Bearer ${this.apiKey}`,
         "HTTP-Referer": "https://github.com/DuckTapeKiller/horme",
         "X-Title": "Horme",
       },

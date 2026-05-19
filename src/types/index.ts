@@ -1,13 +1,21 @@
-export type AiProvider = "ollama" | "lmstudio" | "claude" | "gemini" | "openai" | "groq" | "openrouter" | "mistral";
+export type AiProvider =
+  | "ollama"
+  | "lmstudio"
+  | "claude"
+  | "gemini"
+  | "openai"
+  | "groq"
+  | "openrouter"
+  | "mistral";
 
 export interface CustomSkillDefinition {
-  id: string;           // generated slug: "custom_" + sanitized name
-  name: string;         // display name shown in dropdown
-  description: string;  // one-line description shown in dropdown
-  url: string;          // URL template — use {{query}} as placeholder
+  id: string; // generated slug: "custom_" + sanitized name
+  name: string; // display name shown in dropdown
+  description: string; // one-line description shown in dropdown
+  url: string; // URL template — use {{query}} as placeholder
   method: "GET" | "POST";
-  headers: Record<string, string>;  // optional request headers
-  body: string;         // POST body template — use {{query}} as placeholder
+  headers: Record<string, string>; // optional request headers
+  body: string; // POST body template — use {{query}} as placeholder
   responsePath: string; // dot-path to extract from JSON response (e.g. "results[0].text")
 }
 

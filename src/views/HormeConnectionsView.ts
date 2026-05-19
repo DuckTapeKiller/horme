@@ -32,7 +32,7 @@ export class HormeConnectionsView extends ItemView {
 
     const headerEl = this.contentEl.createEl("div", { cls: "horme-connections-header" });
     headerEl.createEl("h4", { text: "Connections" });
-    
+
     const controlsEl = headerEl.createEl("div", { cls: "horme-connections-controls" });
     const pauseBtn = controlsEl.createEl("button", { text: "▣ Pause", cls: "horme-connections-pause-btn" });
     pauseBtn.onclick = () => {
@@ -74,13 +74,13 @@ export class HormeConnectionsView extends ItemView {
 
   private async _doUpdateConnections(filePath: string) {
     this.connectionsListEl.empty();
-    
+
     const loadingEl = this.connectionsListEl.createEl("div", { cls: "horme-connections-loading" });
     loadingEl.createEl("p", { text: "Finding connections..." });
 
     try {
       const connections = await this.plugin.vaultIndexer.getConnections(filePath);
-      
+
       this.connectionsListEl.empty();
 
       if (connections === null) {
@@ -103,31 +103,33 @@ export class HormeConnectionsView extends ItemView {
 
       for (const conn of connections) {
         const itemEl = this.connectionsListEl.createEl("div", { cls: "horme-connection-item" });
-        
+
         const titleContainer = itemEl.createEl("div", { cls: "horme-connection-title-container" });
-        
-        const titleEl = titleContainer.createEl("a", { 
+
+        const titleEl = titleContainer.createEl("a", {
           text: conn.path.split("/").pop()?.replace(".md", "") || conn.path,
-          cls: "horme-connection-title internal-link"
+          cls: "horme-connection-title internal-link",
         });
-        
+
         if (this.plugin.settings.connectionsDisplayStyle === "detailed") {
           const folderParts = conn.path.split("/");
           if (folderParts.length > 1) {
-             folderParts.pop(); // remove file name
-             titleContainer.createEl("div", { 
-               text: folderParts.join("/"),
-               cls: "horme-connection-path"
-             });
+            folderParts.pop(); // remove file name
+            titleContainer.createEl("div", {
+              text: folderParts.join("/"),
+              cls: "horme-connection-path",
+            });
           }
         }
-        
+
         titleEl.onclick = (e) => {
           e.preventDefault();
           void (async () => {
             const targetFile = this.plugin.app.vault.getAbstractFileByPath(conn.path);
             if (targetFile instanceof TFile) {
-              const leaf = this.plugin.app.workspace.getLeaf(this.plugin.settings.connectionsOpenInNewTab ? "tab" : false);
+              const leaf = this.plugin.app.workspace.getLeaf(
+                this.plugin.settings.connectionsOpenInNewTab ? "tab" : false,
+              );
               await leaf.openFile(targetFile);
             }
           })();
@@ -135,7 +137,7 @@ export class HormeConnectionsView extends ItemView {
 
         itemEl.createEl("span", {
           text: `${Math.round(conn.score * 100)}%`,
-          cls: "horme-connection-score"
+          cls: "horme-connection-score",
         });
       }
     } catch (e: unknown) {
@@ -143,7 +145,10 @@ export class HormeConnectionsView extends ItemView {
       const errorEl = this.connectionsListEl.createEl("div", { cls: "horme-connections-error" });
       errorEl.createEl("p", { text: "Failed to load connections." });
       console.error(e);
-      this.plugin.diagnosticService.report("Connections", `Failed to load connections: ${e instanceof Error ? e.message : String(e)}`);
+      this.plugin.diagnosticService.report(
+        "Connections",
+        `Failed to load connections: ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
   }
 }

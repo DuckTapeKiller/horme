@@ -27,7 +27,7 @@ export class OllamaProvider implements AiProvider {
         options: { temperature: this.temperature, num_predict: this.maxTokens },
       }),
     });
-    
+
     if (response.status !== 200) throw new Error(`Ollama error: ${response.status}`);
     const data: unknown = response.json;
     const error = getStringProp(data, "error");
@@ -35,7 +35,7 @@ export class OllamaProvider implements AiProvider {
     if (!content && error) throw new Error(`Ollama: ${error}`);
     return content;
   }
-  
+
   async generateChat(msgs: Array<{ role: string; content: string }>, model: string): Promise<string> {
     const url = `${this.baseUrl}/api/chat`;
     const response = await requestUrl({
@@ -59,7 +59,11 @@ export class OllamaProvider implements AiProvider {
     return content;
   }
 
-  async stream(msgs: Array<{ role: string; content: string }>, model: string, signal?: AbortSignal): Promise<ReadableStreamDefaultReader<Uint8Array>> {
+  async stream(
+    msgs: Array<{ role: string; content: string }>,
+    model: string,
+    signal?: AbortSignal,
+  ): Promise<ReadableStreamDefaultReader<Uint8Array>> {
     const res = await fetch(`${this.baseUrl}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

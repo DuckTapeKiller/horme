@@ -27,23 +27,25 @@ export class GenericConfirmModal extends Modal {
             this.resolved = true;
             this.close();
             this.onConfirm();
-          })
+          }),
       )
       .addButton((btn) =>
-        btn
-          .setButtonText("Cancel")
-          .onClick(() => {
-            this.resolved = true;
-            this.close();
-            if (this.onCancel) this.onCancel();
-          })
+        btn.setButtonText("Cancel").onClick(() => {
+          this.resolved = true;
+          this.close();
+          if (this.onCancel) this.onCancel();
+        }),
       );
   }
 
   onClose() {
     // Treat "dismiss" (Esc / outside click / X) as cancel for safety-critical prompts.
     if (!this.resolved && this.onCancel) {
-      try { this.onCancel(); } catch { /* no-op */ }
+      try {
+        this.onCancel();
+      } catch {
+        /* no-op */
+      }
     }
     this.contentEl.empty();
   }

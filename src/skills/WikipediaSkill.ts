@@ -5,23 +5,24 @@ import { asArray, errorToMessage, getRecordProp, getStringProp, isRecord } from 
 export class WikipediaSkill implements Skill {
   id = "wikipedia";
   name = "Wikipedia Search";
-  description = "Searches Wikipedia for factual information, detailed article sections, and verification of claims. Supports multiple languages.";
+  description =
+    "Searches Wikipedia for factual information, detailed article sections, and verification of claims. Supports multiple languages.";
   terminal = true;
   primaryParam = "query";
-  
+
   parameters: SkillParameter[] = [
     {
       name: "query",
       type: "string",
       description: "The search term or claim to verify.",
-      required: true
+      required: true,
     },
     {
       name: "language",
       type: "string",
       description: "Wikipedia language code (e.g. 'en' for English, 'es' for Spanish). Defaults to 'en'.",
-      required: false
-    }
+      required: false,
+    },
   ];
 
   instructions = `To use this skill, output exactly: <call:wikipedia>{"query": "your search term", "language": "en"}</call>. The "language" parameter is optional (defaults to "en"); use "es" for Spanish Wikipedia, "fr" for French, etc. Use this whenever the user asks for a factual verification, when you need to confirm a historical, scientific, or geographic detail, or when fact-checking claims.`;
@@ -29,16 +30,17 @@ export class WikipediaSkill implements Skill {
   async execute(params: unknown): Promise<string> {
     try {
       const query = getStringProp(params, "query");
-      if (!query) return `Invalid parameters for ${this.name}: expected {"query": string, "language"?: string}.`;
+      if (!query)
+        return `Invalid parameters for ${this.name}: expected {"query": string, "language"?: string}.`;
       const language = getStringProp(params, "language");
       const lang = (language || "en").toLowerCase().slice(0, 2);
       const wikiBase = `https://${lang}.wikipedia.org`;
-      
+
       // 1. Search for the most relevant page
       const searchUrl = `${wikiBase}/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&srlimit=3&format=json&origin=*`;
       const searchRes = await requestUrlWithTimeout({ url: searchUrl, throw: false });
       const searchData: unknown = searchRes.json;
-      
+
       const queryObj = getRecordProp(searchData, "query");
       const searchArr = asArray(getRecordProp(queryObj, "search")) ?? [];
       if (searchArr.length === 0) {
@@ -66,14 +68,14 @@ export class WikipediaSkill implements Skill {
       try {
         const sectionsRes = await requestUrlWithTimeout({ url: sectionsUrl, throw: false });
         const sectionsData: unknown = sectionsRes.json;
-        
+
         const parseObj = getRecordProp(sectionsData, "parse");
         const sections = asArray(getRecordProp(parseObj, "sections")) ?? [];
         if (sections.length > 0) {
           // Find sections most relevant to the query (top-level sections only, max 3)
           const topSections = sections
             .filter((s) => {
-              const level = (getRecordProp(s, "toclevel"));
+              const level = getRecordProp(s, "toclevel");
               const line = getStringProp(s, "line") ?? "";
               return typeof level === "number" && level <= 2 && line.length > 0;
             })
@@ -85,12 +87,12 @@ export class WikipediaSkill implements Skill {
             const extractRes = await requestUrlWithTimeout({ url: extractUrl, throw: false });
             const extractJson: unknown = extractRes.json;
             const pages = getRecordProp(getRecordProp(extractJson, "query"), "pages");
-            
+
             if (isRecord(pages)) {
               const pageId = Object.keys(pages)[0];
               const pageObj = pages[pageId];
               const fullExtract = getStringProp(pageObj, "extract");
-              
+
               if (fullExtract) {
                 // Find query-relevant portions of the extract
                 const relevantContent = this.extractRelevantPassages(fullExtract, query);
@@ -120,7 +122,6 @@ export class WikipediaSkill implements Skill {
 
       return output;
     } catch (e: unknown) {
-
       console.error("Horme Wikipedia Skill Error:", e);
       throw new Error(errorToMessage(e));
     }
@@ -131,27 +132,30 @@ export class WikipediaSkill implements Skill {
    * Splits by sections (double newline + heading pattern) and scores by keyword overlap.
    */
   private extractRelevantPassages(fullText: string, query: string): string {
-    const queryTerms = query.toLowerCase().split(/\s+/).filter(t => t.length > 3);
+    const queryTerms = query
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((t) => t.length > 3);
     if (queryTerms.length === 0) return "";
 
     // Split into paragraphs
-    const paragraphs = fullText.split(/\n\n+/).filter(p => p.trim().length > 30);
+    const paragraphs = fullText.split(/\n\n+/).filter((p) => p.trim().length > 30);
 
     // Score each paragraph by query term overlap
-    const scored = paragraphs.map(p => {
+    const scored = paragraphs.map((p) => {
       const lower = p.toLowerCase();
-      const hits = queryTerms.filter(t => lower.includes(t)).length;
+      const hits = queryTerms.filter((t) => lower.includes(t)).length;
       return { text: p.trim(), score: hits };
     });
 
     // Take top 3 paragraphs that have at least one query term match
     const relevant = scored
-      .filter(s => s.score > 0)
+      .filter((s) => s.score > 0)
       .sort((a, b) => b.score - a.score)
       .slice(0, 3);
 
     if (relevant.length === 0) return "";
 
-    return relevant.map(r => r.text).join("\n\n");
+    return relevant.map((r) => r.text).join("\n\n");
   }
 }

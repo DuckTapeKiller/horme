@@ -1,6 +1,6 @@
 import { requestUrl } from "obsidian";
 import { AiProvider } from "./AiProvider";
-import { asArray, errorToMessage, getRecordProp, getStringProp } from "../utils/TypeGuards";
+import { asArray, getRecordProp, getStringProp } from "../utils/TypeGuards";
 
 type ClaudeMessage = { role: "user" | "assistant"; content: string };
 
@@ -25,8 +25,11 @@ export class ClaudeProvider implements AiProvider {
     return texts.join("");
   }
 
-  private normalizeMsgs(msgs: Array<{ role: string; content: string }>): { system: string; history: ClaudeMessage[] } {
-    const system = msgs.find(m => m.role === "system")?.content ?? "";
+  private normalizeMsgs(msgs: Array<{ role: string; content: string }>): {
+    system: string;
+    history: ClaudeMessage[];
+  } {
+    const system = msgs.find((m) => m.role === "system")?.content ?? "";
     const history: ClaudeMessage[] = [];
     for (const m of msgs) {
       if (m.role === "system") continue;
@@ -92,7 +95,7 @@ export class ClaudeProvider implements AiProvider {
   async stream(
     msgs: Array<{ role: string; content: string }>,
     model: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
   ): Promise<ReadableStreamDefaultReader<Uint8Array>> {
     if (!this.apiKey) throw new Error("No Claude API Key");
     const { system, history } = this.normalizeMsgs(msgs);
@@ -118,4 +121,3 @@ export class ClaudeProvider implements AiProvider {
     return res.body.getReader();
   }
 }
-

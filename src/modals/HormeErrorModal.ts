@@ -19,17 +19,17 @@ export class HormeErrorModal extends Modal {
 
     contentEl.createEl("h2", {
       text: `⚠️ ${this.title}`,
-      cls: "horme-error-modal-title"
+      cls: "horme-error-modal-title",
     });
 
     contentEl.createEl("p", {
       text: this.message,
-      cls: "horme-error-modal-message"
+      cls: "horme-error-modal-message",
     });
 
     if (this.detail) {
       const details = contentEl.createEl("details", {
-        cls: "horme-error-modal-details"
+        cls: "horme-error-modal-details",
       });
       details.createEl("summary", { text: "Technical detail" });
       details.createEl("code", { text: this.detail });
@@ -38,7 +38,7 @@ export class HormeErrorModal extends Modal {
     const btnRow = contentEl.createDiv("horme-error-modal-btn-row");
     const closeBtn = btnRow.createEl("button", {
       text: "OK",
-      cls: "mod-cta"
+      cls: "mod-cta",
     });
     closeBtn.addEventListener("click", () => this.close());
   }

@@ -3,10 +3,12 @@ import { Document, Packer, Paragraph, TextRun, HeadingLevel } from "docx";
 export class DocxService {
   async generateBuffer(markdown: string): Promise<Buffer> {
     const doc = new Document({
-      sections: [{
-        properties: {},
-        children: this.markdownToDocxParagraphs(markdown),
-      }],
+      sections: [
+        {
+          properties: {},
+          children: this.markdownToDocxParagraphs(markdown),
+        },
+      ],
     });
 
     return await Packer.toBuffer(doc);
@@ -15,35 +17,41 @@ export class DocxService {
   private markdownToDocxParagraphs(markdown: string): Paragraph[] {
     const lines = markdown.split("\n");
     const paragraphs: Paragraph[] = [];
-    
+
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i].trim();
       if (!line) continue;
-      
+
       const headerMatch = line.match(/^(#{1,6})\s+(.*)$/);
       if (headerMatch) {
         const level = headerMatch[1].length;
-        paragraphs.push(new Paragraph({
-          text: headerMatch[2],
-          heading: HeadingLevel[`HEADING_${level}` as keyof typeof HeadingLevel],
-          spacing: { before: 200, after: 100 }
-        }));
-        continue;
-      }
-      
-      const listMatch = line.match(/^[-*]\s+(.*)$/);
-      if (listMatch) {
-        paragraphs.push(new Paragraph({
-          children: this.parseInlineStyles(listMatch[1]),
-          bullet: { level: 0 },
-        }));
+        paragraphs.push(
+          new Paragraph({
+            text: headerMatch[2],
+            heading: HeadingLevel[`HEADING_${level}` as keyof typeof HeadingLevel],
+            spacing: { before: 200, after: 100 },
+          }),
+        );
         continue;
       }
 
-      paragraphs.push(new Paragraph({
-        children: this.parseInlineStyles(line),
-        spacing: { after: 120 }
-      }));
+      const listMatch = line.match(/^[-*]\s+(.*)$/);
+      if (listMatch) {
+        paragraphs.push(
+          new Paragraph({
+            children: this.parseInlineStyles(listMatch[1]),
+            bullet: { level: 0 },
+          }),
+        );
+        continue;
+      }
+
+      paragraphs.push(
+        new Paragraph({
+          children: this.parseInlineStyles(line),
+          spacing: { after: 120 },
+        }),
+      );
     }
     return paragraphs;
   }
@@ -70,13 +78,19 @@ export class DocxService {
         let end = i + 1;
         while (end < text.length) {
           if (text[end] === "*" && !text.startsWith("**", end)) break;
-          if (text.startsWith("**", end)) { end += 2; continue; }
+          if (text.startsWith("**", end)) {
+            end += 2;
+            continue;
+          }
           end++;
         }
         if (end < text.length) {
           runs.push(new TextRun({ text: text.slice(i + 1, end), italics: true }));
           i = end + 1;
-        } else { current = "*"; i += 1; }
+        } else {
+          current = "*";
+          i += 1;
+        }
       } else {
         current += text[i];
         i++;

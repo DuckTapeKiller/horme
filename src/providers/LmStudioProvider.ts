@@ -29,11 +29,11 @@ export class LmStudioProvider implements AiProvider {
         model,
         messages: [
           { role: "system", content: system },
-          { role: "user", content: prompt }
+          { role: "user", content: prompt },
         ],
         temperature: this.temperature,
         max_tokens: this.maxTokens,
-        stream: false
+        stream: false,
       }),
       throw: false,
     });
@@ -51,14 +51,18 @@ export class LmStudioProvider implements AiProvider {
         messages: msgs,
         temperature: this.temperature,
         max_tokens: this.maxTokens,
-        stream: false
+        stream: false,
       }),
       throw: false,
     });
     if (res.status !== 200) throw new Error(`LM Studio error: ${res.status}`);
     return this.extractContent(res.json as unknown);
   }
-  async stream(msgs: Array<{ role: string; content: string }>, model: string, signal?: AbortSignal): Promise<ReadableStreamDefaultReader<Uint8Array>> {
+  async stream(
+    msgs: Array<{ role: string; content: string }>,
+    model: string,
+    signal?: AbortSignal,
+  ): Promise<ReadableStreamDefaultReader<Uint8Array>> {
     const res = await fetch(`${this.baseUrl}/v1/chat/completions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

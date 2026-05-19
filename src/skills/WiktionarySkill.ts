@@ -5,23 +5,24 @@ import { asArray, errorToMessage, getRecordProp, getStringProp, isRecord } from 
 export class WiktionarySkill implements Skill {
   id = "wiktionary";
   name = "Wiktionary Lookup";
-  description = "Looks up word definitions, etymology, usage notes, and conjugation details from Wiktionary. Supports multiple languages.";
+  description =
+    "Looks up word definitions, etymology, usage notes, and conjugation details from Wiktionary. Supports multiple languages.";
   terminal = true;
   primaryParam = "word";
-  
+
   parameters: SkillParameter[] = [
     {
       name: "word",
       type: "string",
       description: "The word to look up.",
-      required: true
+      required: true,
     },
     {
       name: "language",
       type: "string",
       description: "Wiktionary language code (e.g. 'en' for English, 'es' for Spanish). Defaults to 'en'.",
-      required: false
-    }
+      required: false,
+    },
   ];
 
   instructions = `To use this skill, output exactly: <call:wiktionary>{"word": "example", "language": "en"}</call>. IMPORTANT: Always infer the correct language code from the word itself. If the word is Spanish, use "es". If it is French, use "fr". If it is German, use "de". If it is Italian, use "it". If it is Portuguese, use "pt". Only use "en" if the word is genuinely English. The language code controls which national Wiktionary is queried (e.g. "es" queries es.wiktionary.org). Use this to verify word definitions, check etymology, distinguish false friends, or confirm that a word exists in the target language.`;
@@ -29,14 +30,16 @@ export class WiktionarySkill implements Skill {
   async execute(params: unknown): Promise<string> {
     try {
       const word = getStringProp(params, "word");
-      if (!word) return `Invalid parameters for ${this.name}: expected {"word": string, "language"?: string}.`;
+      if (!word)
+        return `Invalid parameters for ${this.name}: expected {"word": string, "language"?: string}.`;
       const language = getStringProp(params, "language");
       const lang = (language || "en").toLowerCase().slice(0, 2);
       const wiktBase = `https://${lang}.wiktionary.org`;
 
       // Fetch the page extract for the word
-      const url = `${wiktBase}/w/api.php?action=query&titles=${encodeURIComponent(word)}`
-        + `&prop=extracts&explaintext=1&format=json&origin=*`;
+      const url =
+        `${wiktBase}/w/api.php?action=query&titles=${encodeURIComponent(word)}` +
+        `&prop=extracts&explaintext=1&format=json&origin=*`;
       const res = await requestUrlWithTimeout({ url });
       const json: unknown = res.json;
       const pages = getRecordProp(getRecordProp(json, "query"), "pages");
@@ -57,15 +60,12 @@ export class WiktionarySkill implements Skill {
       }
 
       // Trim to a useful length — Wiktionary entries can be enormous
-      const raw = extract.length > 2000
-        ? extract.substring(0, 1950) + "\n\n...[TRUNCATED]"
-        : extract;
+      const raw = extract.length > 2000 ? extract.substring(0, 1950) + "\n\n...[TRUNCATED]" : extract;
 
       const trimmed = this.wikitextToMarkdown(raw);
 
       return `## Wiktionary: "${word}" (${lang})\n\n${trimmed}\n\n<!-- ${wiktBase}/wiki/${encodeURIComponent(word)} -->`;
     } catch (e: unknown) {
-
       console.error("Horme Wiktionary Skill Error:", e);
       throw new Error(errorToMessage(e));
     }
@@ -95,15 +95,17 @@ export class WiktionarySkill implements Skill {
   }
 
   private wikitextToMarkdown(text: string): string {
-    return text
-      // ==== Level 4 headings ==== → #### heading
-      .replace(/^={4}([^=]+)={4}\s*$/gm, (_: string, t: string) => `#### ${t.trim()}`)
-      // === Level 3 headings === → ### heading
-      .replace(/^={3}([^=]+)={3}\s*$/gm, (_: string, t: string) => `### ${t.trim()}`)
-      // == Level 2 headings == → ## heading
-      .replace(/^={2}([^=]+)={2}\s*$/gm, (_: string, t: string) => `## ${t.trim()}`)
-      // Collapse 3+ consecutive blank lines into 2
-      .replace(/\n{3,}/g, "\n\n")
-      .trim();
+    return (
+      text
+        // ==== Level 4 headings ==== → #### heading
+        .replace(/^={4}([^=]+)={4}\s*$/gm, (_: string, t: string) => `#### ${t.trim()}`)
+        // === Level 3 headings === → ### heading
+        .replace(/^={3}([^=]+)={3}\s*$/gm, (_: string, t: string) => `### ${t.trim()}`)
+        // == Level 2 headings == → ## heading
+        .replace(/^={2}([^=]+)={2}\s*$/gm, (_: string, t: string) => `## ${t.trim()}`)
+        // Collapse 3+ consecutive blank lines into 2
+        .replace(/\n{3,}/g, "\n\n")
+        .trim()
+    );
   }
 }

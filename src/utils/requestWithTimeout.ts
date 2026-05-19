@@ -12,12 +12,15 @@ import { requestUrl, RequestUrlParam, RequestUrlResponse } from "obsidian";
  */
 export async function requestUrlWithTimeout(
   params: RequestUrlParam,
-  timeoutMs = 15000
+  timeoutMs = 15000,
 ): Promise<RequestUrlResponse> {
   return Promise.race([
     requestUrl(params),
     new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error(`Network request timed out after ${timeoutMs / 1000}s: ${params.url}`)), timeoutMs);
+      setTimeout(
+        () => reject(new Error(`Network request timed out after ${timeoutMs / 1000}s: ${params.url}`)),
+        timeoutMs,
+      );
     }),
   ]);
 }

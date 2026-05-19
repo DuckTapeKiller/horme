@@ -7,10 +7,11 @@ import { errorToMessage, getStringProp } from "../utils/TypeGuards";
 export class FetchAndSummariseSkill implements Skill {
   id = "fetch_and_summarise";
   name = "Fetch and Summarise";
-  description = "Fetches the core content of an online news article or web URL and extracts the text layout for reading and synthesis.";
+  description =
+    "Fetches the core content of an online news article or web URL and extracts the text layout for reading and synthesis.";
   terminal = true; // Mark as terminal to force direct chat rendering
   primaryParam = "url";
-  
+
   private plugin: HormePlugin;
 
   constructor(plugin: HormePlugin) {
@@ -22,8 +23,8 @@ export class FetchAndSummariseSkill implements Skill {
       name: "url",
       type: "string",
       description: "The full HTTP or HTTPS URL of the online article to scrape.",
-      required: true
-    }
+      required: true,
+    },
   ];
 
   instructions = `To use this skill, output exactly: <call:fetch_and_summarise>{"url": "https://example.com/article"}</call>. Use this whenever the user shares a link to a newspaper article, blog post, or webpage and explicitly requests that you read, summarize, evaluate, or answer questions about its content.`;
@@ -31,7 +32,7 @@ export class FetchAndSummariseSkill implements Skill {
   async execute(params: unknown): Promise<string> {
     try {
       const url = getStringProp(params, "url");
-      if (!url) return "Invalid parameters: expected {\"url\": \"string\"}.";
+      if (!url) return 'Invalid parameters: expected {"url": "string"}.';
 
       if (!url.startsWith("http://") && !url.startsWith("https://")) {
         return "Error: Invalid URL protocol specified. Target must begin with http:// or https://.";
@@ -47,12 +48,18 @@ export class FetchAndSummariseSkill implements Skill {
       const doc = parser.parseFromString(res.text, "text/html");
 
       // Strip intrusive noise elements to shrink VRAM usage profile
-      const noiseSelectors = "script, style, noscript, iframe, nav, footer, header, aside, head, .advertisement, .comments, ytd-engagement-panel-section-list-renderer";
-      doc.querySelectorAll(noiseSelectors).forEach(el => el.remove());
+      const noiseSelectors =
+        "script, style, noscript, iframe, nav, footer, header, aside, head, .advertisement, .comments, ytd-engagement-panel-section-list-renderer";
+      doc.querySelectorAll(noiseSelectors).forEach((el) => el.remove());
 
       // Target relevant content wrapper nodes to extract clean textual content
       let rootContainer: Element | Document = doc;
-      const structuralBody = doc.querySelector("article") || doc.querySelector("main") || doc.querySelector("#content") || doc.querySelector(".article-body") || doc.querySelector(".story-body");
+      const structuralBody =
+        doc.querySelector("article") ||
+        doc.querySelector("main") ||
+        doc.querySelector("#content") ||
+        doc.querySelector(".article-body") ||
+        doc.querySelector(".story-body");
       if (structuralBody) {
         rootContainer = structuralBody;
       }
@@ -60,7 +67,7 @@ export class FetchAndSummariseSkill implements Skill {
       const elements = rootContainer.querySelectorAll("h1, h2, h3, p");
       const textLines: string[] = [];
 
-      elements.forEach(el => {
+      elements.forEach((el) => {
         const text = el.textContent?.trim();
         if (text && text.length > 15) {
           if (el.tagName.startsWith("H")) {
@@ -90,7 +97,7 @@ Content:
 ${cleanContent}`;
 
       new Notice("● Fetch & Summarise: Reading article...");
-      
+
       // Privacy guard: scraped webpage content must not leave the device
       // unless the user has explicitly acknowledged cloud document sharing.
       if (!this.plugin.isLocalProviderActive() && !this.plugin.settings.documentCloudWarningShown) {
@@ -98,7 +105,10 @@ ${cleanContent}`;
       }
 
       // Call your plugin's primary chat generation channel
-      const aiSummary = await this.plugin.aiGateway.generate(summaryPrompt, "You are a precise research assistant specializing in text synthesis. You never use emojis.");
+      const aiSummary = await this.plugin.aiGateway.generate(
+        summaryPrompt,
+        "You are a precise research assistant specializing in text synthesis. You never use emojis.",
+      );
 
       return `## ◈ Article Summary\n**Source:** ${url}\n\n${aiSummary.trim()}`;
     } catch (e: unknown) {

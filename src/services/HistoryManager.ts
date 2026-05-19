@@ -13,9 +13,7 @@ export class HistoryManager {
 
   constructor(private plugin: HormePlugin) {
     const configDir = plugin.app.vault.configDir;
-    this.historyPath = normalizePath(
-      `${configDir}/plugins/${plugin.manifest.id}/chat-history.json`
-    );
+    this.historyPath = normalizePath(`${configDir}/plugins/${plugin.manifest.id}/chat-history.json`);
   }
 
   private parseConversation(value: unknown): SavedConversation | null {
@@ -91,7 +89,7 @@ export class HistoryManager {
 
     try {
       let conversations = await this.load();
-      const idx = conversations.findIndex(c => c.id === convo.id);
+      const idx = conversations.findIndex((c) => c.id === convo.id);
       if (idx >= 0) conversations[idx] = convo;
       else conversations.unshift(convo);
 
@@ -100,10 +98,7 @@ export class HistoryManager {
         conversations = conversations.slice(0, MAX_CONVERSATIONS);
       }
 
-      await this.plugin.app.vault.adapter.write(
-        this.historyPath,
-        JSON.stringify(conversations)
-      );
+      await this.plugin.app.vault.adapter.write(this.historyPath, JSON.stringify(conversations));
     } catch (e: unknown) {
       this.plugin.diagnosticService.report("History", `Failed to write history: ${errorToMessage(e)}`);
     }
@@ -112,11 +107,8 @@ export class HistoryManager {
   async delete(id: string): Promise<void> {
     try {
       let conversations = await this.load();
-      conversations = conversations.filter(c => c.id !== id);
-      await this.plugin.app.vault.adapter.write(
-        this.historyPath,
-        JSON.stringify(conversations)
-      );
+      conversations = conversations.filter((c) => c.id !== id);
+      await this.plugin.app.vault.adapter.write(this.historyPath, JSON.stringify(conversations));
     } catch (e: unknown) {
       this.plugin.diagnosticService.report("History", `Failed to delete history: ${errorToMessage(e)}`);
     }

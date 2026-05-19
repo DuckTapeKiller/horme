@@ -72,21 +72,21 @@ export function decompressEmbedding(b64: string): number[] {
  * Handles mismatched lengths and zero-vector edge cases.
  */
 export function cosineSimilarity(a: number[], b: number[]): number {
-    const len = Math.min(a.length, b.length);
-    if (len === 0) return 0;
+  const len = Math.min(a.length, b.length);
+  if (len === 0) return 0;
 
-    let dot = 0;
-    let normA = 0;
-    let normB = 0;
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
 
-    for (let i = 0; i < len; i++) {
-        dot += a[i] * b[i];
-        normA += a[i] * a[i];
-        normB += b[i] * b[i];
-    }
+  for (let i = 0; i < len; i++) {
+    dot += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
 
-    const denom = Math.sqrt(normA) * Math.sqrt(normB);
-    return denom === 0 ? 0 : dot / denom;
+  const denom = Math.sqrt(normA) * Math.sqrt(normB);
+  return denom === 0 ? 0 : dot / denom;
 }
 
 /**
@@ -143,6 +143,7 @@ export function cosineSimilarityInt8(a: Int8Array, b: Int8Array): number {
 export function getModelPrefixes(model: string): { query: string; doc: string } {
   const m = model.toLowerCase();
   if (m.includes("nomic")) return { query: "search_query: ", doc: "search_document: " };
-  if (m.includes("mxbai")) return { query: "Represent this sentence for searching relevant passages: ", doc: "" };
+  if (m.includes("mxbai"))
+    return { query: "Represent this sentence for searching relevant passages: ", doc: "" };
   return { query: "", doc: "" };
 }

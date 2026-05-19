@@ -21,7 +21,8 @@ export class CreateConceptNoteSkill implements Skill {
     {
       name: "language",
       type: "string",
-      description: "Wikipedia language code to use (e.g. 'en', 'es', 'fr'). Defaults to the user's language when possible, otherwise 'en'.",
+      description:
+        "Wikipedia language code to use (e.g. 'en', 'es', 'fr'). Defaults to the user's language when possible, otherwise 'en'.",
       required: false,
     },
   ];
@@ -30,7 +31,10 @@ export class CreateConceptNoteSkill implements Skill {
     'Use this skill to research a term and save it to the vault: <call:create_concept_note>{"title":"term","language":"en"}</call>. ' +
     "The skill uses Wikipedia first, then Wiktionary as a fallback, and creates a note using the user's configured template.";
 
-  constructor(private app: App, private plugin: HormePlugin) {}
+  constructor(
+    private app: App,
+    private plugin: HormePlugin,
+  ) {}
 
   private normalizeLang(input: string | undefined): string {
     const raw = (input || "").trim().toLowerCase();
@@ -123,7 +127,10 @@ export class CreateConceptNoteSkill implements Skill {
       await this.ensureFolderPath(folderPath);
 
       // 3) Render template with snake_case tag + configurable source field
-      const snakeTag = title.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+      const snakeTag = title
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "");
       const sourceField = (conceptNoteSourceField || "Source").trim() || "Source";
       const noteBody = (conceptNoteTemplate || "")
         .replace(/\$\{title\}/g, title)
