@@ -37,7 +37,9 @@ _In Greek mythology, Horme (/ˈhɔːrmiː/; Ancient Greek: Ὁρμή) is the Gre
 >   ```bash
 >
 >   ollama pull nomic-embed-text:latest
->    ` > **2. Download the Interaction Model:**
+>    `
+>
+> **2. Download the Interaction Model:**
 >
 > This is the model you will use for asking questions.
 >
