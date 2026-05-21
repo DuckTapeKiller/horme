@@ -34,11 +34,13 @@ _In Greek mythology, Horme (/ˈhɔːrmiː/; Ancient Greek: Ὁρμή) is the Gre
 >
 > - **Recommended Model:** `nomic-embed-text:latest` (274 MB).
 > - **Command (in your terminal):**
->   `bash
-
-    ollama pull nomic-embed-text:latest
-    ` > **2. Download the Interaction Model:**
-
+>
+>  `bash
+>   ollama pull nomic-embed-text:latest
+>    `
+>
+> **2. Download the Interaction Model:**
+>
 > This is the model you will use for asking questions.
 >
 > - **Strong Recommendation:** `gemma4:e4b` (9.6 GB)
