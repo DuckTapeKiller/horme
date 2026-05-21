@@ -57,6 +57,10 @@ export const DEFAULT_SETTINGS: HormeSettings = {
   connectionsDisplayStyle: "minimal",
   ragEmbeddingModel: "nomic-embed-text",
   indexStatus: "Not built",
+  indexHighlightsEnabled: false,
+  highlightBoost: 0.2,
+  maxHighlightsPerNote: 24,
+  maxHighlightCharsPerNote: 2000,
   contextCloudWarningShown: false,
   contextNotesCloudWarningShown: false,
   documentCloudWarningShown: false,
@@ -65,13 +69,16 @@ export const DEFAULT_SETTINGS: HormeSettings = {
   summaryField: "summary",
   summaryLanguage: "Español",
   allowCloudRAG: false,
+  allowCloudTagTranslation: false,
   tagShadowingEnabled: true,
   tagShadowingLanguage: "English",
   tagTranslationModel: "",
   tagTranslationProvider: "ollama",
+  tagTranslationFallbackProvider: "ollama",
   tagsProvider: "ollama",
   tagsModel: "",
   customSkills: [],
+  customModelSuggestions: {},
 
   conceptNoteFolder: "Horme/Concepts",
   conceptNoteTemplate:
@@ -85,7 +92,7 @@ export const DEFAULT_SETTINGS: HormeSettings = {
 };
 
 export const PROVIDER_MODELS: Record<string, string[]> = {
-  gemini: ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.5-pro"],
+  gemini: ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.5-pro"],
   claude: [
     "claude-3-5-haiku-latest",
     "claude-3-5-sonnet-latest",

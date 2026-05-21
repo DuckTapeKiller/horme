@@ -9,8 +9,16 @@ import {
   getModelPrefixes,
   quantizeEmbeddingToInt8,
 } from "../utils/VectorUtils";
+import type { AiProvider as TagProviderId } from "../types";
 import { OllamaProvider } from "../providers/OllamaProvider";
 import { LmStudioProvider } from "../providers/LmStudioProvider";
+import type { AiProvider as AiProviderClient } from "../providers/AiProvider";
+import { ClaudeProvider } from "../providers/ClaudeProvider";
+import { GeminiProvider } from "../providers/GeminiProvider";
+import { OpenAIProvider } from "../providers/OpenAIProvider";
+import { GroqProvider } from "../providers/GroqProvider";
+import { OpenRouterProvider } from "../providers/OpenRouterProvider";
+import { MistralProvider } from "../providers/MistralProvider";
 import {
   asArray,
   asNumberArray,
@@ -26,8 +34,10 @@ interface IndexEntry {
   chunkEnd: number;
   embedding: Int8Array | string;
   mtime: number;
+  entryType?: "content" | "summary" | "highlights";
   summaryText?: string;
   tagsText?: string;
+  highlightsText?: string;
   headingPath?: string;
 }
 
@@ -115,6 +125,17 @@ export class VaultIndexer {
   // Cleared when the plugin unloads (in-memory only — intentionally not persisted).
   private tagTranslationCache: Map<string, string> = new Map();
   private hasReportedEmptyTagTranslationModel = false;
+  private tagTranslationRunStats: {
+    primary: TagProviderId;
+    fallback: TagProviderId;
+    primaryIsCloud: boolean;
+    allowCloudTagTranslation: boolean;
+    cloudOkChunks: number;
+    fallbackUsedChunks: number;
+    totalFailures: number;
+    fallbackWarningLogged: boolean;
+    fallbackNoticeShown: boolean;
+  } | null = null;
 
   /** O(1) lookup of entries by path */
   private getEntriesForPath(path: string): IndexEntry[] {
@@ -321,7 +342,19 @@ export class VaultIndexer {
 
       const summaryText = getStringProp(e, "summaryText");
       const tagsText = getStringProp(e, "tagsText");
+      const highlightsText = getStringProp(e, "highlightsText");
       const headingPath = getStringProp(e, "headingPath");
+      const entryTypeProp = getStringProp(e, "entryType");
+      const entryType: IndexEntry["entryType"] =
+        entryTypeProp === "content" || entryTypeProp === "summary" || entryTypeProp === "highlights"
+          ? entryTypeProp
+          : chunkStart === 0 && chunkEnd === 0
+            ? summaryText || tagsText
+              ? "summary"
+              : highlightsText
+                ? "highlights"
+                : undefined
+            : undefined;
 
       out.push({
         path,
@@ -329,8 +362,10 @@ export class VaultIndexer {
         chunkEnd,
         embedding,
         mtime,
+        ...(entryType ? { entryType } : {}),
         ...(summaryText ? { summaryText } : {}),
         ...(tagsText ? { tagsText } : {}),
+        ...(highlightsText ? { highlightsText } : {}),
         ...(headingPath ? { headingPath } : {}),
       });
     }
@@ -339,49 +374,98 @@ export class VaultIndexer {
 
   private async loadShardedIndex(): Promise<void> {
     this.clearIndex();
-    let shardIndex = 0;
+    const adapter = this.plugin.app.vault.adapter;
+    const currentModel = this.plugin.settings.ragEmbeddingModel;
+
+    // Best-effort recovery from a previously interrupted save.
+    // Ensures we don't silently stop at the first missing shard and accidentally run on a truncated index.
+    const folderPath = this.getVaultIndexFolderPath();
+    await this.reconcileShardArtifacts(folderPath);
+
+    let expectedTotalShards = 0;
+    let loadedShards = 0;
     let partialLoadFailed = false;
     let failedShardInfo: { shard: number; path: string } | null = null;
 
-    while (true) {
-      const path = this.getShardPath(shardIndex);
-      if (!(await this.plugin.app.vault.adapter.exists(path))) break;
+    const failLoad = (shard: number, path: string, reason: string) => {
+      this.plugin.diagnosticService.report("Vault Brain", reason, "error");
+      partialLoadFailed = true;
+      failedShardInfo = { shard, path };
+    };
 
-      this.plugin.setIndexingStatus(`Loading Brain: Shard ${shardIndex}...`);
+    // ── Load shard 0 first to determine totalShards ──
+    try {
+      const shard0Path = this.getShardPath(0);
+      this.plugin.setIndexingStatus("Loading Brain: Shard 0...");
+      const data = await adapter.read(shard0Path);
+      const parsed: unknown = JSON.parse(data);
 
-      try {
-        const data = await this.plugin.app.vault.adapter.read(path);
-        const parsed: unknown = JSON.parse(data);
-
-        // Validate model on the first shard only
-        if (shardIndex === 0) {
-          this.indexedModel = getStringProp(parsed, "model") ?? "";
-          const currentModel = this.plugin.settings.ragEmbeddingModel;
-          if (this.indexedModel !== currentModel) {
-            this.plugin.debugLog(
-              `Horme Brain: Embedding model changed (${this.indexedModel} → ${currentModel}). Wiping all shards.`,
-            );
-            this.clearIndex();
-            this.indexedModel = currentModel;
-            await this.deleteAllShards();
-            return;
-          }
-        }
-
-        const decompressed = this.parseEntries(getRecordProp(parsed, "entries"));
-        // Use a safe concat to avoid "Maximum call stack size exceeded" errors on large vaults
-        this.index = this.index.concat(decompressed);
-      } catch (e: unknown) {
-        this.plugin.diagnosticService.report(
-          "Vault Brain",
-          `Failed to read index shard ${shardIndex}: ${errorToMessage(e)}`,
+      this.indexedModel = getStringProp(parsed, "model") ?? "";
+      if (this.indexedModel !== currentModel) {
+        this.plugin.debugLog(
+          `Horme Brain: Embedding model changed (${this.indexedModel} → ${currentModel}). Wiping all shards.`,
         );
-        partialLoadFailed = true;
-        failedShardInfo = { shard: shardIndex, path };
-        break;
+        this.clearIndex();
+        this.indexedModel = currentModel;
+        await this.deleteAllShards();
+        return;
       }
 
-      shardIndex++;
+      const shardProp = getNumberProp(parsed, "shard");
+      const totalProp = getNumberProp(parsed, "totalShards");
+
+      const totalValid =
+        totalProp !== undefined && Number.isInteger(totalProp) && totalProp >= 1 && totalProp <= 10_000; // sanity cap: prevents runaway loops on corrupted metadata
+
+      if (shardProp !== 0 || !totalValid) {
+        failLoad(
+          0,
+          shard0Path,
+          `Shard 0 metadata invalid. shard=${String(shardProp)} totalShards=${String(totalProp)}`,
+        );
+      } else {
+        expectedTotalShards = totalProp as number;
+        const decompressed = this.parseEntries(getRecordProp(parsed, "entries"));
+        this.index = this.index.concat(decompressed);
+        loadedShards = 1;
+      }
+    } catch (e: unknown) {
+      failLoad(0, this.getShardPath(0), `Failed to read index shard 0: ${errorToMessage(e)}`);
+    }
+
+    // ── Load the remaining shards strictly (no "stop early") ──
+    if (!partialLoadFailed) {
+      for (let shardIndex = 1; shardIndex < expectedTotalShards; shardIndex++) {
+        const path = this.getShardPath(shardIndex);
+        this.plugin.setIndexingStatus(`Loading Brain: Shard ${shardIndex}...`);
+
+        try {
+          const data = await adapter.read(path);
+          const parsed: unknown = JSON.parse(data);
+
+          const modelProp = getStringProp(parsed, "model") ?? "";
+          const shardProp = getNumberProp(parsed, "shard");
+          const totalProp = getNumberProp(parsed, "totalShards");
+
+          if (modelProp !== currentModel || shardProp !== shardIndex || totalProp !== expectedTotalShards) {
+            failLoad(
+              shardIndex,
+              path,
+              `Shard metadata mismatch. shard=${String(shardProp)} totalShards=${String(
+                totalProp,
+              )} model=${modelProp || "(missing)"}`,
+            );
+            break;
+          }
+
+          const decompressed = this.parseEntries(getRecordProp(parsed, "entries"));
+          this.index = this.index.concat(decompressed);
+          loadedShards++;
+        } catch (e: unknown) {
+          failLoad(shardIndex, path, `Failed to read index shard ${shardIndex}: ${errorToMessage(e)}`);
+          break;
+        }
+      }
     }
 
     if (partialLoadFailed && failedShardInfo) {
@@ -389,19 +473,19 @@ export class VaultIndexer {
       this.indexedModel = "";
       this.clearIndex();
 
-      const errorMsg = `The Vault Brain index failed to load completely because shard ${failedShardInfo.shard} was corrupted or unreadable.\n\nPath: ${failedShardInfo.path}\n\nTo prevent data loss or silently operating on truncated/corrupted search indexes, the in-memory index has been cleared. Please perform a full rebuild of the Vault Index to restore search functionality.`;
+      // Some TS configurations can fail to narrow captured variables across complex async control flow.
+      // Capture the non-null value explicitly to keep the type stable.
+      const info = failedShardInfo as { shard: number; path: string };
+      const errorMsg = `The Vault Brain index failed to load completely.\n\nShard: ${info.shard}\nPath: ${info.path}\n\nTo prevent data loss or silently operating on truncated/corrupted search indexes, the in-memory index has been cleared. Please perform a full rebuild of the Vault Index to restore search functionality.`;
 
       new HormeErrorModal(this.plugin.app, "Vault Index Load Failure", errorMsg).open();
-
       return;
     }
 
-    // Reset flag upon a fully successful load
     this.loadWasPartial = false;
-
     this.rebuildPathIndex();
     this.plugin.debugLog(
-      `Horme Brain: Loaded ${this.index.length} entries from ${shardIndex} shards (model: ${this.indexedModel}).`,
+      `Horme Brain: Loaded ${this.index.length} entries from ${loadedShards} shards (model: ${this.indexedModel}).`,
     );
   }
 
@@ -428,6 +512,9 @@ export class VaultIndexer {
         const folderPath = normalizePath(`${configDir}/plugins/${this.plugin.manifest.id}/Vault Index`);
         if (!(await adapter.exists(folderPath))) await adapter.mkdir(folderPath);
 
+        // Best-effort recovery/cleanup if a previous save was interrupted.
+        await this.reconcileShardArtifacts(folderPath);
+
         const currentModel = this.plugin.settings.ragEmbeddingModel;
         const totalShards = Math.max(1, Math.ceil(this.index.length / this.SHARD_SIZE));
 
@@ -444,8 +531,10 @@ export class VaultIndexer {
             chunkEnd: e.chunkEnd,
             embedding: typeof e.embedding === "string" ? e.embedding : compressEmbedding(e.embedding),
             mtime: e.mtime,
+            ...(e.entryType ? { entryType: e.entryType } : {}),
             ...(e.summaryText ? { summaryText: e.summaryText } : {}),
             ...(e.tagsText ? { tagsText: e.tagsText } : {}),
+            ...(e.highlightsText ? { highlightsText: e.highlightsText } : {}),
             ...(e.headingPath ? { headingPath: e.headingPath } : {}),
           }));
 
@@ -464,15 +553,27 @@ export class VaultIndexer {
         }
 
         // ── Phase 2: Atomic rename pass ──
-        // Each rename replaces the old shard with the new one.
-        // If we crash here, we get either the old shard (safe) or a missing
-        // shard (caught by partialLoadFailed on next startup).
+        // Safer swap: final → .bak, tmp → final. Keep .bak until the end so
+        // an interrupted save can be rolled back to a consistent prior snapshot.
         for (let i = 0; i < tmpPaths.length; i++) {
-          // adapter.rename() does not overwrite on all platforms, so remove first
-          if (await adapter.exists(finalPaths[i])) {
-            await adapter.remove(finalPaths[i]);
+          const finalPath = finalPaths[i];
+          const tmpPath = tmpPaths[i];
+          const bakPath = finalPath + ".bak";
+
+          // adapter.rename() does not overwrite on all platforms, so ensure target is clear
+          if (await adapter.exists(bakPath)) await adapter.remove(bakPath);
+
+          if (await adapter.exists(finalPath)) {
+            await adapter.rename(finalPath, bakPath);
           }
-          await adapter.rename(tmpPaths[i], finalPaths[i]);
+
+          await adapter.rename(tmpPath, finalPath);
+        }
+
+        // Clean up backups after a fully successful swap pass
+        for (let i = 0; i < finalPaths.length; i++) {
+          const bakPath = finalPaths[i] + ".bak";
+          if (await adapter.exists(bakPath)) await adapter.remove(bakPath);
         }
 
         // ── Phase 3: Clean up stale shards from a previously larger index ──
@@ -485,10 +586,10 @@ export class VaultIndexer {
           }
         }
 
-        // Clean up any orphaned .tmp files from a previously interrupted save
+        // Clean up any orphaned .tmp/.bak files from a previously interrupted save
         const listed = await adapter.list(folderPath);
         for (const f of listed.files) {
-          if (f.endsWith(".tmp")) {
+          if (f.endsWith(".tmp") || f.endsWith(".bak")) {
             await adapter.remove(f);
           }
         }
@@ -538,12 +639,83 @@ export class VaultIndexer {
     if (!(await adapter.exists(folderPath))) return 0;
 
     const listed = await adapter.list(folderPath);
-    const shardFiles = listed.files.filter((path) => /vault-index-shard-\d+\.json$/i.test(path));
+    const shardFiles = listed.files.filter((path) =>
+      /vault-index-shard-\d+\.json(\.tmp|\.bak)?$/i.test(path),
+    );
 
     for (const path of shardFiles) {
       await adapter.remove(path);
     }
     return shardFiles.length;
+  }
+
+  /**
+   * Best-effort recovery/cleanup for shard saves that were interrupted mid-commit.
+   *
+   * Cases handled:
+   * - `.tmp` present: treat as interrupted save and roll back any swapped shards by restoring `.bak` → final,
+   *   then remove `.tmp`.
+   * - `.bak` present but no `.tmp`: treat as a completed save where cleanup didn't finish; remove `.bak`.
+   */
+  private async reconcileShardArtifacts(folderPath: string): Promise<void> {
+    const adapter = this.plugin.app.vault.adapter;
+    if (!(await adapter.exists(folderPath))) return;
+
+    try {
+      const listed = await adapter.list(folderPath);
+      const bakFiles = listed.files.filter((p) => /vault-index-shard-\d+\.json\.bak$/i.test(p));
+      const tmpFiles = listed.files.filter((p) => /vault-index-shard-\d+\.json\.tmp$/i.test(p));
+      if (bakFiles.length === 0 && tmpFiles.length === 0) return;
+
+      // If any `.tmp` exists, assume the commit pass did not complete. Prefer consistency by rolling back.
+      if (tmpFiles.length > 0) {
+        for (const bakPath of bakFiles) {
+          const finalPath = bakPath.replace(/\.bak$/i, "");
+          try {
+            if (await adapter.exists(finalPath)) await adapter.remove(finalPath);
+            await adapter.rename(bakPath, finalPath);
+          } catch (e: unknown) {
+            this.plugin.diagnosticService.report(
+              "Vault Brain",
+              `Failed to restore shard backup: ${bakPath} (${errorToMessage(e)})`,
+              "warning",
+            );
+          }
+        }
+      } else {
+        // No `.tmp`: cleanup leftover backups without touching the committed shards.
+        for (const bakPath of bakFiles) {
+          try {
+            await adapter.remove(bakPath);
+          } catch (e: unknown) {
+            this.plugin.diagnosticService.report(
+              "Vault Brain",
+              `Failed to delete shard backup: ${bakPath} (${errorToMessage(e)})`,
+              "warning",
+            );
+          }
+        }
+      }
+
+      // Always delete orphaned `.tmp` (never considered committed).
+      for (const tmpPath of tmpFiles) {
+        try {
+          await adapter.remove(tmpPath);
+        } catch (e: unknown) {
+          this.plugin.diagnosticService.report(
+            "Vault Brain",
+            `Failed to delete shard temp file: ${tmpPath} (${errorToMessage(e)})`,
+            "warning",
+          );
+        }
+      }
+    } catch (e: unknown) {
+      this.plugin.diagnosticService.report(
+        "Vault Brain",
+        `Failed to reconcile shard artifacts: ${errorToMessage(e)}`,
+        "warning",
+      );
+    }
   }
 
   async deleteIndex(): Promise<"deleted" | "missing" | "blocked"> {
@@ -767,6 +939,57 @@ export class VaultIndexer {
     return Array.from(uniqueTerms).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
   }
 
+  private extractHighlightsOnlyText(content: string): string | null {
+    if (!this.plugin.settings.indexHighlightsEnabled) return null;
+
+    // Ignore frontmatter and code to avoid indexing accidental highlight markers.
+    let text = content.replace(/^---[\s\S]*?---\s*/m, "");
+    text = text.replace(/```[\s\S]*?```/g, "\n").replace(/~~~[\s\S]*?~~~/g, "\n");
+    text = text.replace(/`[^`\n]*`/g, " ");
+
+    const out: string[] = [];
+    const seen = new Set<string>();
+
+    // Obsidian highlight syntax: ==highlight==
+    const mdRe = /==([^=\n].*?[^=\n])==/g;
+    let mdMatch: RegExpExecArray | null;
+    while ((mdMatch = mdRe.exec(text)) !== null) {
+      const v = mdMatch[1].trim();
+      if (!v) continue;
+      const key = v.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(v);
+    }
+
+    // Highlightr-style HTML marks: <mark ...>highlight</mark>
+    const markRe = /<mark\b[^>]*>([\s\S]*?)<\/mark>/gi;
+    let markMatch: RegExpExecArray | null;
+    while ((markMatch = markRe.exec(text)) !== null) {
+      const raw = markMatch[1].replace(/<[^>]+>/g, "").trim();
+      if (!raw) continue;
+      const key = raw.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(raw);
+    }
+
+    if (out.length === 0) return null;
+
+    const maxCount = Math.max(0, this.plugin.settings.maxHighlightsPerNote || 0);
+    const maxChars = Math.max(0, this.plugin.settings.maxHighlightCharsPerNote || 0);
+
+    const capped = maxCount > 0 ? out.slice(0, maxCount) : [];
+    if (capped.length === 0) return null;
+
+    let joined = capped.join("\n");
+    if (maxChars > 0 && joined.length > maxChars) {
+      joined = joined.slice(0, maxChars);
+    }
+
+    return joined.trim() ? joined.trim() : null;
+  }
+
   private async preTranslateTags(files: TFile[]) {
     if (!this.plugin.settings.tagShadowingEnabled) return;
 
@@ -787,13 +1010,19 @@ export class VaultIndexer {
     if (uniqueTagInputs.size > 0) {
       this.plugin.setIndexingStatus(`Pre-translating ${uniqueTagInputs.size} unique tags...`);
       const settings = this.plugin.settings;
-      const model = settings.tagTranslationModel.trim();
-
-      if (model) {
-        const provider =
-          settings.tagTranslationProvider === "lmstudio"
-            ? new LmStudioProvider(settings.lmStudioUrl, settings.temperature, 500)
-            : new OllamaProvider(settings.ollamaBaseUrl, settings.temperature, 500);
+      const translationChain = this.getTagTranslationChain(500);
+      if (translationChain.length > 0) {
+        this.tagTranslationRunStats = {
+          primary: settings.tagTranslationProvider,
+          fallback: settings.tagTranslationFallbackProvider,
+          primaryIsCloud: this.isCloudProvider(settings.tagTranslationProvider),
+          allowCloudTagTranslation: settings.allowCloudTagTranslation,
+          cloudOkChunks: 0,
+          fallbackUsedChunks: 0,
+          totalFailures: 0,
+          fallbackWarningLogged: false,
+          fallbackNoticeShown: false,
+        };
 
         const termsArray = Array.from(uniqueTagInputs);
         const CHUNK_SIZE = 8; // Safely throttled to eliminate model tracking fatigue
@@ -804,7 +1033,7 @@ export class VaultIndexer {
           const chunkList = chunk.map((term, index) => `t${index} -> ${term}`).join("\n");
 
           try {
-            const systemPrompt = `You are a mechanical, automated translation tool mapping Spanish items to British English.
+            const systemPrompt = `You are a mechanical, automated translation tool mapping Spanish items to ${settings.tagShadowingLanguage}.
 Translate ONLY the values on the right side of the -> delimiter.
 
 CRITICAL PROCESSING RULES:
@@ -821,11 +1050,72 @@ FORMAT EXAMPLE:
 t0 -> Translation
 t1 -> Translation`;
 
-            const result = await provider.generate(
-              `Translate these anchored targets exactly:\n${chunkList}`,
-              systemPrompt,
-              model,
-            );
+            let result: string | null = null;
+            let lastErr: unknown = null;
+            let cloudPrimaryErr: unknown = null;
+            let winningCandidateId: TagProviderId | null = null;
+
+            for (const candidate of translationChain) {
+              try {
+                result = await candidate.provider.generate(
+                  `Translate these anchored targets exactly:\n${chunkList}`,
+                  systemPrompt,
+                  candidate.model,
+                );
+                winningCandidateId = candidate.id;
+                break;
+              } catch (e: unknown) {
+                lastErr = e;
+                if (
+                  this.tagTranslationRunStats?.primaryIsCloud &&
+                  this.tagTranslationRunStats.allowCloudTagTranslation &&
+                  candidate.id === this.tagTranslationRunStats.primary
+                ) {
+                  cloudPrimaryErr = e;
+                }
+              }
+            }
+
+            if (result === null) {
+              throw lastErr instanceof Error ? lastErr : new Error(errorToMessage(lastErr));
+            }
+
+            // Track which provider actually succeeded per chunk (cloud vs fallback).
+            if (
+              this.tagTranslationRunStats?.primaryIsCloud &&
+              this.tagTranslationRunStats.allowCloudTagTranslation
+            ) {
+              const primaryId = this.tagTranslationRunStats.primary;
+              const fallbackId = this.tagTranslationRunStats.fallback;
+              if (winningCandidateId === primaryId) {
+                this.tagTranslationRunStats.cloudOkChunks++;
+              } else if (winningCandidateId === fallbackId && cloudPrimaryErr !== null) {
+                this.tagTranslationRunStats.fallbackUsedChunks++;
+
+                const cloudName = primaryId.charAt(0).toUpperCase() + primaryId.slice(1);
+                const fallbackName = fallbackId.charAt(0).toUpperCase() + fallbackId.slice(1);
+                const errMsg = errorToMessage(cloudPrimaryErr);
+
+                // Log once per indexing run (avoid flooding diagnostics).
+                if (!this.tagTranslationRunStats.fallbackWarningLogged) {
+                  this.tagTranslationRunStats.fallbackWarningLogged = true;
+                  this.plugin.diagnosticService.report(
+                    "Tag Translation",
+                    `Tag translation: cloud ${cloudName} failed → using local fallback ${fallbackName} (error: ${errMsg})`,
+                    "warning",
+                  );
+                }
+
+                // Notice once per indexing run (avoid spamming toasts).
+                if (!this.tagTranslationRunStats.fallbackNoticeShown) {
+                  this.tagTranslationRunStats.fallbackNoticeShown = true;
+                  new Notice(
+                    `Vault Brain: Cloud tag translation failed — using local fallback ${fallbackName} for this run.`,
+                    8000,
+                  );
+                }
+              }
+            }
 
             // 1. Parse lines with space-resilient index token identification
             const lines = result
@@ -859,6 +1149,7 @@ t1 -> Translation`;
               this.tagTranslationCache.set(term, combined);
             });
           } catch (e: unknown) {
+            if (this.tagTranslationRunStats) this.tagTranslationRunStats.totalFailures++;
             this.plugin.diagnosticService.report(
               "Vault Brain",
               `Tag translation chunk failed: ${errorToMessage(e)}`,
@@ -966,15 +1257,24 @@ t1 -> Translation`;
     }
 
     const settings = this.plugin.settings;
-    const model = settings.tagTranslationModel.trim();
-    if (!model) {
-      throw new Error("No Tag Translation Model configured. Set one in settings before testing.");
+    const translationChain = this.getTagTranslationChain(200);
+    if (translationChain.length === 0) {
+      throw new Error(
+        "No Tag Translation Provider/Model is configured. Enable tag shadowing and configure a provider (cloud or local) plus a usable model.",
+      );
     }
 
-    const provider =
-      settings.tagTranslationProvider === "lmstudio"
-        ? new LmStudioProvider(settings.lmStudioUrl, settings.temperature, 200)
-        : new OllamaProvider(settings.ollamaBaseUrl, settings.temperature, 200);
+    const testRunStats = {
+      primary: settings.tagTranslationProvider,
+      fallback: settings.tagTranslationFallbackProvider,
+      primaryIsCloud: this.isCloudProvider(settings.tagTranslationProvider),
+      allowCloudTagTranslation: settings.allowCloudTagTranslation,
+      cloudOkChunks: 0,
+      fallbackUsedChunks: 0,
+      totalFailures: 0,
+      fallbackWarningLogged: false,
+      fallbackNoticeShown: false,
+    };
 
     const runAnchoredTest = async (sample: string[], contextRule: string, type: "path" | "leaf") => {
       const chunkList = sample.map((term, index) => `t${index} -> ${term}`).join("\n");
@@ -991,11 +1291,64 @@ t0 -> Translation
 t1 -> Translation`;
 
       try {
-        const result = await provider.generate(
-          `Translate these anchored targets exactly:\n${chunkList}`,
-          systemPrompt,
-          model,
-        );
+        let result: string | null = null;
+        let lastErr: unknown = null;
+        let cloudPrimaryErr: unknown = null;
+        let winningCandidateId: TagProviderId | null = null;
+        for (const candidate of translationChain) {
+          try {
+            result = await candidate.provider.generate(
+              `Translate these anchored targets exactly:\n${chunkList}`,
+              systemPrompt,
+              candidate.model,
+            );
+            winningCandidateId = candidate.id;
+            break;
+          } catch (e: unknown) {
+            lastErr = e;
+            if (
+              testRunStats.primaryIsCloud &&
+              testRunStats.allowCloudTagTranslation &&
+              candidate.id === testRunStats.primary
+            ) {
+              cloudPrimaryErr = e;
+            }
+          }
+        }
+
+        if (result === null) {
+          throw lastErr instanceof Error ? lastErr : new Error(errorToMessage(lastErr));
+        }
+
+        if (testRunStats.primaryIsCloud && testRunStats.allowCloudTagTranslation) {
+          if (winningCandidateId === testRunStats.primary) {
+            testRunStats.cloudOkChunks++;
+          } else if (winningCandidateId === testRunStats.fallback && cloudPrimaryErr !== null) {
+            testRunStats.fallbackUsedChunks++;
+
+            const cloudName = testRunStats.primary.charAt(0).toUpperCase() + testRunStats.primary.slice(1);
+            const fallbackName =
+              testRunStats.fallback.charAt(0).toUpperCase() + testRunStats.fallback.slice(1);
+            const errMsg = errorToMessage(cloudPrimaryErr);
+
+            if (!testRunStats.fallbackWarningLogged) {
+              testRunStats.fallbackWarningLogged = true;
+              this.plugin.diagnosticService.report(
+                "Tag Translation",
+                `Tag translation (test): cloud ${cloudName} failed → using local fallback ${fallbackName} (error: ${errMsg})`,
+                "warning",
+              );
+            }
+
+            if (!testRunStats.fallbackNoticeShown) {
+              testRunStats.fallbackNoticeShown = true;
+              new Notice(
+                `Vault Brain: Cloud tag translation test failed — using local fallback ${fallbackName}.`,
+                8000,
+              );
+            }
+          }
+        }
 
         const lines = result
           .split("\n")
@@ -1026,6 +1379,7 @@ t1 -> Translation`;
           });
         });
       } catch (e: unknown) {
+        testRunStats.totalFailures++;
         sample.forEach((original) => {
           results.push({ type, original, translated: null, warning: errorToMessage(e) });
         });
@@ -1039,7 +1393,91 @@ t1 -> Translation`;
       await runAnchoredTest(leafSample, "Translate common nouns. Preserve proper nouns exactly.", "leaf");
     }
 
+    if (testRunStats.primaryIsCloud && testRunStats.allowCloudTagTranslation) {
+      this.plugin.diagnosticService.report(
+        "Tag Translation",
+        `Tag translation (test): cloud ok ${testRunStats.cloudOkChunks} chunks, fallback used ${testRunStats.fallbackUsedChunks} chunks, total failures ${testRunStats.totalFailures}.`,
+        "info",
+      );
+    }
+
     return results;
+  }
+
+  private isCloudProvider(provider: TagProviderId): boolean {
+    return provider !== "ollama" && provider !== "lmstudio";
+  }
+
+  private getTagTranslationModelFor(provider: TagProviderId): string {
+    const s = this.plugin.settings;
+
+    // Local: explicit translation model is preferred, but we can fall back to the configured local chat model.
+    if (provider === "lmstudio")
+      return (s.tagTranslationModel || "").trim() || (s.lmStudioModel || "").trim();
+    if (provider === "ollama") return (s.tagTranslationModel || "").trim() || (s.defaultModel || "").trim();
+
+    // Cloud: reuse the provider's configured model setting.
+    if (provider === "claude") return (s.claudeModel || "").trim();
+    if (provider === "gemini") return (s.geminiModel || "").trim();
+    if (provider === "openai") return (s.openaiModel || "").trim();
+    if (provider === "groq") return (s.groqModel || "").trim();
+    if (provider === "openrouter") return (s.openRouterModel || "").trim();
+    if (provider === "mistral") return (s.mistralModel || "").trim();
+
+    return "";
+  }
+
+  private createProvider(provider: TagProviderId, maxTokens: number): AiProviderClient {
+    const s = this.plugin.settings;
+    const apiKey = this.plugin.getApiKeyForProvider(provider);
+
+    switch (provider) {
+      case "claude":
+        return new ClaudeProvider(apiKey, s.temperature, maxTokens);
+      case "gemini":
+        return new GeminiProvider(apiKey, s.temperature, maxTokens);
+      case "openai":
+        return new OpenAIProvider(apiKey, s.temperature, maxTokens);
+      case "groq":
+        return new GroqProvider(apiKey, s.temperature, maxTokens);
+      case "openrouter":
+        return new OpenRouterProvider(apiKey, s.temperature, maxTokens);
+      case "mistral":
+        return new MistralProvider(apiKey, s.temperature, maxTokens);
+      case "lmstudio":
+        return new LmStudioProvider(s.lmStudioUrl, s.temperature, maxTokens);
+      default:
+        return new OllamaProvider(s.ollamaBaseUrl, s.temperature, maxTokens);
+    }
+  }
+
+  private getTagTranslationChain(maxTokens: number): Array<{
+    id: TagProviderId;
+    provider: AiProviderClient;
+    model: string;
+  }> {
+    const s = this.plugin.settings;
+    const primary = s.tagTranslationProvider;
+    const fallback = s.tagTranslationFallbackProvider;
+
+    const chainIds: TagProviderId[] = [];
+    if (!this.isCloudProvider(primary) || s.allowCloudTagTranslation) {
+      chainIds.push(primary);
+    }
+    if (this.isCloudProvider(primary)) {
+      chainIds.push(fallback);
+    }
+
+    const unique = Array.from(new Set(chainIds));
+    const out: Array<{ id: TagProviderId; provider: AiProviderClient; model: string }> = [];
+
+    for (const id of unique) {
+      const model = this.getTagTranslationModelFor(id);
+      if (!model) continue;
+      out.push({ id, provider: this.createProvider(id, maxTokens), model });
+    }
+
+    return out;
   }
 
   private extractFrontmatterSummary(
@@ -1104,6 +1542,7 @@ t1 -> Translation`;
 
     this.tagTranslationCache.clear();
     this.lastShardSaveTime = 0;
+    this.tagTranslationRunStats = null;
 
     try {
       this.plugin.setIndexingStatus("Initializing Index Rebuild...");
@@ -1173,6 +1612,8 @@ t1 -> Translation`;
             // Extract heading structure for heading-aware chunking
             const headings = this.extractHeadings(content);
             const bilingualTags = fmData?.tagsOnly || "";
+            const highlightsOnly = this.extractHighlightsOnlyText(content);
+            const hasHighlights = Boolean(highlightsOnly);
 
             // Build embedding texts with search_document prefix and heading context
             const embeddingTexts = validChunks.map((c) => {
@@ -1183,6 +1624,12 @@ t1 -> Translation`;
               const tagLine = bilingualTags ? `Tags: ${bilingualTags}\n` : "";
               return `${docPrefix}${file.basename}${hp ? " > " + hp : ""}\n${tagLine}\n${c.text}`;
             });
+
+            // Add a dedicated highlights-only embedding per note (note-level entry).
+            if (hasHighlights) {
+              const docPrefix = getModelPrefixes(this.plugin.settings.ragEmbeddingModel).doc;
+              embeddingTexts.unshift(`${docPrefix}${file.basename}\nHighlights:\n${highlightsOnly}`);
+            }
 
             // Add a dedicated frontmatter summary embedding (offset 0,0 = signals summary entry)
             if (hasFmSummary) embeddingTexts.unshift(fmData.fullText);
@@ -1203,6 +1650,7 @@ t1 -> Translation`;
                   path: file.path,
                   chunkStart: 0,
                   chunkEnd: 0,
+                  entryType: "summary",
                   embedding: quantizeEmbeddingToInt8(embeddings[0]),
                   mtime: file.stat.mtime,
                   summaryText: fmData.summaryOnly,
@@ -1210,6 +1658,22 @@ t1 -> Translation`;
                 });
               }
               embOffset = 1;
+            }
+
+            if (hasHighlights) {
+              const emb = embeddings[embOffset];
+              if (emb && emb.length > 0) {
+                newEntries.push({
+                  path: file.path,
+                  chunkStart: 0,
+                  chunkEnd: 0,
+                  entryType: "highlights",
+                  embedding: quantizeEmbeddingToInt8(emb),
+                  mtime: file.stat.mtime,
+                  highlightsText: highlightsOnly ?? undefined,
+                });
+              }
+              embOffset += 1;
             }
 
             // Store chunk embeddings with heading path
@@ -1221,6 +1685,7 @@ t1 -> Translation`;
                   path: file.path,
                   chunkStart: validChunks[j].start,
                   chunkEnd: validChunks[j].end,
+                  entryType: "content",
                   embedding: quantizeEmbeddingToInt8(emb),
                   mtime: file.stat.mtime,
                   ...(hp ? { headingPath: hp } : {}),
@@ -1285,6 +1750,18 @@ t1 -> Translation`;
             "info",
           );
         }
+      }
+
+      // Summarize whether tag translation actually used cloud vs fallback for this run.
+      if (
+        this.tagTranslationRunStats?.primaryIsCloud &&
+        this.tagTranslationRunStats.allowCloudTagTranslation
+      ) {
+        this.plugin.diagnosticService.report(
+          "Tag Translation",
+          `Tag translation: cloud ok ${this.tagTranslationRunStats.cloudOkChunks} chunks, fallback used ${this.tagTranslationRunStats.fallbackUsedChunks} chunks, total failures ${this.tagTranslationRunStats.totalFailures}.`,
+          "info",
+        );
       }
 
       this.plugin.settings.indexStatus = "Ready";
@@ -1480,6 +1957,8 @@ t1 -> Translation`;
       if (validChunks.length > 0 || hasFmSummary) {
         const headings = this.extractHeadings(content);
         const bilingualTags = fmData?.tagsOnly || "";
+        const highlightsOnly = this.extractHighlightsOnlyText(content);
+        const hasHighlights = Boolean(highlightsOnly);
 
         const embeddingTexts = validChunks.map((c) => {
           const hp = this.getHeadingPathAtOffset(headings, c.start);
@@ -1489,6 +1968,11 @@ t1 -> Translation`;
           const tagLine = bilingualTags ? `Tags: ${bilingualTags}\n` : "";
           return `${docPrefix}${file.basename}${hp ? " > " + hp : ""}\n${tagLine}\n${c.text}`;
         });
+
+        if (hasHighlights) {
+          const docPrefix = getModelPrefixes(this.plugin.settings.ragEmbeddingModel).doc;
+          embeddingTexts.unshift(`${docPrefix}${file.basename}\nHighlights:\n${highlightsOnly}`);
+        }
 
         if (hasFmSummary) embeddingTexts.unshift(fmData.fullText);
 
@@ -1508,6 +1992,7 @@ t1 -> Translation`;
               path: file.path,
               chunkStart: 0,
               chunkEnd: 0,
+              entryType: "summary",
               embedding: quantizeEmbeddingToInt8(embeddings[0]),
               mtime: file.stat.mtime,
               summaryText: fmData.summaryOnly,
@@ -1515,6 +2000,22 @@ t1 -> Translation`;
             });
           }
           embOffset = 1;
+        }
+
+        if (hasHighlights) {
+          const emb = embeddings[embOffset];
+          if (emb && emb.length > 0) {
+            newEntries.push({
+              path: file.path,
+              chunkStart: 0,
+              chunkEnd: 0,
+              entryType: "highlights",
+              embedding: quantizeEmbeddingToInt8(emb),
+              mtime: file.stat.mtime,
+              highlightsText: highlightsOnly ?? undefined,
+            });
+          }
+          embOffset += 1;
         }
 
         for (let j = 0; j < validChunks.length; j++) {
@@ -1525,6 +2026,7 @@ t1 -> Translation`;
               path: file.path,
               chunkStart: validChunks[j].start,
               chunkEnd: validChunks[j].end,
+              entryType: "content",
               embedding: quantizeEmbeddingToInt8(emb),
               mtime: file.stat.mtime,
               ...(hp ? { headingPath: hp } : {}),
@@ -1666,6 +2168,7 @@ t1 -> Translation`;
           const lowerPath = VaultIndexer.normalizeTextForSearch(entry.path);
           const lowerSummary = VaultIndexer.normalizeTextForSearch(entry.summaryText || "");
           const lowerTags = VaultIndexer.normalizeTextForSearch(entry.tagsText || "");
+          const lowerHighlights = VaultIndexer.normalizeTextForSearch(entry.highlightsText || "");
           const lowerHeading = VaultIndexer.normalizeTextForSearch(entry.headingPath || "");
 
           // 1. Quoted terms get a massive priority boost
@@ -1674,6 +2177,7 @@ t1 -> Translation`;
               lowerPath.includes(term) ||
               lowerSummary.includes(term) ||
               lowerTags.includes(term) ||
+              lowerHighlights.includes(term) ||
               lowerHeading.includes(term)
             ) {
               metadataBonus += 0.15;
@@ -1686,13 +2190,24 @@ t1 -> Translation`;
             if (lowerPath.includes(term)) metadataBonus += 0.05;
             if (lowerSummary.includes(term)) metadataBonus += 0.04;
             if (lowerTags.includes(term)) metadataBonus += 0.03;
+            if (lowerHighlights.includes(term)) metadataBonus += 0.04;
             if (lowerHeading.includes(term)) metadataBonus += 0.04;
           }
 
           // Cap the metadata bonus so it doesn't exponentially drown out semantic vector scores
           metadataBonus = Math.min(metadataBonus, this.plugin.settings.searchMetadataCap);
 
-          return { entry, score: vectorScore + metadataBonus };
+          const baseScore = vectorScore + metadataBonus;
+          const isHighlightEntry =
+            entry.entryType === "highlights" ||
+            (entry.chunkStart === 0 && entry.chunkEnd === 0 && !!entry.highlightsText);
+          const boost = Math.max(0, Math.min(1, this.plugin.settings.highlightBoost || 0));
+          const boosted =
+            isHighlightEntry && this.plugin.settings.indexHighlightsEnabled
+              ? baseScore * (1 + boost)
+              : baseScore;
+
+          return { entry, score: boosted };
         })
         .filter((s) => s.score >= MIN_SIMILARITY)
         .sort((a, b) => b.score - a.score);
@@ -1716,12 +2231,17 @@ t1 -> Translation`;
           }
 
           if (content) {
-            const chunkText =
-              item.entry.chunkStart === 0 && item.entry.chunkEnd === 0
-                ? item.entry.summaryText || item.entry.tagsText
+            const isNoteLevelEntry = item.entry.entryType
+              ? item.entry.entryType === "summary" || item.entry.entryType === "highlights"
+              : item.entry.chunkStart === 0 && item.entry.chunkEnd === 0;
+
+            const chunkText = isNoteLevelEntry
+              ? item.entry.entryType === "highlights" && item.entry.highlightsText
+                ? item.entry.highlightsText
+                : item.entry.summaryText || item.entry.tagsText
                   ? (item.entry.summaryText || "") + " " + (item.entry.tagsText || "")
                   : content.slice(0, 800)
-                : content.slice(item.entry.chunkStart, item.entry.chunkEnd);
+              : content.slice(item.entry.chunkStart, item.entry.chunkEnd);
 
             const normalizedChunkText = VaultIndexer.normalizeTextForSearch(chunkText);
 
@@ -1828,18 +2348,22 @@ t1 -> Translation`;
 
           let chunk: string;
           if (entry.chunkStart === 0 && entry.chunkEnd === 0) {
-            const parts: string[] = [];
-            if (entry.summaryText) parts.push(entry.summaryText);
-            if (entry.tagsText) parts.push("Topics: " + entry.tagsText);
-            // Fallback: if no structured summary was stored, use first 600 chars
-            // but strip the frontmatter block first.
-            if (parts.length === 0) {
-              chunk = content
-                .replace(/^---[\s\S]*?---\s*/m, "")
-                .slice(0, 600)
-                .trim();
+            if (entry.entryType === "highlights" && entry.highlightsText) {
+              chunk = `Highlights:\n${entry.highlightsText}`;
             } else {
-              chunk = parts.join("\n");
+              const parts: string[] = [];
+              if (entry.summaryText) parts.push(entry.summaryText);
+              if (entry.tagsText) parts.push("Topics: " + entry.tagsText);
+              // Fallback: if no structured summary was stored, use first 600 chars
+              // but strip the frontmatter block first.
+              if (parts.length === 0) {
+                chunk = content
+                  .replace(/^---[\s\S]*?---\s*/m, "")
+                  .slice(0, 600)
+                  .trim();
+              } else {
+                chunk = parts.join("\n");
+              }
             }
           } else {
             chunk = content.slice(entry.chunkStart, entry.chunkEnd).trim();
@@ -1880,7 +2404,10 @@ t1 -> Translation`;
     // Find the most representative embedding for the file.
     // Prefer the summary entry (chunkStart: 0) or fallback to the first content chunk.
     const representativeEntry =
-      sourceEntries.find((e) => e.chunkStart === 0 && e.chunkEnd === 0) || sourceEntries[0];
+      sourceEntries.find((e) => e.entryType === "summary") ||
+      sourceEntries.find((e) => e.entryType === "highlights") ||
+      sourceEntries.find((e) => e.chunkStart === 0 && e.chunkEnd === 0) ||
+      sourceEntries[0];
 
     const sourceEmb =
       typeof representativeEntry.embedding === "string"

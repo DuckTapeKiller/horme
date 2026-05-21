@@ -57,6 +57,7 @@
   font-size: 12px;
   font-family: var(--font-interface);
   cursor: pointer;
+  text-align: left;
 }
 
 .horme-select:disabled {

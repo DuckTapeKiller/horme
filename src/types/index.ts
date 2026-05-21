@@ -64,17 +64,29 @@ export interface HormeSettings {
   connectionsDisplayStyle: "minimal" | "detailed";
   ragEmbeddingModel: string;
   indexStatus: string;
+  indexHighlightsEnabled: boolean;
+  highlightBoost: number;
+  maxHighlightsPerNote: number;
+  maxHighlightCharsPerNote: number;
   grammarFolderPath: string;
   grammarLanguage: string;
   summaryField: string;
   summaryLanguage: string;
   allowCloudRAG: boolean;
+  allowCloudTagTranslation: boolean;
   tagShadowingEnabled: boolean;
   tagShadowingLanguage: string;
   tagTranslationModel: string;
-  tagTranslationProvider: "ollama" | "lmstudio";
+  tagTranslationProvider: AiProvider;
+  tagTranslationFallbackProvider: "ollama" | "lmstudio";
   tagsProvider: AiProvider;
   tagsModel: string;
+  /**
+   * Persistent, user-added model suggestions keyed by a stable list id.
+   * This powers the "type or select" model inputs in Settings, so any
+   * manually-entered model name is remembered and offered next time.
+   */
+  customModelSuggestions: Record<string, string[]>;
   customSkills: CustomSkillDefinition[];
 
   // Concept Notes (Autonomous research + note creation)

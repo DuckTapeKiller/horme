@@ -1,5 +1,42 @@
 import { AbstractInputSuggest, App, TAbstractFile, TFile, TFolder } from "obsidian";
 
+export class StringSuggest extends AbstractInputSuggest<string> {
+  inputEl: HTMLInputElement;
+  private itemsFn: () => string[];
+
+  constructor(app: App, inputEl: HTMLInputElement, itemsFn: () => string[]) {
+    super(app, inputEl);
+    this.inputEl = inputEl;
+    this.itemsFn = itemsFn;
+  }
+
+  getSuggestions(inputStr: string): string[] {
+    const query = inputStr.toLowerCase();
+    const items = this.itemsFn() || [];
+
+    // If the user hasn't typed anything yet, show the first few suggestions.
+    if (!query) return items.slice(0, 100);
+
+    const out: string[] = [];
+    for (const item of items) {
+      if (!item) continue;
+      if (item.toLowerCase().includes(query)) out.push(item);
+      if (out.length >= 100) break;
+    }
+    return out;
+  }
+
+  renderSuggestion(value: string, el: HTMLElement): void {
+    el.setText(value);
+  }
+
+  selectSuggestion(value: string): void {
+    this.inputEl.value = value;
+    this.inputEl.trigger("input");
+    this.close();
+  }
+}
+
 export class FileSuggest extends AbstractInputSuggest<TFile> {
   inputEl: HTMLInputElement;
 

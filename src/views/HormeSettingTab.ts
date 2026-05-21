@@ -78,7 +78,9 @@ export class HormeSettingTab extends PluginSettingTab {
       "gpt-3.5-turbo",
     ],
     gemini: [
+      "gemini-3.5-flash",
       "gemini-2.5-pro",
+      "gemini-2.5-flash",
       "gemini-2.0-flash",
       "gemini-2.0-flash-lite",
       "gemini-1.5-pro",
@@ -113,12 +115,11 @@ export class HormeSettingTab extends PluginSettingTab {
   };
 
   /**
-   * Renders a text input with an attached <datalist> for suggestions.
-   * Unlike addDropdown, the user can type any value — the datalist only
-   * suggests options, it does not constrain them.
+   * Renders a text input with Obsidian-native type-ahead suggestions.
+   * Unlike addDropdown, the user can type any value — suggestions are
+   * just convenience, not a constraint.
    *
    * @param setting     The Setting instance to attach the control to.
-   * @param listId      A unique DOM id for the <datalist> element.
    * @param modelsFn    Async function that resolves to the suggestion list.
    *                    Failures are silent — user can still type manually.
    * @param currentValue The currently saved model string (shown immediately).
@@ -135,33 +136,68 @@ export class HormeSettingTab extends PluginSettingTab {
       t.setPlaceholder("Type or select a model…");
       t.inputEl.setCssProps({ width: "100%" });
 
-      // Attach the datalist for browser-native suggestion dropdown
-      const datalist = activeDocument.createElement("datalist");
-      datalist.id = listId;
-      t.inputEl.setAttribute("list", listId);
-      t.inputEl.after(datalist);
-
       // Set saved value immediately — never wait on network for this
       t.setValue(currentValue);
 
-      // Populate suggestions asynchronously; failures are silently ignored
-      // because the user can always type a model name manually
-      modelsFn()
+      // Settings UX goal: show a dropdown list (even before typing) while still allowing
+      // free text entry. HTML datalist does that well in Obsidian’s desktop renderer.
+      t.inputEl.setAttr("list", listId);
+
+      const datalist = setting.controlEl.createEl("datalist", { attr: { id: listId } });
+
+      const normalize = (models: string[]) =>
+        Array.from(new Set(models.map((m) => m.trim()).filter(Boolean)));
+
+      const renderOptions = (models: string[]) => {
+        datalist.empty();
+        for (const model of models) {
+          datalist.createEl("option", { attr: { value: model } });
+        }
+      };
+
+      const readCustom = (): string[] => {
+        const record = this.plugin.settings.customModelSuggestions ?? {};
+        return normalize(record[listId] ?? []);
+      };
+
+      const writeCustom = (models: string[]) => {
+        const record = this.plugin.settings.customModelSuggestions ?? {};
+        record[listId] = normalize(models).slice(0, 50);
+        this.plugin.settings.customModelSuggestions = record;
+      };
+
+      const currentTrimmed = currentValue.trim();
+      let modelsCache: string[] = normalize([...(currentTrimmed ? [currentTrimmed] : []), ...readCustom()]);
+
+      // Render immediately using stored suggestions + current value, then refresh from live sources.
+      renderOptions(modelsCache);
+
+      void modelsFn()
         .then((models) => {
-          models.forEach((m) => {
-            const opt = activeDocument.createElement("option");
-            opt.value = m;
-            datalist.appendChild(opt);
-          });
+          const merged = normalize([...(currentTrimmed ? [currentTrimmed] : []), ...readCustom(), ...models]);
+          modelsCache = merged;
+          renderOptions(modelsCache);
         })
         .catch(() => {
-          /* silent — user types the model name */
+          // Keep whatever we already had (current + stored custom suggestions).
         });
 
-      t.onChange((v) => {
-        const trimmed = v.trim();
-        if (trimmed) void onSave(trimmed);
-      });
+      const commitValue = (raw: string) => {
+        const trimmed = raw.trim();
+        if (!trimmed) return;
+
+        // Remember manually-entered models so they appear in the dropdown next time.
+        if (!modelsCache.includes(trimmed)) {
+          modelsCache = normalize([trimmed, ...modelsCache]);
+          renderOptions(modelsCache);
+        }
+        writeCustom([trimmed, ...readCustom()]);
+
+        void onSave(trimmed);
+      };
+
+      // "change" fires on Enter or blur (commit), avoiding saving partial keystrokes.
+      t.inputEl.addEventListener("change", () => commitValue(t.getValue()));
     });
   }
 
@@ -1096,6 +1132,15 @@ export class HormeSettingTab extends PluginSettingTab {
         );
 
       if (this.plugin.settings.tagShadowingEnabled) {
+        // If cloud tag translation is disabled, ensure the selected provider cannot be cloud.
+        const tagProviderIsCloud =
+          this.plugin.settings.tagTranslationProvider !== "ollama" &&
+          this.plugin.settings.tagTranslationProvider !== "lmstudio";
+        if (tagProviderIsCloud && !this.plugin.settings.allowCloudTagTranslation) {
+          this.plugin.settings.tagTranslationProvider = this.plugin.settings.tagTranslationFallbackProvider;
+          void this.plugin.saveSettings();
+        }
+
         new Setting(ragSection)
           .setName("Shadowing Target Language")
           .setDesc("The language that tags will be translated into.")
@@ -1126,33 +1171,127 @@ export class HormeSettingTab extends PluginSettingTab {
           );
 
         new Setting(ragSection)
+          .setName("Allow Cloud Tag Translation")
+          .setDesc(
+            "If enabled, Horme may send tag strings (not note contents) to a cloud provider for higher-quality translation. Tag names may still contain sensitive information.",
+          )
+          .addToggle((t) =>
+            t.setValue(this.plugin.settings.allowCloudTagTranslation).onChange((v) => {
+              void (async () => {
+                this.plugin.settings.allowCloudTagTranslation = v;
+                // If disabling cloud translation, force the provider back to local fallback.
+                if (!v) {
+                  this.plugin.settings.tagTranslationProvider =
+                    this.plugin.settings.tagTranslationFallbackProvider;
+                }
+                await this.plugin.saveSettings();
+                this.displayPreserveScroll();
+              })();
+            }),
+          );
+
+        new Setting(ragSection)
           .setName("Tag Translation Provider")
           .setDesc(
-            "Provider used for tag translation during indexing. This is independent of the Chat Provider.",
+            "Primary provider used for tag translation during indexing. This is independent of the Chat Provider.",
           )
-          .addDropdown((drp) =>
-            drp
-              .addOption("ollama", "Ollama")
-              .addOption("lmstudio", "LM Studio")
-              .setValue(this.plugin.settings.tagTranslationProvider)
-              .onChange((v) => {
-                void (async () => {
-                  this.plugin.settings.tagTranslationProvider = v as "ollama" | "lmstudio";
-                  await this.plugin.saveSettings();
-                  this.displayPreserveScroll();
-                })();
-              }),
+          .addDropdown((drp) => {
+            drp.addOption("ollama", "Ollama").addOption("lmstudio", "LM Studio");
+            if (this.plugin.settings.allowCloudTagTranslation) {
+              drp
+                .addOption("openai", "OpenAI")
+                .addOption("claude", "Claude")
+                .addOption("gemini", "Gemini")
+                .addOption("groq", "Groq")
+                .addOption("openrouter", "OpenRouter")
+                .addOption("mistral", "Mistral");
+            }
+
+            drp.setValue(this.plugin.settings.tagTranslationProvider).onChange((v) => {
+              void (async () => {
+                this.plugin.settings.tagTranslationProvider = v as AiProvider;
+                await this.plugin.saveSettings();
+                this.displayPreserveScroll();
+              })();
+            });
+          });
+
+        const tagProviderIsCloudNow =
+          this.plugin.settings.tagTranslationProvider !== "ollama" &&
+          this.plugin.settings.tagTranslationProvider !== "lmstudio";
+
+        if (tagProviderIsCloudNow) {
+          ragSection.createDiv({
+            cls: "horme-settings-muted",
+            text: "Privacy note: Only tag strings (frontmatter tags and inline #tags) are sent to the cloud for translation — never note content.",
+          });
+
+          const cloudProvider = this.plugin.settings.tagTranslationProvider as CloudProviderId;
+          const cloudModelField: CloudModelField =
+            cloudProvider === "claude"
+              ? "claudeModel"
+              : cloudProvider === "gemini"
+                ? "geminiModel"
+                : cloudProvider === "openai"
+                  ? "openaiModel"
+                  : cloudProvider === "groq"
+                    ? "groqModel"
+                    : cloudProvider === "openrouter"
+                      ? "openRouterModel"
+                      : "mistralModel";
+
+          this.buildModelCombo(
+            new Setting(ragSection)
+              .setName("Tag Translation Model (Cloud)")
+              .setDesc(
+                "Model used on the selected cloud provider for tag translation. Only tag strings are sent (not note contents).",
+              ),
+            `horme-tag-translation-${cloudProvider}-models`,
+            async () => HormeSettingTab.UPDATED_MODELS[cloudProvider] ?? PROVIDER_MODELS[cloudProvider] ?? [],
+            this.plugin.settings[cloudModelField],
+            async (v) => {
+              this.plugin.settings[cloudModelField] = v;
+              await this.plugin.saveSettings();
+              this.displayPreserveScroll();
+            },
           );
+
+          new Setting(ragSection)
+            .setName("Tag Translation Fallback (Local)")
+            .setDesc("Used if the cloud provider is unavailable (no internet, API error, etc).")
+            .addDropdown((drp) =>
+              drp
+                .addOption("ollama", "Ollama")
+                .addOption("lmstudio", "LM Studio")
+                .setValue(this.plugin.settings.tagTranslationFallbackProvider)
+                .onChange((v) => {
+                  void (async () => {
+                    this.plugin.settings.tagTranslationFallbackProvider = v as "ollama" | "lmstudio";
+                    await this.plugin.saveSettings();
+                    this.displayPreserveScroll();
+                  })();
+                }),
+            );
+        }
 
         this.buildModelCombo(
           new Setting(ragSection)
-            .setName("Tag Translation Model")
+            .setName(
+              tagProviderIsCloudNow ? "Tag Translation Model (Local Fallback)" : "Tag Translation Model",
+            )
             .setDesc(
-              "Required for tag shadowing: this exact model is used for tag translation during indexing (it will not switch if you change chat providers/models).",
+              tagProviderIsCloudNow
+                ? "Local model used as a fallback if the cloud provider fails. (If empty, Horme will try to fall back to your local chat model, then skip translation.)"
+                : "Local model used for tag translation during indexing (independent of your chat provider/model).",
             ),
           "horme-tag-trans-models",
           async () => {
-            if (this.plugin.settings.tagTranslationProvider === "lmstudio") return [];
+            const localProvider =
+              this.plugin.settings.tagTranslationProvider === "ollama" ||
+              this.plugin.settings.tagTranslationProvider === "lmstudio"
+                ? this.plugin.settings.tagTranslationProvider
+                : this.plugin.settings.tagTranslationFallbackProvider;
+            if (localProvider === "lmstudio") return [];
             try {
               const res = await requestUrl({
                 url: `${this.plugin.settings.ollamaBaseUrl}/api/tags`,
@@ -1173,10 +1312,22 @@ export class HormeSettingTab extends PluginSettingTab {
           },
         );
 
-        if (!this.plugin.settings.tagTranslationModel.trim()) {
+        const localFallbackProvider =
+          this.plugin.settings.tagTranslationProvider === "ollama" ||
+          this.plugin.settings.tagTranslationProvider === "lmstudio"
+            ? this.plugin.settings.tagTranslationProvider
+            : this.plugin.settings.tagTranslationFallbackProvider;
+        const localFallbackModel =
+          this.plugin.settings.tagTranslationModel.trim() ||
+          (localFallbackProvider === "lmstudio"
+            ? this.plugin.settings.lmStudioModel.trim()
+            : this.plugin.settings.defaultModel.trim());
+
+        if (!localFallbackModel) {
           const warn = ragSection.createDiv("horme-settings-warning");
-          warn.textContent =
-            "⚠️ Tag shadowing is enabled but Tag Translation Model is empty. Tags will not be translated until you set a model.";
+          warn.textContent = tagProviderIsCloudNow
+            ? "⚠️ Cloud tag translation is enabled, but no local fallback model is configured. If the cloud provider fails, tag translation will be skipped."
+            : "⚠️ Tag shadowing is enabled but Tag Translation Model is empty. Tags will not be translated until you set a model.";
           warn.setCssProps({
             color: "var(--text-error)",
             padding: "10px",
@@ -1291,6 +1442,77 @@ export class HormeSettingTab extends PluginSettingTab {
             });
           });
       }
+
+      new Setting(ragSection)
+        .setName("Index Highlights")
+        .setDesc(
+          "Adds a highlights-only embedding per note (detects ==highlights== and <mark>...</mark>) to improve retrieval toward your curated text. Requires a rebuild.",
+        )
+        .addToggle((t) =>
+          t.setValue(this.plugin.settings.indexHighlightsEnabled).onChange((v) => {
+            void (async () => {
+              this.plugin.settings.indexHighlightsEnabled = v;
+              await this.plugin.saveSettings();
+              this.displayPreserveScroll();
+            })();
+          }),
+        );
+
+      const highlightBoostSetting = new Setting(ragSection)
+        .setName("Highlight Boost")
+        .setDesc(
+          `Extra weight applied to highlights-only results. Current: ${Math.round(this.plugin.settings.highlightBoost * 100)}%`,
+        );
+
+      highlightBoostSetting.addSlider((sl) =>
+        sl
+          .setLimits(0.0, 1.0, 0.05)
+          .setValue(this.plugin.settings.highlightBoost)
+          .setDynamicTooltip()
+          .onChange((value) => {
+            void (async () => {
+              this.plugin.settings.highlightBoost = value;
+              highlightBoostSetting.setDesc(
+                `Extra weight applied to highlights-only results. Current: ${Math.round(value * 100)}%`,
+              );
+              await this.plugin.saveSettings();
+            })();
+          }),
+      );
+
+      new Setting(ragSection)
+        .setName("Max Highlights Per Note")
+        .setDesc(
+          "Caps how many highlight segments are indexed per note (prevents over-highlighted notes dominating cost).",
+        )
+        .addSlider((sl) =>
+          sl
+            .setLimits(0, 60, 1)
+            .setValue(this.plugin.settings.maxHighlightsPerNote)
+            .setDynamicTooltip()
+            .onChange((value) => {
+              void (async () => {
+                this.plugin.settings.maxHighlightsPerNote = value;
+                await this.plugin.saveSettings();
+              })();
+            }),
+        );
+
+      new Setting(ragSection)
+        .setName("Max Highlight Characters Per Note")
+        .setDesc("Caps the total highlight text indexed per note (reduces embedding cost/time).")
+        .addSlider((sl) =>
+          sl
+            .setLimits(0, 10_000, 250)
+            .setValue(this.plugin.settings.maxHighlightCharsPerNote)
+            .setDynamicTooltip()
+            .onChange((value) => {
+              void (async () => {
+                this.plugin.settings.maxHighlightCharsPerNote = value;
+                await this.plugin.saveSettings();
+              })();
+            }),
+        );
 
       new Setting(ragSection)
         .setName("Metadata Keyword Weight")

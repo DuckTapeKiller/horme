@@ -1,4 +1,13 @@
-import { ItemView, WorkspaceLeaf, MarkdownRenderer, MarkdownView, setIcon, Notice, TFile } from "obsidian";
+import {
+  ItemView,
+  WorkspaceLeaf,
+  MarkdownRenderer,
+  MarkdownView,
+  setIcon,
+  Notice,
+  TFile,
+  Menu,
+} from "obsidian";
 import HormePlugin from "../../main";
 import { VIEW_TYPE } from "../constants";
 import { ChatMessage, SavedConversation } from "../types";
@@ -20,17 +29,19 @@ export class HormeChatView extends ItemView {
   private loadingOverlay!: HTMLElement;
   private inputEl!: HTMLTextAreaElement;
   private sendBtn!: HTMLButtonElement;
-  private modelSelect!: HTMLSelectElement;
+  private modelButton!: HTMLButtonElement;
   private contextToggle!: HTMLInputElement;
   private contextNoteLabel!: HTMLElement;
   private connectionDot!: HTMLElement;
-  private presetSelect!: HTMLSelectElement;
+  private presetButton!: HTMLButtonElement;
   private isGenerating = false;
   private generationEpoch = 0;
   private showingHistory = false;
   private unregisterSettingsListener: (() => void) | null = null;
   private documentClickHandler: (() => void) | null = null;
   private sessionSystemPromptOverride: string | null = null;
+  private availableModels: string[] = [];
+  private availablePresets: Array<{ name: string; prompt: string }> = [];
 
   private activeReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
   private activeAbortController: AbortController | null = null;
@@ -261,24 +272,24 @@ export class HormeChatView extends ItemView {
       setIcon(this.connectionDot, "cone");
       const selectsWrap = row0.createDiv("horme-header-selects");
 
-      this.modelSelect = selectsWrap.createEl("select", { cls: "horme-select horme-model-select" });
-      this.modelSelect.addEventListener("change", () => {
-        const v = this.modelSelect.value;
-        const p = this.plugin.settings.aiProvider;
-        if (p === "claude") this.plugin.settings.claudeModel = v;
-        else if (p === "gemini") this.plugin.settings.geminiModel = v;
-        else if (p === "openai") this.plugin.settings.openaiModel = v;
-        else if (p === "groq") this.plugin.settings.groqModel = v;
-        else if (p === "openrouter") this.plugin.settings.openRouterModel = v;
-        else if (p === "mistral") this.plugin.settings.mistralModel = v;
-        else if (p === "lmstudio") this.plugin.settings.lmStudioModel = v;
-        else this.plugin.settings.defaultModel = v;
-        void this.plugin.saveSettings().catch((e) => this.plugin.handleError(e, "Settings"));
+      this.modelButton = selectsWrap.createEl("button", { cls: "horme-select horme-model-select" });
+      this.modelButton.type = "button";
+      this.modelButton.addEventListener("click", (evt) => {
+        if (this.isGenerating) {
+          new Notice("Horme: Cannot change model while generating.");
+          return;
+        }
+        this.openModelMenu(evt);
       });
 
-      this.presetSelect = selectsWrap.createEl("select", { cls: "horme-select horme-preset-select" });
-      this.presetSelect.addEventListener("change", () => {
-        this.sessionSystemPromptOverride = this.presetSelect.value || null;
+      this.presetButton = selectsWrap.createEl("button", { cls: "horme-select horme-preset-select" });
+      this.presetButton.type = "button";
+      this.presetButton.addEventListener("click", (evt) => {
+        if (this.isGenerating) {
+          new Notice("Horme: Cannot change preset while generating.");
+          return;
+        }
+        this.openPresetMenu(evt);
       });
       await this.refreshPresets();
 
@@ -485,7 +496,7 @@ export class HormeChatView extends ItemView {
 
       this.unregisterSettingsListener = this.plugin.onSettingsChange(() => {
         void (async () => {
-          if (this.presetSelect) await this.refreshPresets();
+          if (this.presetButton) await this.refreshPresets();
           await this.updateVaultBrainToggle();
         })();
       });
@@ -608,34 +619,133 @@ export class HormeChatView extends ItemView {
     return this.plugin.settings.defaultModel;
   }
 
+  private async setCurrentProviderModel(model: string): Promise<void> {
+    const v = model.trim();
+    const p = this.plugin.settings.aiProvider;
+    if (p === "claude") this.plugin.settings.claudeModel = v;
+    else if (p === "gemini") this.plugin.settings.geminiModel = v;
+    else if (p === "openai") this.plugin.settings.openaiModel = v;
+    else if (p === "groq") this.plugin.settings.groqModel = v;
+    else if (p === "openrouter") this.plugin.settings.openRouterModel = v;
+    else if (p === "mistral") this.plugin.settings.mistralModel = v;
+    else if (p === "lmstudio") this.plugin.settings.lmStudioModel = v;
+    else this.plugin.settings.defaultModel = v;
+    await this.plugin.saveSettings();
+  }
+
+  private openModelMenu(evt: MouseEvent | KeyboardEvent) {
+    const current = this.getCurrentProviderModel().trim();
+    const models = this.availableModels.length ? this.availableModels : current ? [current] : [];
+
+    const menu = new Menu();
+    menu.setUseNativeMenu(false);
+
+    if (models.length === 0) {
+      menu.addItem((item) => item.setTitle("No models found").setDisabled(true));
+    } else {
+      for (const model of models) {
+        menu.addItem((item) => {
+          item
+            .setTitle(model)
+            .setChecked(model === current)
+            .onClick(() => {
+              void (async () => {
+                await this.setCurrentProviderModel(model);
+                await this.refreshModels();
+              })();
+            });
+        });
+      }
+    }
+
+    if (evt instanceof MouseEvent) {
+      menu.showAtMouseEvent(evt);
+    } else {
+      const rect = this.modelButton.getBoundingClientRect();
+      menu.showAtPosition({ x: rect.left, y: rect.bottom }, this.modelButton.ownerDocument);
+    }
+  }
+
+  private openPresetMenu(evt: MouseEvent | KeyboardEvent) {
+    const currentPrompt = this.sessionSystemPromptOverride;
+    const menu = new Menu();
+    menu.setUseNativeMenu(false);
+
+    menu.addItem((item) => {
+      item
+        .setTitle("Default prompt")
+        .setChecked(!currentPrompt)
+        .onClick(() => {
+          this.sessionSystemPromptOverride = null;
+          void this.refreshPresets();
+        });
+    });
+
+    if (this.availablePresets.length > 0) {
+      menu.addSeparator();
+      for (const p of this.availablePresets) {
+        const isActive = currentPrompt === p.prompt;
+        menu.addItem((item) => {
+          item
+            .setTitle(p.name || "Preset")
+            .setChecked(isActive)
+            .onClick(() => {
+              this.sessionSystemPromptOverride = p.prompt;
+              void this.refreshPresets();
+            });
+        });
+      }
+    }
+
+    if (evt instanceof MouseEvent) {
+      menu.showAtMouseEvent(evt);
+    } else {
+      const rect = this.presetButton.getBoundingClientRect();
+      menu.showAtPosition({ x: rect.left, y: rect.bottom }, this.presetButton.ownerDocument);
+    }
+  }
+
   private async refreshModels() {
     await this.plugin.fetchModels();
-    this.modelSelect.empty();
-    if (!this.plugin.models || !this.plugin.models.length) {
-      this.modelSelect.createEl("option", { text: "No models found", value: "" });
+    const savedModel = this.getCurrentProviderModel().trim();
+    const fetchedModels = (this.plugin.models || []).map((m) => m.trim()).filter(Boolean);
+    const models = Array.from(new Set([...(savedModel ? [savedModel] : []), ...fetchedModels]));
+
+    this.availableModels = models;
+    if (models.length === 0) {
+      this.modelButton.textContent = "No models found";
+      this.modelButton.title = "No models found";
+      this.modelButton.disabled = true;
       await this.updateConnectionStatus();
       return;
     }
-    this.plugin.models.forEach((m) => {
-      const opt = this.modelSelect.createEl("option", { text: m, value: m });
-      if (m === this.getCurrentProviderModel()) opt.selected = true;
-    });
+
+    const label = savedModel || models[0];
+    this.modelButton.textContent = `${label} ▾`;
+    this.modelButton.title = label;
+    this.modelButton.disabled = false;
+
     await this.updateConnectionStatus();
     await this.updateVaultBrainToggle();
   }
 
   private async refreshPresets() {
-    const current = this.presetSelect.value;
-    this.presetSelect.empty();
-    this.presetSelect.createEl("option", { text: "Default prompt", value: "" });
     const presets = await this.plugin.getChatPresets();
-    for (const p of presets) {
-      this.presetSelect.createEl("option", { text: p.name || "Preset", value: p.prompt });
+    this.availablePresets = presets;
+
+    const selectedPrompt = this.sessionSystemPromptOverride;
+    if (!selectedPrompt) {
+      this.presetButton.textContent = "Default prompt ▾";
+      this.presetButton.title = "Default prompt";
+      this.presetButton.disabled = false;
+      return;
     }
-    this.presetSelect.disabled = presets.length === 0;
-    this.presetSelect.value = Array.from(this.presetSelect.options).some((o) => o.value === current)
-      ? current
-      : "";
+
+    const match = presets.find((p) => p.prompt === selectedPrompt);
+    const label = match?.name || "Custom preset";
+    this.presetButton.textContent = `${label} ▾`;
+    this.presetButton.title = label;
+    this.presetButton.disabled = false;
   }
 
   private async updateConnectionStatus() {
@@ -860,7 +970,7 @@ export class HormeChatView extends ItemView {
       const text = this.inputEl.value.trim();
       if (!text) return;
 
-      model = this.modelSelect.value;
+      model = this.getCurrentProviderModel().trim();
       if (!model) {
         new Notice("Horme: No model selected.");
         return;
