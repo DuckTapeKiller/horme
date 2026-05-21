@@ -529,6 +529,28 @@ export class HormeSettingTab extends PluginSettingTab {
         });
       });
     new Setting(generalSection)
+      .setName("Folder context limit (characters)")
+      .setDesc(
+        'Maximum number of characters injected from "+ Add folders" per message (combined across selected folders). ' +
+          'If exceeded, Horme truncates the folder context and you should use "+ Add notes" to pick specific files. ' +
+          "Default: 40000.",
+      )
+      .addText((t) => {
+        t.inputEl.type = "number";
+        t.inputEl.min = "1000";
+        t.inputEl.step = "1000";
+        t.setValue(String(this.plugin.settings.contextFoldersMaxChars));
+        t.onChange((v) => {
+          void (async () => {
+            const parsed = parseInt(v, 10);
+            if (!isNaN(parsed) && parsed >= 1000) {
+              this.plugin.settings.contextFoldersMaxChars = parsed;
+              await this.plugin.saveSettings();
+            }
+          })();
+        });
+      });
+    new Setting(generalSection)
       .setName("Debug logging")
       .setDesc(
         "Enable extra logs in the developer console (may include file paths). Leave off for normal use.",
@@ -1515,6 +1537,39 @@ export class HormeSettingTab extends PluginSettingTab {
         );
 
       new Setting(ragSection)
+        .setName("Hybrid Search Fusion (RRF)")
+        .setDesc(
+          "Fuse embedding similarity + keyword matches via Reciprocal Rank Fusion. Recommended for more robust retrieval across mixed note types.",
+        )
+        .addToggle((t) =>
+          t.setValue(this.plugin.settings.vaultBrainUseRrfHybridSearch).onChange((v) => {
+            void (async () => {
+              this.plugin.settings.vaultBrainUseRrfHybridSearch = v;
+              await this.plugin.saveSettings();
+              this.displayPreserveScroll();
+            })();
+          }),
+        );
+
+      if (this.plugin.settings.vaultBrainUseRrfHybridSearch) {
+        new Setting(ragSection)
+          .setName("RRF k")
+          .setDesc("Smoothing constant for Reciprocal Rank Fusion (Default: 60).")
+          .addSlider((sl) =>
+            sl
+              .setLimits(10, 200, 5)
+              .setValue(this.plugin.settings.vaultBrainRrfK)
+              .setDynamicTooltip()
+              .onChange((value) => {
+                void (async () => {
+                  this.plugin.settings.vaultBrainRrfK = value;
+                  await this.plugin.saveSettings();
+                })();
+              }),
+          );
+      }
+
+      new Setting(ragSection)
         .setName("Metadata Keyword Weight")
         .setDesc(
           "Maximum priority bonus given to exact keyword matches in titles, tags, and summaries (Default: 0.25)",
@@ -1560,6 +1615,73 @@ export class HormeSettingTab extends PluginSettingTab {
             })();
           }),
         );
+
+      new Setting(ragSection)
+        .setName("Index Include Patterns")
+        .setDesc(
+          "Optional comma or newline-separated globs for which files are indexed by Vault Brain. Leave blank to include all. Requires a rebuild.",
+        )
+        .addTextArea((t) =>
+          t
+            .setPlaceholder("e.g.\nMusic/**\nSources/**/*.md")
+            .setValue(this.plugin.settings.vaultIndexIncludePatterns)
+            .onChange((v) => {
+              void (async () => {
+                this.plugin.settings.vaultIndexIncludePatterns = v;
+                await this.plugin.saveSettings();
+              })();
+            }),
+        );
+
+      new Setting(ragSection)
+        .setName("Index Exclude Patterns")
+        .setDesc(
+          "Optional comma or newline-separated globs to exclude files from Vault Brain indexing. Requires a rebuild.",
+        )
+        .addTextArea((t) =>
+          t
+            .setPlaceholder("e.g.\nTemplates/**\nArchive/**")
+            .setValue(this.plugin.settings.vaultIndexExcludePatterns)
+            .onChange((v) => {
+              void (async () => {
+                this.plugin.settings.vaultIndexExcludePatterns = v;
+                await this.plugin.saveSettings();
+              })();
+            }),
+        );
+
+      new Setting(ragSection)
+        .setName('Index PDFs (requires "Text Extractor")')
+        .setDesc(
+          'If enabled, Vault Brain will index PDFs by using extracted text from the community plugin "Text Extractor" (plugin id: text-extractor). Requires a rebuild.',
+        )
+        .addToggle((t) =>
+          t.setValue(this.plugin.settings.vaultIndexIndexPdf).onChange((v) => {
+            void (async () => {
+              this.plugin.settings.vaultIndexIndexPdf = v;
+              await this.plugin.saveSettings();
+              this.displayPreserveScroll();
+            })();
+          }),
+        );
+
+      if (this.plugin.settings.vaultIndexIndexPdf) {
+        new Setting(ragSection)
+          .setName("Max PDF Extracted Text (chars)")
+          .setDesc("Caps extracted PDF text per file to limit embedding cost/time. Requires a rebuild.")
+          .addSlider((sl) =>
+            sl
+              .setLimits(10_000, 2_000_000, 10_000)
+              .setValue(this.plugin.settings.vaultIndexPdfMaxChars)
+              .setDynamicTooltip()
+              .onChange((value) => {
+                void (async () => {
+                  this.plugin.settings.vaultIndexPdfMaxChars = value;
+                  await this.plugin.saveSettings();
+                })();
+              }),
+          );
+      }
 
       new Setting(ragSection)
         .setName("Index Control")

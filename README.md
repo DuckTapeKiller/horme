@@ -280,6 +280,7 @@ Open the chat panel from the ribbon icon (&#9653;) or the command palette (`Horm
 Send multiple notes as context to the AI in a single conversation.
 
 - **Note Picker:** Click "+ Add notes" in the chat header to open a fuzzy search modal. Select up to 5 notes.
+- **Folder Picker:** Click "+ Add folders" to include all notes inside a folder (and its subfolders) as context. If the folder is too large, Horme truncates it to the configured character budget.
 - **Selected Notes Label:** A compact label shows which notes are currently included as context.
 - **Clear All:** One-click button to remove all selected notes.
 - **Per-Session:** Selections persist across messages within the same chat session and are cleared on new conversations.

@@ -1,4 +1,5 @@
 import { TFile, Notice, normalizePath } from "obsidian";
+import { minimatch } from "minimatch";
 import HormePlugin from "../../main";
 import { HormeErrorModal } from "../modals/HormeErrorModal";
 import {
@@ -34,12 +35,25 @@ interface IndexEntry {
   chunkEnd: number;
   embedding: Int8Array | string;
   mtime: number;
+  /** Stable content hash for incremental chunk-level reuse (may be absent in older indexes). */
+  chunkHash?: string;
   entryType?: "content" | "summary" | "highlights";
   summaryText?: string;
   tagsText?: string;
   highlightsText?: string;
   headingPath?: string;
 }
+
+type VaultSearchScope = {
+  files?: string[];
+  folders?: string[];
+};
+
+type TextExtractorApi = {
+  extractText: (file: TFile) => Promise<string>;
+  canFileBeExtracted?: (filePath: string) => boolean;
+  isInCache?: (file: TFile) => Promise<boolean>;
+};
 
 const STOP_WORDS = new Set([
   "ayudame",
@@ -344,6 +358,7 @@ export class VaultIndexer {
       const tagsText = getStringProp(e, "tagsText");
       const highlightsText = getStringProp(e, "highlightsText");
       const headingPath = getStringProp(e, "headingPath");
+      const chunkHash = getStringProp(e, "chunkHash");
       const entryTypeProp = getStringProp(e, "entryType");
       const entryType: IndexEntry["entryType"] =
         entryTypeProp === "content" || entryTypeProp === "summary" || entryTypeProp === "highlights"
@@ -362,6 +377,7 @@ export class VaultIndexer {
         chunkEnd,
         embedding,
         mtime,
+        ...(chunkHash ? { chunkHash } : {}),
         ...(entryType ? { entryType } : {}),
         ...(summaryText ? { summaryText } : {}),
         ...(tagsText ? { tagsText } : {}),
@@ -531,6 +547,7 @@ export class VaultIndexer {
             chunkEnd: e.chunkEnd,
             embedding: typeof e.embedding === "string" ? e.embedding : compressEmbedding(e.embedding),
             mtime: e.mtime,
+            ...(e.chunkHash ? { chunkHash: e.chunkHash } : {}),
             ...(e.entryType ? { entryType: e.entryType } : {}),
             ...(e.summaryText ? { summaryText: e.summaryText } : {}),
             ...(e.tagsText ? { tagsText: e.tagsText } : {}),
@@ -1529,6 +1546,36 @@ t1 -> Translation`;
     };
   }
 
+  private parseGlobCsv(raw: string): string[] {
+    return raw
+      .split(/[,\n]/g)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+  }
+
+  private getTextExtractorApi(): TextExtractorApi | undefined {
+    // Optional dependency: community plugin "Text Extractor" (id: "text-extractor")
+    // Exposes an API at (app as any).plugins?.plugins?.['text-extractor']?.api
+    return (this.plugin.app as any)?.plugins?.plugins?.["text-extractor"]?.api as
+      | TextExtractorApi
+      | undefined;
+  }
+
+  private isPathIndexableByPatterns(path: string): boolean {
+    const include = this.parseGlobCsv(this.plugin.settings.vaultIndexIncludePatterns || "");
+    const exclude = this.parseGlobCsv(this.plugin.settings.vaultIndexExcludePatterns || "");
+
+    const opts = { dot: true };
+    if (exclude.some((p) => minimatch(path, p, opts))) return false;
+    if (include.length === 0) return true;
+    return include.some((p) => minimatch(path, p, opts));
+  }
+
+  private filterFilesForIndexing(files: TFile[]): TFile[] {
+    // Patterns apply to vault-relative paths, e.g. "Music/Note.md"
+    return files.filter((f) => this.isPathIndexableByPatterns(f.path));
+  }
+
   /**
    * Rebuilds the index incrementally.
    */
@@ -1559,7 +1606,30 @@ t1 -> Translation`;
         return;
       }
 
-      const files = this.plugin.app.vault.getMarkdownFiles();
+      const textExtractor = this.getTextExtractorApi();
+      const pdfIndexRequested = Boolean(this.plugin.settings.vaultIndexIndexPdf);
+      const pdfIndexEnabled = pdfIndexRequested && Boolean(textExtractor);
+
+      if (pdfIndexRequested && !textExtractor) {
+        this.plugin.diagnosticService.report(
+          "Vault Brain",
+          'PDF indexing is enabled, but the companion plugin "Text Extractor" (id: text-extractor) is not available. PDFs will be skipped.',
+          "warning",
+        );
+      }
+
+      const markdownFiles = this.plugin.app.vault.getMarkdownFiles();
+      const pdfFiles = pdfIndexEnabled
+        ? this.plugin.app.vault
+            .getFiles()
+            .filter((f) => f.extension.toLowerCase() === "pdf")
+            .filter((f) =>
+              textExtractor?.canFileBeExtracted ? textExtractor.canFileBeExtracted(f.path) : true,
+            )
+        : [];
+
+      const allFiles = [...markdownFiles, ...pdfFiles];
+      const files = this.filterFilesForIndexing(allFiles);
       const total = files.length;
       this.plugin.debugLog(`Horme Brain: Rebuilding index for ${total} files...`);
 
@@ -1579,8 +1649,8 @@ t1 -> Translation`;
       await this.plugin.saveSettings();
       this.plugin.setIndexingStatus(`Indexing 0 / ${total}`);
 
-      // 1. Add this right before the loop: for (let i = 0; i < total; i++) {
-      await this.preTranslateTags(files);
+      // Pre-translate tags for Markdown files only (PDFs have no tags/frontmatter).
+      await this.preTranslateTags(files.filter((f) => f.extension.toLowerCase() === "md"));
 
       for (let i = 0; i < total; i++) {
         const file = files[i];
@@ -1594,8 +1664,28 @@ t1 -> Translation`;
           continue;
         }
 
+        // Chunk-hash based reuse map (only effective after at least one hash-aware build)
+        const existingEmbeddingByHash = new Map<string, Int8Array>();
+        for (const e of existing) {
+          if (!e.chunkHash) continue;
+          const emb = typeof e.embedding === "string" ? decompressEmbeddingToInt8(e.embedding) : e.embedding;
+          existingEmbeddingByHash.set(e.chunkHash, emb);
+        }
+
         try {
-          const content = await this.plugin.app.vault.read(file);
+          const isPdf = file.extension.toLowerCase() === "pdf";
+          let content = "";
+          if (isPdf) {
+            if (!textExtractor) {
+              this.removeEntriesForPath(file.path);
+              continue;
+            }
+            content = (await textExtractor.extractText(file)) || "";
+            const maxChars = Math.max(10_000, this.plugin.settings.vaultIndexPdfMaxChars || 0);
+            if (content.length > maxChars) content = content.slice(0, maxChars);
+          } else {
+            content = await this.plugin.app.vault.read(file);
+          }
           if (!content.trim()) {
             this.removeEntriesForPath(file.path);
             continue;
@@ -1604,15 +1694,15 @@ t1 -> Translation`;
           const chunksWithOffsets = this.plugin.embeddingService.chunkTextWithOffsets(content);
           const validChunks = chunksWithOffsets.filter((c) => c.text.trim().length > 0);
 
-          // 2. Remove "await" and the third parameter from this line
-          const fmData = this.extractFrontmatterSummary(content, file);
+          // Frontmatter summaries/tags only exist for Markdown notes.
+          const fmData = isPdf ? null : this.extractFrontmatterSummary(content, file);
           const hasFmSummary = fmData !== null;
 
           if (validChunks.length > 0 || hasFmSummary) {
             // Extract heading structure for heading-aware chunking
-            const headings = this.extractHeadings(content);
+            const headings = isPdf ? [] : this.extractHeadings(content);
             const bilingualTags = fmData?.tagsOnly || "";
-            const highlightsOnly = this.extractHighlightsOnlyText(content);
+            const highlightsOnly = isPdf ? "" : this.extractHighlightsOnlyText(content);
             const hasHighlights = Boolean(highlightsOnly);
 
             // Build embedding texts with search_document prefix and heading context
@@ -1634,51 +1724,81 @@ t1 -> Translation`;
             // Add a dedicated frontmatter summary embedding (offset 0,0 = signals summary entry)
             if (hasFmSummary) embeddingTexts.unshift(fmData.fullText);
 
-            const embeddings = await this.plugin.embeddingService.getEmbeddings(embeddingTexts);
+            const chunkHashes = embeddingTexts.map((t) => VaultIndexer.chunkHash(t));
 
-            if (!embeddings || embeddings.length !== embeddingTexts.length) {
-              throw new Error(
-                `API returned ${embeddings?.length || 0} embeddings for ${embeddingTexts.length} chunks. Cancelling to prevent data loss.`,
-              );
+            const resolvedEmbeddings: Array<Int8Array | null> = new Array(embeddingTexts.length).fill(null);
+            const toEmbedTexts: string[] = [];
+            const toEmbedIndices: number[] = [];
+
+            for (let i = 0; i < embeddingTexts.length; i++) {
+              const hash = chunkHashes[i];
+              const reused = existingEmbeddingByHash.get(hash);
+              if (reused) {
+                resolvedEmbeddings[i] = reused;
+              } else {
+                toEmbedIndices.push(i);
+                toEmbedTexts.push(embeddingTexts[i]);
+              }
+            }
+
+            if (toEmbedTexts.length > 0) {
+              const embeddings = await this.plugin.embeddingService.getEmbeddings(toEmbedTexts);
+
+              if (!embeddings || embeddings.length !== toEmbedTexts.length) {
+                throw new Error(
+                  `API returned ${embeddings?.length || 0} embeddings for ${toEmbedTexts.length} chunks. Cancelling to prevent data loss.`,
+                );
+              }
+
+              for (let i = 0; i < embeddings.length; i++) {
+                const idx = toEmbedIndices[i];
+                const emb = embeddings[i];
+                if (emb && emb.length > 0) {
+                  resolvedEmbeddings[idx] = quantizeEmbeddingToInt8(emb);
+                }
+              }
             }
 
             const newEntries: IndexEntry[] = [];
-            let embOffset = 0;
+            let cursor = 0;
             if (hasFmSummary) {
-              if (embeddings[0] && embeddings[0].length > 0) {
+              const emb = resolvedEmbeddings[cursor];
+              if (emb && emb.length > 0) {
                 newEntries.push({
                   path: file.path,
                   chunkStart: 0,
                   chunkEnd: 0,
                   entryType: "summary",
-                  embedding: quantizeEmbeddingToInt8(embeddings[0]),
+                  embedding: emb,
                   mtime: file.stat.mtime,
+                  chunkHash: chunkHashes[cursor],
                   summaryText: fmData.summaryOnly,
                   tagsText: fmData.tagsOnly,
                 });
               }
-              embOffset = 1;
+              cursor += 1;
             }
 
             if (hasHighlights) {
-              const emb = embeddings[embOffset];
+              const emb = resolvedEmbeddings[cursor];
               if (emb && emb.length > 0) {
                 newEntries.push({
                   path: file.path,
                   chunkStart: 0,
                   chunkEnd: 0,
                   entryType: "highlights",
-                  embedding: quantizeEmbeddingToInt8(emb),
+                  embedding: emb,
                   mtime: file.stat.mtime,
+                  chunkHash: chunkHashes[cursor],
                   highlightsText: highlightsOnly ?? undefined,
                 });
               }
-              embOffset += 1;
+              cursor += 1;
             }
 
             // Store chunk embeddings with heading path
             for (let j = 0; j < validChunks.length; j++) {
-              const emb = embeddings[j + embOffset];
+              const emb = resolvedEmbeddings[j + cursor];
               if (emb && emb.length > 0) {
                 const hp = this.getHeadingPathAtOffset(headings, validChunks[j].start);
                 newEntries.push({
@@ -1686,8 +1806,9 @@ t1 -> Translation`;
                   chunkStart: validChunks[j].start,
                   chunkEnd: validChunks[j].end,
                   entryType: "content",
-                  embedding: quantizeEmbeddingToInt8(emb),
+                  embedding: emb,
                   mtime: file.stat.mtime,
+                  chunkHash: chunkHashes[j + cursor],
                   ...(hp ? { headingPath: hp } : {}),
                   ...(bilingualTags ? { tagsText: bilingualTags } : {}),
                 });
@@ -1935,13 +2056,40 @@ t1 -> Translation`;
    */
   private async indexFile(file: TFile): Promise<boolean> {
     try {
+      // Pattern-based eligibility: if excluded, remove any stale entries.
+      if (!this.isPathIndexableByPatterns(file.path)) {
+        this.removeEntriesForPath(file.path);
+        return false;
+      }
+
       // Crucial mtime check to prevent redundant re-indexing of unchanged files
       const existing = this.getEntriesForPath(file.path);
       if (existing.length > 0 && existing[0].mtime >= file.stat.mtime) {
         return false;
       }
 
-      const content = await this.plugin.app.vault.read(file);
+      // Chunk-hash based reuse map (only effective after at least one hash-aware build)
+      const existingEmbeddingByHash = new Map<string, Int8Array>();
+      for (const e of existing) {
+        if (!e.chunkHash) continue;
+        const emb = typeof e.embedding === "string" ? decompressEmbeddingToInt8(e.embedding) : e.embedding;
+        existingEmbeddingByHash.set(e.chunkHash, emb);
+      }
+
+      const isPdf = file.extension.toLowerCase() === "pdf";
+      let content = "";
+      if (isPdf) {
+        const textExtractor = this.getTextExtractorApi();
+        if (!textExtractor) {
+          this.removeEntriesForPath(file.path);
+          return false;
+        }
+        content = (await textExtractor.extractText(file)) || "";
+        const maxChars = Math.max(10_000, this.plugin.settings.vaultIndexPdfMaxChars || 0);
+        if (content.length > maxChars) content = content.slice(0, maxChars);
+      } else {
+        content = await this.plugin.app.vault.read(file);
+      }
       if (!content.trim()) {
         this.removeEntriesForPath(file.path);
         return false;
@@ -1950,14 +2098,14 @@ t1 -> Translation`;
       const chunksWithOffsets = this.plugin.embeddingService.chunkTextWithOffsets(content);
       const validChunks = chunksWithOffsets.filter((c) => c.text.trim().length > 0);
 
-      // Remove "await" and the third parameter from this line
-      const fmData = this.extractFrontmatterSummary(content, file);
+      // Frontmatter summaries/tags only exist for Markdown notes.
+      const fmData = isPdf ? null : this.extractFrontmatterSummary(content, file);
       const hasFmSummary = fmData !== null;
 
       if (validChunks.length > 0 || hasFmSummary) {
-        const headings = this.extractHeadings(content);
+        const headings = isPdf ? [] : this.extractHeadings(content);
         const bilingualTags = fmData?.tagsOnly || "";
-        const highlightsOnly = this.extractHighlightsOnlyText(content);
+        const highlightsOnly = isPdf ? "" : this.extractHighlightsOnlyText(content);
         const hasHighlights = Boolean(highlightsOnly);
 
         const embeddingTexts = validChunks.map((c) => {
@@ -1976,50 +2124,78 @@ t1 -> Translation`;
 
         if (hasFmSummary) embeddingTexts.unshift(fmData.fullText);
 
-        const embeddings = await this.plugin.embeddingService.getEmbeddings(embeddingTexts);
+        const chunkHashes = embeddingTexts.map((t) => VaultIndexer.chunkHash(t));
 
-        if (!embeddings || embeddings.length !== embeddingTexts.length) {
-          throw new Error(
-            `API returned ${embeddings?.length || 0} embeddings for ${embeddingTexts.length} chunks. Cancelling to prevent data loss.`,
-          );
+        const resolvedEmbeddings: Array<Int8Array | null> = new Array(embeddingTexts.length).fill(null);
+        const toEmbedTexts: string[] = [];
+        const toEmbedIndices: number[] = [];
+
+        for (let i = 0; i < embeddingTexts.length; i++) {
+          const hash = chunkHashes[i];
+          const reused = existingEmbeddingByHash.get(hash);
+          if (reused) {
+            resolvedEmbeddings[i] = reused;
+          } else {
+            toEmbedIndices.push(i);
+            toEmbedTexts.push(embeddingTexts[i]);
+          }
+        }
+
+        if (toEmbedTexts.length > 0) {
+          const embeddings = await this.plugin.embeddingService.getEmbeddings(toEmbedTexts);
+          if (!embeddings || embeddings.length !== toEmbedTexts.length) {
+            throw new Error(
+              `API returned ${embeddings?.length || 0} embeddings for ${toEmbedTexts.length} chunks. Cancelling to prevent data loss.`,
+            );
+          }
+          for (let i = 0; i < embeddings.length; i++) {
+            const idx = toEmbedIndices[i];
+            const emb = embeddings[i];
+            if (emb && emb.length > 0) {
+              resolvedEmbeddings[idx] = quantizeEmbeddingToInt8(emb);
+            }
+          }
         }
 
         const newEntries: IndexEntry[] = [];
-        let embOffset = 0;
+        let cursor = 0;
         if (hasFmSummary) {
-          if (embeddings[0] && embeddings[0].length > 0) {
+          const emb = resolvedEmbeddings[cursor];
+          if (emb && emb.length > 0) {
             newEntries.push({
               path: file.path,
               chunkStart: 0,
               chunkEnd: 0,
               entryType: "summary",
-              embedding: quantizeEmbeddingToInt8(embeddings[0]),
+              embedding: emb,
               mtime: file.stat.mtime,
+              chunkHash: chunkHashes[cursor],
               summaryText: fmData.summaryOnly,
               tagsText: fmData.tagsOnly,
             });
           }
-          embOffset = 1;
+          cursor += 1;
         }
 
         if (hasHighlights) {
-          const emb = embeddings[embOffset];
+          const emb = resolvedEmbeddings[cursor];
           if (emb && emb.length > 0) {
             newEntries.push({
               path: file.path,
               chunkStart: 0,
               chunkEnd: 0,
               entryType: "highlights",
-              embedding: quantizeEmbeddingToInt8(emb),
+              embedding: emb,
               mtime: file.stat.mtime,
+              chunkHash: chunkHashes[cursor],
               highlightsText: highlightsOnly ?? undefined,
             });
           }
-          embOffset += 1;
+          cursor += 1;
         }
 
         for (let j = 0; j < validChunks.length; j++) {
-          const emb = embeddings[j + embOffset];
+          const emb = resolvedEmbeddings[j + cursor];
           if (emb && emb.length > 0) {
             const hp = this.getHeadingPathAtOffset(headings, validChunks[j].start);
             newEntries.push({
@@ -2027,8 +2203,9 @@ t1 -> Translation`;
               chunkStart: validChunks[j].start,
               chunkEnd: validChunks[j].end,
               entryType: "content",
-              embedding: quantizeEmbeddingToInt8(emb),
+              embedding: emb,
               mtime: file.stat.mtime,
+              chunkHash: chunkHashes[j + cursor],
               ...(hp ? { headingPath: hp } : {}),
               ...(bilingualTags ? { tagsText: bilingualTags } : {}),
             });
@@ -2059,10 +2236,115 @@ t1 -> Translation`;
   }
 
   /**
+   * Stable, low-collision content hash for chunk-level incremental indexing.
+   * Uses two parallel 32-bit FNV-1a accumulators (64-bit effective key) so we
+   * can safely reuse embeddings across small edits without relying on BigInt.
+   */
+  private static chunkHash(text: string): string {
+    const bytes = new TextEncoder().encode(text);
+    let h1 = 0x811c9dc5;
+    let h2 = (0x811c9dc5 ^ 0x9e3779b9) >>> 0;
+    for (let i = 0; i < bytes.length; i++) {
+      const b = bytes[i];
+      h1 ^= b;
+      h1 = Math.imul(h1, 0x01000193) >>> 0;
+      h2 ^= b;
+      h2 = Math.imul(h2, 0x01000193) >>> 0;
+      // Cross-mix to reduce correlated collisions when only seed differs
+      h2 ^= (h1 + ((h1 << 7) | (h1 >>> 25))) >>> 0;
+    }
+    return h1.toString(16).padStart(8, "0") + h2.toString(16).padStart(8, "0");
+  }
+
+  private getSearchEntryKey(entry: IndexEntry): string {
+    const type = entry.entryType ?? "unknown";
+    const heading = entry.headingPath ?? "";
+    return `${entry.path}::${type}::${entry.chunkStart}::${entry.chunkEnd}::${heading}`;
+  }
+
+  private isHighlightEntry(entry: IndexEntry): boolean {
+    return (
+      entry.entryType === "highlights" ||
+      (entry.chunkStart === 0 && entry.chunkEnd === 0 && !!entry.highlightsText)
+    );
+  }
+
+  private computeMetadataBonus(entry: IndexEntry, searchTerms: string[], quotedTerms: string[]): number {
+    // Metadata keyword boosting: Exact quotes (Major) + Regular terms (Minor) (Accent-insensitive!)
+    let metadataBonus = 0;
+    const lowerPath = VaultIndexer.normalizeTextForSearch(entry.path);
+    const lowerSummary = VaultIndexer.normalizeTextForSearch(entry.summaryText || "");
+    const lowerTags = VaultIndexer.normalizeTextForSearch(entry.tagsText || "");
+    const lowerHighlights = VaultIndexer.normalizeTextForSearch(entry.highlightsText || "");
+    const lowerHeading = VaultIndexer.normalizeTextForSearch(entry.headingPath || "");
+
+    // 1. Quoted terms get a massive priority boost
+    for (const term of quotedTerms) {
+      if (
+        lowerPath.includes(term) ||
+        lowerSummary.includes(term) ||
+        lowerTags.includes(term) ||
+        lowerHighlights.includes(term) ||
+        lowerHeading.includes(term)
+      ) {
+        metadataBonus += 0.15;
+      }
+    }
+
+    // 2. Regular keyword boosting, skipping stop-words
+    for (const term of searchTerms) {
+      if (STOP_WORDS.has(term)) continue;
+      if (lowerPath.includes(term)) metadataBonus += 0.05;
+      if (lowerSummary.includes(term)) metadataBonus += 0.04;
+      if (lowerTags.includes(term)) metadataBonus += 0.03;
+      if (lowerHighlights.includes(term)) metadataBonus += 0.04;
+      if (lowerHeading.includes(term)) metadataBonus += 0.04;
+    }
+
+    // Cap the metadata bonus so it doesn't exponentially drown out semantic vector scores
+    return Math.min(metadataBonus, this.plugin.settings.searchMetadataCap);
+  }
+
+  private computeContentBonusFromChunkText(
+    chunkText: string,
+    searchTerms: string[],
+    quotedTerms: string[],
+  ): number {
+    let contentBonus = 0;
+    const normalizedChunkText = VaultIndexer.normalizeTextForSearch(chunkText);
+
+    for (const term of searchTerms) {
+      if (STOP_WORDS.has(term)) continue;
+      if (normalizedChunkText.includes(term)) {
+        contentBonus += 0.05;
+      }
+    }
+    for (const term of quotedTerms) {
+      if (normalizedChunkText.includes(term)) contentBonus += 0.15;
+    }
+    return contentBonus;
+  }
+
+  private filterEntriesByScope(entries: IndexEntry[], scope?: VaultSearchScope): IndexEntry[] {
+    if (!scope) return entries;
+    const files = (scope.files ?? []).map((p) => normalizePath(p)).filter((p) => p.length > 0);
+    const folders = (scope.folders ?? []).map((p) => normalizePath(p)).filter((p) => p.length > 0);
+    if (files.length === 0 && folders.length === 0) return entries;
+
+    const fileSet = new Set(files);
+    const folderPrefixes = folders.map((f) => (f.endsWith("/") ? f : `${f}/`));
+
+    return entries.filter((entry) => {
+      if (fileSet.has(entry.path)) return true;
+      return folderPrefixes.some((prefix) => entry.path.startsWith(prefix));
+    });
+  }
+
+  /**
    * Multi-query hybrid search using vector similarity + keyword boosting.
    * Uses nomic-embed-text search_query prefix and dual-embedding fusion.
    */
-  async search(query: string, topN = 20): Promise<string[]> {
+  async search(query: string, topN = 20, options?: { scope?: VaultSearchScope }): Promise<string[]> {
     this.plugin.debugLog(`Horme Brain: Search called. Index size: ${this.index.length}`);
     const canAccess = this.plugin.isLocalProviderActive() || this.plugin.settings.allowCloudRAG;
     if (!this.plugin.settings.vaultBrainEnabled || !canAccess) {
@@ -2150,8 +2432,212 @@ t1 -> Translation`;
 
       const MIN_SIMILARITY = 0.1; // Lowered: keyword-only searches can still score ~0.25+
 
+      const scope = options?.scope;
+      const entries = this.filterEntriesByScope(this.index, scope);
+
+      // ── New hybrid fusion: Reciprocal Rank Fusion (RRF) ────────────────────
+      // YOLO's hybrid search fuses keyword hits + embedding hits via RRF, which
+      // avoids brittle score calibration across different retrieval signals.
+      if (this.plugin.settings.vaultBrainUseRrfHybridSearch) {
+        const fileCache = new Map<string, string>();
+        const k = Math.max(1, Math.floor(this.plugin.settings.vaultBrainRrfK || 60));
+        const poolSize = Math.max(50, Math.min(250, topN * 10));
+
+        const scored = entries.map((entry) => {
+          const emb =
+            typeof entry.embedding === "string"
+              ? decompressEmbeddingToInt8(entry.embedding)
+              : entry.embedding;
+
+          const primaryScore =
+            primaryEmbedding.length > 0 ? cosineSimilarityFloatInt8(primaryEmbedding, emb) : 0;
+          const secondaryScore = secondaryEmbedding ? cosineSimilarityFloatInt8(secondaryEmbedding, emb) : 0;
+          const vectorScore = Math.max(primaryScore, secondaryScore);
+
+          const metadataScore = this.computeMetadataBonus(entry, searchTerms, quotedTerms);
+
+          const boost = Math.max(0, Math.min(1, this.plugin.settings.highlightBoost || 0));
+          const highlightMul =
+            this.isHighlightEntry(entry) && this.plugin.settings.indexHighlightsEnabled ? 1 + boost : 1;
+
+          return {
+            entry,
+            vectorScore: vectorScore * highlightMul,
+            metadataScore: metadataScore * highlightMul,
+          };
+        });
+
+        // Dense results (embedding similarity)
+        const vectorRanked = scored
+          .filter((s) => s.vectorScore > 0)
+          .sort((a, b) => b.vectorScore - a.vectorScore)
+          .slice(0, poolSize);
+
+        // Sparse seed results (metadata-only keywords)
+        const keywordSeed = scored
+          .filter((s) => s.metadataScore > 0)
+          .sort((a, b) => b.metadataScore - a.metadataScore)
+          .slice(0, poolSize);
+
+        // Deep scan keyword seed against actual chunk text (bounded)
+        const keywordRanked: Array<{ entry: IndexEntry; keywordScore: number }> = [];
+        for (const item of keywordSeed) {
+          let keywordScore = item.metadataScore;
+          try {
+            let content = fileCache.get(item.entry.path);
+            if (content === undefined) {
+              const abstractFile = this.plugin.app.vault.getAbstractFileByPath(item.entry.path);
+              if (abstractFile instanceof TFile) {
+                content = await this.plugin.app.vault.cachedRead(abstractFile);
+                fileCache.set(item.entry.path, content);
+              }
+            }
+
+            if (content) {
+              const isNoteLevelEntry =
+                item.entry.entryType === "summary" ||
+                item.entry.entryType === "highlights" ||
+                (item.entry.chunkStart === 0 && item.entry.chunkEnd === 0);
+
+              const chunkText = isNoteLevelEntry
+                ? item.entry.entryType === "highlights" && item.entry.highlightsText
+                  ? item.entry.highlightsText
+                  : item.entry.summaryText || item.entry.tagsText
+                    ? (item.entry.summaryText || "") + " " + (item.entry.tagsText || "")
+                    : content.slice(0, 800)
+                : content.slice(item.entry.chunkStart, item.entry.chunkEnd);
+
+              const contentBonus = this.computeContentBonusFromChunkText(chunkText, searchTerms, quotedTerms);
+              keywordScore += Math.min(contentBonus, this.plugin.settings.searchContentCap);
+            }
+          } catch {
+            /* ignore content scan errors */
+          }
+          keywordRanked.push({ entry: item.entry, keywordScore });
+        }
+
+        keywordRanked.sort((a, b) => b.keywordScore - a.keywordScore);
+
+        // If embeddings are unavailable, fall back to keyword-only list.
+        if (vectorRanked.length === 0) {
+          const selectedKeywordOnly = keywordRanked
+            .slice(0, topN)
+            .map((k) => ({ entry: k.entry, score: k.keywordScore }));
+          return await this.buildSearchResultsFromEntries(selectedKeywordOnly, fileCache);
+        }
+
+        // If keywords are unavailable, fall back to vector-only list.
+        if (keywordRanked.length === 0) {
+          const selectedVectorOnly = vectorRanked
+            .slice(0, topN)
+            .map((v) => ({ entry: v.entry, score: v.vectorScore }));
+          return await this.buildSearchResultsFromEntries(selectedVectorOnly, fileCache);
+        }
+
+        // RRF fusion across the union of ranked keys (1-based ranks)
+        const vectorRankByKey = new Map<string, number>();
+        vectorRanked.forEach((v, i) => {
+          const key = this.getSearchEntryKey(v.entry);
+          if (!vectorRankByKey.has(key)) vectorRankByKey.set(key, i + 1);
+        });
+        const keywordRankByKey = new Map<string, number>();
+        keywordRanked.forEach((v, i) => {
+          const key = this.getSearchEntryKey(v.entry);
+          if (!keywordRankByKey.has(key)) keywordRankByKey.set(key, i + 1);
+        });
+
+        const keys = new Set<string>([...vectorRankByKey.keys(), ...keywordRankByKey.keys()]);
+        const entryByKey = new Map<string, IndexEntry>();
+        for (const v of vectorRanked) entryByKey.set(this.getSearchEntryKey(v.entry), v.entry);
+        for (const v of keywordRanked) entryByKey.set(this.getSearchEntryKey(v.entry), v.entry);
+
+        const fused: Array<{
+          entry: IndexEntry;
+          score: number;
+          vectorRank?: number;
+          keywordRank?: number;
+        }> = [];
+
+        for (const key of keys) {
+          const entry = entryByKey.get(key);
+          if (!entry) continue;
+          const vr = vectorRankByKey.get(key);
+          const kr = keywordRankByKey.get(key);
+          let score = 0;
+          if (vr !== undefined) score += 1 / (k + vr);
+          if (kr !== undefined) score += 1 / (k + kr);
+          fused.push({ entry, score, vectorRank: vr, keywordRank: kr });
+        }
+
+        fused.sort((a, b) => {
+          if (a.score !== b.score) return b.score - a.score;
+          const aDual = a.vectorRank !== undefined && a.keywordRank !== undefined;
+          const bDual = b.vectorRank !== undefined && b.keywordRank !== undefined;
+          if (aDual !== bDual) return aDual ? -1 : 1;
+          const av = a.vectorRank ?? Number.MAX_SAFE_INTEGER;
+          const bv = b.vectorRank ?? Number.MAX_SAFE_INTEGER;
+          if (av !== bv) return av - bv;
+          const ak = a.keywordRank ?? Number.MAX_SAFE_INTEGER;
+          const bk = b.keywordRank ?? Number.MAX_SAFE_INTEGER;
+          if (ak !== bk) return ak - bk;
+          return a.entry.path.localeCompare(b.entry.path);
+        });
+
+        // Diversity Injection: for each summary/highlights entry, ensure the best content
+        // chunk from the same note is promoted to follow it immediately.
+        const injected: Array<{ entry: IndexEntry; score: number }> = [];
+        for (const item of fused) {
+          if (injected.length >= topN * 2) break;
+          injected.push({ entry: item.entry, score: item.score });
+          if (item.entry.chunkStart === 0 && item.entry.chunkEnd === 0) {
+            const bestContent = fused.find(
+              (s) =>
+                s.entry.path === item.entry.path &&
+                !(s.entry.chunkStart === 0 && s.entry.chunkEnd === 0) &&
+                !injected.some((i) => this.getSearchEntryKey(i.entry) === this.getSearchEntryKey(s.entry)),
+            );
+            if (bestContent) injected.push({ entry: bestContent.entry, score: bestContent.score });
+          }
+        }
+
+        // File-level dedup: prevent a single long note from flooding the top-N.
+        const selected: Array<{ entry: IndexEntry; score: number }> = [];
+        const perFileCounts = new Map<string, number>();
+
+        const takeUpTo = (maxChunksPerFile: number) => {
+          for (const item of injected) {
+            if (selected.length >= topN) return;
+            const current = perFileCounts.get(item.entry.path) || 0;
+            if (current >= maxChunksPerFile) continue;
+            const key = this.getSearchEntryKey(item.entry);
+            if (selected.some((s) => this.getSearchEntryKey(s.entry) === key)) continue;
+            perFileCounts.set(item.entry.path, current + 1);
+            selected.push(item);
+          }
+        };
+
+        takeUpTo(1);
+        if (selected.length < topN) takeUpTo(3);
+
+        this.plugin.debugLog(
+          `%cHorme Brain (RRF): Top ${selected.length} search results:`,
+          "color: #34d399; font-weight: bold;",
+        );
+        selected.forEach((s, idx) => {
+          this.plugin.debugLog(
+            `  %c${idx + 1}. [RRF: ${s.score.toFixed(4)}]%c ${s.entry.path}${
+              s.entry.headingPath ? " > " + s.entry.headingPath : ""
+            }`,
+            "color: #34d399; font-weight: bold;",
+            "color: inherit;",
+          );
+        });
+
+        return await this.buildSearchResultsFromEntries(selected, fileCache);
+      }
+
       // 4. Score all entries: max(primary, secondary) + metadata bonus
-      const rawScored = this.index
+      const rawScored = entries
         .map((entry) => {
           const emb =
             typeof entry.embedding === "string"
@@ -2225,8 +2711,7 @@ t1 -> Translation`;
           if (content === undefined) {
             const abstractFile = this.plugin.app.vault.getAbstractFileByPath(item.entry.path);
             if (abstractFile instanceof TFile) {
-              content = await this.plugin.app.vault.read(abstractFile);
-              fileCache.set(item.entry.path, content);
+              content = (await this.readIndexableText(abstractFile, fileCache)) ?? "";
             }
           }
 
@@ -2319,8 +2804,6 @@ t1 -> Translation`;
       takeUpTo(1);
       if (selected.length < topN) takeUpTo(3);
 
-      // 5. Fetch content for top results
-      const results: string[] = [];
       this.plugin.debugLog(
         `%cHorme Brain: Top ${selected.length} search results:`,
         "color: #34d399; font-weight: bold;",
@@ -2335,53 +2818,82 @@ t1 -> Translation`;
         );
       });
 
-      for (const { entry } of selected) {
-        try {
-          const abstractFile = this.plugin.app.vault.getAbstractFileByPath(entry.path);
-          if (!(abstractFile instanceof TFile)) continue;
-
-          let content = fileCache.get(entry.path);
-          if (content === undefined) {
-            content = await this.plugin.app.vault.read(abstractFile);
-            fileCache.set(entry.path, content);
-          }
-
-          let chunk: string;
-          if (entry.chunkStart === 0 && entry.chunkEnd === 0) {
-            if (entry.entryType === "highlights" && entry.highlightsText) {
-              chunk = `Highlights:\n${entry.highlightsText}`;
-            } else {
-              const parts: string[] = [];
-              if (entry.summaryText) parts.push(entry.summaryText);
-              if (entry.tagsText) parts.push("Topics: " + entry.tagsText);
-              // Fallback: if no structured summary was stored, use first 600 chars
-              // but strip the frontmatter block first.
-              if (parts.length === 0) {
-                chunk = content
-                  .replace(/^---[\s\S]*?---\s*/m, "")
-                  .slice(0, 600)
-                  .trim();
-              } else {
-                chunk = parts.join("\n");
-              }
-            }
-          } else {
-            chunk = content.slice(entry.chunkStart, entry.chunkEnd).trim();
-          }
-
-          const heading = entry.headingPath ? ` (${entry.headingPath})` : "";
-          if (chunk) results.push(`[From ${entry.path}${heading}]:\n${chunk}`);
-        } catch {
-          // File deleted or unreadable — skip silently
-        }
-      }
-
-      return results;
+      return await this.buildSearchResultsFromEntries(selected, fileCache);
     } catch (e: unknown) {
       console.error("Horme: Search failed", e);
       this.plugin.diagnosticService.report("Search", `Search failed: ${errorToMessage(e)}`);
       return [];
     }
+  }
+
+  private async buildSearchResultsFromEntries(
+    selected: Array<{ entry: IndexEntry; score: number }>,
+    fileCache: Map<string, string>,
+  ): Promise<string[]> {
+    const results: string[] = [];
+
+    for (const { entry } of selected) {
+      try {
+        const abstractFile = this.plugin.app.vault.getAbstractFileByPath(entry.path);
+        if (!(abstractFile instanceof TFile)) continue;
+
+        const content = await this.readIndexableText(abstractFile, fileCache);
+        if (!content) continue;
+
+        let chunk: string;
+        if (entry.chunkStart === 0 && entry.chunkEnd === 0) {
+          if (entry.entryType === "highlights" && entry.highlightsText) {
+            chunk = `Highlights:\n${entry.highlightsText}`;
+          } else {
+            const parts: string[] = [];
+            if (entry.summaryText) parts.push(entry.summaryText);
+            if (entry.tagsText) parts.push("Topics: " + entry.tagsText);
+            if (parts.length === 0) {
+              chunk = content
+                .replace(/^---[\s\S]*?---\s*/m, "")
+                .slice(0, 600)
+                .trim();
+            } else {
+              chunk = parts.join("\n");
+            }
+          }
+        } else {
+          chunk = content.slice(entry.chunkStart, entry.chunkEnd).trim();
+        }
+
+        const heading = entry.headingPath ? ` (${entry.headingPath})` : "";
+        if (chunk) results.push(`[From ${entry.path}${heading}]:\n${chunk}`);
+      } catch {
+        /* skip */
+      }
+    }
+
+    return results;
+  }
+
+  private async readIndexableText(file: TFile, fileCache: Map<string, string>): Promise<string | undefined> {
+    const cached = fileCache.get(file.path);
+    if (cached !== undefined) return cached;
+
+    const ext = file.extension.toLowerCase();
+    let content = "";
+
+    if (ext === "pdf") {
+      const textExtractor = this.getTextExtractorApi();
+      if (!textExtractor) return undefined;
+      try {
+        content = (await textExtractor.extractText(file)) || "";
+      } catch {
+        return undefined;
+      }
+      const maxChars = Math.max(10_000, this.plugin.settings.vaultIndexPdfMaxChars || 0);
+      if (content.length > maxChars) content = content.slice(0, maxChars);
+    } else {
+      content = await this.plugin.app.vault.read(file);
+    }
+
+    fileCache.set(file.path, content);
+    return content;
   }
   /**
    * Retrieves semantically related notes for the active file.

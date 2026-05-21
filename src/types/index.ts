@@ -54,8 +54,43 @@ export interface HormeSettings {
   contextCloudWarningShown: boolean;
   contextNotesCloudWarningShown: boolean;
   documentCloudWarningShown: boolean;
+  /**
+   * Hard cap (in characters) for folder-based context injection from "+ Add folders".
+   * This protects against accidentally sending huge prompts when a folder contains many notes.
+   */
+  contextFoldersMaxChars: number;
   // Vault Brain (Local RAG)
   vaultBrainEnabled: boolean;
+  /**
+   * Use Reciprocal Rank Fusion (RRF) to combine dense (embedding) and sparse (keyword) retrieval ranks.
+   * Inspired by YOLO's hybrid search implementation.
+   */
+  vaultBrainUseRrfHybridSearch: boolean;
+  /** RRF smoothing constant. Typical default is 60. */
+  vaultBrainRrfK: number;
+  /**
+   * Optional comma-separated glob patterns for which Markdown files are indexed by Vault Brain.
+   * When empty, all Markdown files are eligible (subject to the exclude patterns below).
+   *
+   * Examples:
+   * - `Music/**`
+   */
+  vaultIndexIncludePatterns: string;
+  /**
+   * Optional comma-separated glob patterns to exclude Markdown files from Vault Brain indexing.
+   *
+   * Examples:
+   * - `Templates/**`
+   * - `Archive/**`
+   */
+  vaultIndexExcludePatterns: string;
+  /**
+   * If enabled, Vault Brain can index PDFs by pulling extracted text from the optional
+   * community plugin "Text Extractor" (plugin id: "text-extractor").
+   */
+  vaultIndexIndexPdf: boolean;
+  /** Hard cap for extracted PDF text (characters) per file during indexing. */
+  vaultIndexPdfMaxChars: number;
   connectionsEnabled: boolean;
   connectionsThreshold: number;
   connectionsMaxResults: number;

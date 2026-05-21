@@ -6,12 +6,14 @@ import {
   setIcon,
   Notice,
   TFile,
+  TFolder,
   Menu,
 } from "obsidian";
 import HormePlugin from "../../main";
 import { VIEW_TYPE } from "../constants";
 import { ChatMessage, SavedConversation } from "../types";
 import { NotePickerModal } from "../modals/NotePickerModal";
+import { FolderPickerModal } from "../modals/FolderPickerModal";
 import { GenericConfirmModal } from "../modals/GenericConfirmModal";
 
 const SKILL_PLACEHOLDERS: Record<string, string> = {
@@ -21,6 +23,8 @@ const SKILL_PLACEHOLDERS: Record<string, string> = {
   wiktionary: "Type a specific word to inspect layout or definition...",
   vault_links: "Type topic or content snippet to map related notes...",
 };
+
+type ContextFolderSelection = { path: string; noteCount: number; totalChars: number };
 
 export class HormeChatView extends ItemView {
   plugin: HormePlugin;
@@ -54,6 +58,8 @@ export class HormeChatView extends ItemView {
   private uploadedAudio: string | null = null;
   private rollingRAGContext: string[] = [];
   private selectedContextNotes: TFile[] = [];
+  private selectedContextFolders: ContextFolderSelection[] = [];
+  private folderContextTruncationNoticeShown = false;
   private contextNotesLabel!: HTMLElement;
   private vaultBrainToggle!: HTMLInputElement;
   private vaultBrainLabel!: HTMLElement;
@@ -408,6 +414,12 @@ export class HormeChatView extends ItemView {
           this.updateContextNotesLabel();
         }).open();
       });
+      const addFoldersBtn = row3.createEl("button", { cls: "horme-header-btn", text: "+ Add folders" });
+      addFoldersBtn.addEventListener("click", () => {
+        new FolderPickerModal(this.app, (folder: TFolder) => {
+          void this.addContextFolder(folder).catch((e) => this.plugin.handleError(e, "Folders"));
+        }).open();
+      });
       const clearBtn = row3.createEl("button", { cls: "horme-header-btn", text: "Clear" });
       clearBtn.addEventListener("click", () => {
         void this.clearChat().catch((e) => this.plugin.handleError(e));
@@ -573,7 +585,7 @@ export class HormeChatView extends ItemView {
 
   private updateContextNotesLabel() {
     this.contextNotesLabel.empty();
-    if (this.selectedContextNotes.length === 0) {
+    if (this.selectedContextNotes.length === 0 && this.selectedContextFolders.length === 0) {
       this.contextNotesLabel.setCssProps({ display: "none" });
       return;
     }
@@ -583,6 +595,31 @@ export class HormeChatView extends ItemView {
       lineHeight: "1.6",
       opacity: "0.8",
     });
+
+    for (const folder of this.selectedContextFolders) {
+      const row = this.contextNotesLabel.createDiv();
+      row.setCssProps({
+        display: "flex",
+        alignItems: "center",
+        gap: "4px",
+      });
+
+      const removeBtn = row.createEl("span", { text: "\u00d7" });
+      removeBtn.setCssProps({
+        cursor: "pointer",
+        opacity: "0.6",
+        fontWeight: "bold",
+      });
+      removeBtn.addEventListener("click", () => {
+        this.selectedContextFolders = this.selectedContextFolders.filter((f) => f.path !== folder.path);
+        this.folderContextTruncationNoticeShown = false;
+        this.updateContextNotesLabel();
+      });
+
+      row.createEl("span", {
+        text: `Folder: ${folder.path} (${folder.noteCount} note${folder.noteCount === 1 ? "" : "s"})`,
+      });
+    }
 
     for (const file of this.selectedContextNotes) {
       const row = this.contextNotesLabel.createDiv();
@@ -605,6 +642,137 @@ export class HormeChatView extends ItemView {
 
       row.createEl("span", { text: file.basename });
     }
+  }
+
+  private getMarkdownFilesUnderFolderPath(folderPath: string): TFile[] {
+    const normalized = folderPath === "/" ? "/" : folderPath.replace(/\/+$/, "");
+    const allMd = this.app.vault.getMarkdownFiles();
+    if (normalized === "/" || normalized === "") return allMd;
+    const prefix = normalized.endsWith("/") ? normalized : `${normalized}/`;
+    return allMd.filter((f) => f.path.startsWith(prefix));
+  }
+
+  private async addContextFolder(folder: TFolder): Promise<void> {
+    const folderPath = folder.path || "/";
+    const normalized = folderPath === "/" ? "/" : folderPath.replace(/\/+$/, "");
+
+    if (this.selectedContextFolders.some((f) => f.path === normalized)) {
+      new Notice(`Already added: ${normalized}`);
+      return;
+    }
+
+    const files = this.getMarkdownFilesUnderFolderPath(normalized);
+    if (files.length === 0) {
+      new Notice("Horme: No notes found in that folder.");
+      return;
+    }
+
+    const totalChars = files.reduce((sum, f) => sum + (f.stat?.size ?? 0), 0);
+    this.selectedContextFolders.push({ path: normalized, noteCount: files.length, totalChars });
+    this.selectedContextFolders.sort((a, b) => a.path.localeCompare(b.path));
+    this.folderContextTruncationNoticeShown = false;
+    this.updateContextNotesLabel();
+
+    const limit = Math.max(1000, this.plugin.settings.contextFoldersMaxChars || 0);
+    const totalSelectedChars = this.selectedContextFolders.reduce((sum, f) => sum + (f.totalChars || 0), 0);
+
+    if (totalSelectedChars > limit) {
+      new Notice(
+        `Horme: Selected folder context is ~${totalSelectedChars.toLocaleString()} chars. ` +
+          `Limit is ${limit.toLocaleString()} chars — context will be truncated. ` +
+          `Use "+ Add notes" for manual selection.`,
+      );
+    } else if (totalChars > limit) {
+      new Notice(
+        `Horme: Folder is ~${totalChars.toLocaleString()} chars across ${files.length} notes. ` +
+          `Limit is ${limit.toLocaleString()} chars — context will be truncated. ` +
+          `Use "+ Add notes" for manual selection.`,
+      );
+    }
+  }
+
+  private getUniqueMarkdownFilesInSelectedFolders(): TFile[] {
+    const folderPaths = this.selectedContextFolders.map((f) => f.path);
+    if (folderPaths.length === 0) return [];
+
+    // Fast path: root folder selected → include everything.
+    if (folderPaths.some((p) => p === "/" || p === "")) {
+      return this.app.vault
+        .getMarkdownFiles()
+        .slice()
+        .sort((a, b) => a.path.localeCompare(b.path));
+    }
+
+    const prefixes = folderPaths.map((p) => (p.endsWith("/") ? p : `${p}/`));
+    const matched = new Map<string, TFile>();
+    for (const f of this.app.vault.getMarkdownFiles()) {
+      for (const pref of prefixes) {
+        if (f.path.startsWith(pref)) {
+          matched.set(f.path, f);
+          break;
+        }
+      }
+    }
+    return Array.from(matched.values()).sort((a, b) => a.path.localeCompare(b.path));
+  }
+
+  private async buildFolderContextString(
+    limitChars: number,
+  ): Promise<{ text: string; truncated: boolean; included: number; total: number }> {
+    const files = this.getUniqueMarkdownFilesInSelectedFolders();
+    const total = files.length;
+    if (total === 0) return { text: "", truncated: false, included: 0, total: 0 };
+
+    const parts: string[] = [];
+    let used = 0;
+    let included = 0;
+    let truncated = false;
+
+    for (const file of files) {
+      const header = `--- Note: ${file.path} ---\n`;
+      let body = "";
+      try {
+        body = await this.app.vault.read(file);
+      } catch {
+        body = "[Error reading file]";
+      }
+
+      const piece = header + body + "\n\n";
+      if (used + piece.length > limitChars) {
+        truncated = true;
+        break;
+      }
+      parts.push(piece);
+      used += piece.length;
+      included++;
+    }
+
+    // Edge case: single note larger than budget — include a truncated excerpt of the first note.
+    if (included === 0 && files.length > 0 && limitChars > 0) {
+      truncated = true;
+      const file = files[0];
+      let body = "";
+      try {
+        body = await this.app.vault.read(file);
+      } catch {
+        body = "[Error reading file]";
+      }
+      const piece = `--- Note: ${file.path} (truncated) ---\n${body}`;
+      parts.push(piece.slice(0, limitChars));
+      included = 1;
+    }
+
+    if (truncated) {
+      const marker =
+        `\n[Folder context truncated: included ${included}/${total} notes ` +
+        `due to the ${limitChars.toLocaleString()} character limit. ` +
+        `Use "+ Add notes" to add specific files.]\n`;
+      const current = parts.join("");
+      const remaining = limitChars - current.length;
+      if (remaining > 0) parts.push(marker.slice(0, remaining));
+    }
+
+    return { text: parts.join(""), truncated, included, total };
   }
 
   private getCurrentProviderModel(): string {
@@ -995,9 +1163,13 @@ export class HormeChatView extends ItemView {
 
       const providerIsLocal = this.plugin.isLocalProviderActive();
       const providerLabel = this.plugin.settings.aiProvider.toUpperCase();
+      const folderContextActive = this.selectedContextFolders.length > 0;
+      let folderContextWasTruncated = false;
 
       // --- Current Note Context (privacy guarded) ---
-      if (this.contextToggle.checked) {
+      // Folder context should be isolated from the currently-open note.
+      // If the user wants a specific extra note, they can add it explicitly via "+ Add notes".
+      if (!folderContextActive && this.contextToggle.checked) {
         if (!providerIsLocal && !this.plugin.settings.contextCloudWarningShown) {
           const ok = await this.confirmCloudSend(
             `Privacy notice: Your current note's full text will be sent to ${providerLabel}, a cloud provider. The content will leave your device. Do you want to continue?`,
@@ -1050,16 +1222,70 @@ export class HormeChatView extends ItemView {
         }
       }
 
+      // --- Folder Context Injection ---
+      if (this.selectedContextFolders.length > 0) {
+        let includeFolderContext = true;
+
+        if (!providerIsLocal && !this.plugin.settings.contextNotesCloudWarningShown) {
+          const ok = await this.confirmCloudSend(
+            `Privacy notice: Notes from your selected folders will be sent to ${providerLabel}, a cloud provider. The content will leave your device. Do you want to continue?`,
+          );
+          if (ok) {
+            this.plugin.settings.contextNotesCloudWarningShown = true;
+            await this.plugin.saveSettings();
+          } else {
+            includeFolderContext = false;
+            new Notice("Horme: Folder context not sent.");
+          }
+        }
+
+        if (includeFolderContext) {
+          const limit = Math.max(1000, this.plugin.settings.contextFoldersMaxChars || 0);
+          const { text, truncated, included, total } = await this.buildFolderContextString(limit);
+          folderContextWasTruncated = truncated;
+          if (text) {
+            const selectedFoldersLabel = this.selectedContextFolders.map((f) => f.path).join(", ");
+            systemParts.push(
+              `FOLDER CONTEXT (highest priority): The user selected folder(s): ${selectedFoldersLabel}\n` +
+                `Use the notes inside this folder context to answer the user's next message. ` +
+                `Ignore the currently open note. ` +
+                `If any additional "LOCAL VAULT CONTEXT" is provided, it is scoped to these same folder(s).\n\n` +
+                `--- BEGIN FOLDER CONTEXT ---\n` +
+                text +
+                `\n--- END FOLDER CONTEXT ---`,
+            );
+          }
+          if (truncated && !this.folderContextTruncationNoticeShown) {
+            this.folderContextTruncationNoticeShown = true;
+            new Notice(
+              `Horme: Folder context truncated (${included}/${total} notes) due to the ${limit.toLocaleString()} character limit.`,
+            );
+          }
+        }
+      }
+
       // --- Vault Brain (RAG) Injection ---
       const canUseRAG = this.plugin.isLocalProviderActive() || this.plugin.settings.allowCloudRAG;
       const hasBuiltVaultIndex = canUseRAG ? await this.plugin.vaultIndexer.hasBuiltIndex() : false;
       const sessionRAGEnabled = this.vaultBrainToggle ? this.vaultBrainToggle.checked : true;
       let relevantChunks: string[] = [];
 
-      if (this.plugin.settings.vaultBrainEnabled && canUseRAG && hasBuiltVaultIndex && sessionRAGEnabled) {
+      if (
+        this.plugin.settings.vaultBrainEnabled &&
+        canUseRAG &&
+        hasBuiltVaultIndex &&
+        sessionRAGEnabled &&
+        // If folder context was truncated, allow Vault Brain to supplement
+        // but scope it to the same selected folders.
+        (!folderContextActive || folderContextWasTruncated)
+      ) {
         this.plugin.setIndexingStatus("Searching vault brain...");
         try {
-          relevantChunks = await this.plugin.vaultIndexer.search(text);
+          const scope =
+            this.selectedContextFolders.length > 0
+              ? { folders: this.selectedContextFolders.map((f) => f.path) }
+              : undefined;
+          relevantChunks = await this.plugin.vaultIndexer.search(text, 20, scope ? { scope } : undefined);
         } finally {
           this.plugin.setIndexingStatus(null);
         }
@@ -1071,7 +1297,9 @@ export class HormeChatView extends ItemView {
           //
           // Strategy: current query's results go first (score-ordered), then
           // fill remaining slots with previous context for multi-turn coherence.
-          const prevContext = this.rollingRAGContext.filter((c) => !relevantChunks.includes(c));
+          const prevContext = folderContextActive
+            ? []
+            : this.rollingRAGContext.filter((c) => !relevantChunks.includes(c));
           this.rollingRAGContext = [...relevantChunks, ...prevContext].slice(0, 20);
 
           // Extract unique paths for the "Sources" UI
@@ -1840,6 +2068,8 @@ export class HormeChatView extends ItemView {
     this.lastModel = null;
     this.rollingRAGContext = [];
     this.selectedContextNotes = [];
+    this.selectedContextFolders = [];
+    this.folderContextTruncationNoticeShown = false;
     this.updateContextNotesLabel();
     this.showingHistory = false;
     await this.renderChatView();

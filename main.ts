@@ -412,26 +412,28 @@ export default class HormePlugin extends Plugin {
 
     this.registerEvent(
       this.app.vault.on("delete", (file) => {
-        if (file instanceof TFile && file.path.endsWith(".md")) {
+        if (!(file instanceof TFile)) return;
+        if (file.path.endsWith(".md")) {
           const existing = this.indexDebounceMap.get(file.path);
           if (existing !== undefined) {
             window.clearTimeout(existing);
             this.indexDebounceMap.delete(file.path);
           }
-          this.vaultIndexer.removeEntriesForPath(file.path);
         }
+        this.vaultIndexer.removeEntriesForPath(file.path);
       }),
     );
 
     this.registerEvent(
       this.app.vault.on("rename", (file, oldPath) => {
-        if (file instanceof TFile && file.path.endsWith(".md")) {
-          const existing = this.indexDebounceMap.get(oldPath);
-          if (existing !== undefined) {
-            window.clearTimeout(existing);
-            this.indexDebounceMap.delete(oldPath);
-          }
-          this.vaultIndexer.removeEntriesForPath(oldPath);
+        if (!(file instanceof TFile)) return;
+        const existing = this.indexDebounceMap.get(oldPath);
+        if (existing !== undefined) {
+          window.clearTimeout(existing);
+          this.indexDebounceMap.delete(oldPath);
+        }
+        this.vaultIndexer.removeEntriesForPath(oldPath);
+        if (file.path.endsWith(".md")) {
           void this.vaultIndexer.enqueueIndex(file).catch((e) => this.handleError(e));
         }
       }),
