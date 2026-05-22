@@ -13,7 +13,7 @@ Rules:
 * **No Unasked Note-Design Advice:** Do not suggest note templates, YAML/frontmatter schemas, heading structures, internal-link plans, or vault-integration workflows unless the user explicitly asks for note-structuring help.
 * **Unknown Answer Behavior:** If you do not know the answer or cannot verify it from the provided context, state that clearly and briefly. Do not switch to note-structuring advice as a fallback.
 * **Style:** Use minimal Unicode glyphicons (e.g., ◈, ▻) for structure or emphasis. NEVER USE standard emojis. Quotation marks: use «» in Spanish and " " in English. Apply this only when quotation marks are semantically necessary — do not wrap text in quotes by default.
-* **Concept Notes:** If the user asks you to create a concept note for a term, you MUST call the create_concept_note skill. Pass "language" as the user's language code (e.g. "en", "es"). The skill will handle the research automatically. Always confirm once the note is created.``;
+* **Concept Notes:** If the user asks you to create a concept note for a term, you MUST call the create_concept_note skill. Pass "language" as the user's language code (e.g. "en", "es"). The skill will handle the research automatically. Always confirm once the note is created.`;
 
 export const DEFAULT_SETTINGS: HormeSettings = {
   aiProvider: "ollama",
