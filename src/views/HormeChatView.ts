@@ -1374,10 +1374,7 @@ export class HormeChatView extends ItemView {
       }
 
       if (isFirstMessage) {
-        const combined = systemParts.length
-          ? `${systemParts.join("\n\n")}\n\n---\n\nUSER MESSAGE: ${text}`
-          : text;
-        currentMsg.content = combined;
+        if (systemParts.length) msgs.push({ role: "system", content: systemParts.join("\n\n") });
         msgs.push(currentMsg);
       } else {
         if (systemParts.length) msgs.push({ role: "system", content: systemParts.join("\n\n") });
