@@ -46,13 +46,13 @@
   min-width: 0;
 }
 
-.horme-select {
+body .horme-chat-container .horme-header button.horme-select {
   flex: 1 1 0;
   min-width: 0;
   padding: 4px 8px;
   border-radius: var(--radius-s);
   border: 1px solid var(--background-modifier-border);
-  background: var(--background-primary);
+  background: var(--background-secondary);
   color: var(--text-normal);
   font-size: 12px;
   font-family: var(--font-interface);
