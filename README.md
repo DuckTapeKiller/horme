@@ -32,7 +32,10 @@ _In Greek mythology, Horme (/ˈhɔːrmiː/; Ancient Greek: Ὁρμή) is the Gre
 > **1. Download the Indexing Model:**
 > This model is _only_ for indexing your vault in a compressed format; you cannot chat with it.
 >
-> - **Recommended Model:** `nomic-embed-text:latest` (274 MB).
+> - **Recommended Model:**
+>
+> - `nomic-embed-text:latest` (274 MB) **if** your vault contains text in one language;
+> - `nomic-embed-text-v2-moe` (957 MB) **if** you have a multilingual vault.
 > - **Command (in your terminal):**
 >
 >  `bash
