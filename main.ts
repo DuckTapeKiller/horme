@@ -594,15 +594,26 @@ export default class HormePlugin extends Plugin {
 
     const candidates = Array.from(new Set([...keywordCandidates, ...semanticCandidates]));
 
-    const prompt = `You are a tagging engine. Generate a newline-separated list of tags for the provided note content.
+    const prompt = `You are an automated, context-blind tagging engine. Your sole function is to process text and output hierarchical tags according to a strict schema.
 
-RULES:
-1. Prioritize the 'Allowed' list below.
-2. Limit yourself to at most ${this.settings.maxSuggestedTags} tags.
-3. ZERO CHATTER: Return ONLY the raw tags. Do not include greetings, explanations, or stylistic comments.
+SCHEMA RULES:
+1. Hierarchical Format: Tags must follow a "category/entity_name" or "category/subcategory/entity_name" structure. 
+2. Naming Convention: Use lowercase and replace spaces with underscores (e.g., "john_picha").
+3. Permitted Root Categories: When encountering a new entity, you MUST categorise it under one of the established root folders. Examples:
+   - People: actores, actrices, escritores, cineastas, filósofos, científicos, pintores, músicos, políticos (Format: "escritores/john_picha")
+   - Geography: país, país/[name]/ciudades (Format: "país/francia", "país/españa/ciudades/madrid")
+   - Topics/Disciplines: literatura, cine, filosofía, ciencia, arte, arquitectura, historia, gramática (Format: "filosofía/conceptos/dualismo")
+   - Media/Works: libros, películas, obras_de_arte
+   - Specific Lore: mitología/grecia/personajes, mitología/japón, etc.
 
-Allowed Tags:
-${candidates.map((t) => `- ${t}`).join("\n")}`;
+INSTRUCTIONS:
+- First, check if the "Reference Tags" below contain appropriate matches.
+- If the text focuses on a new person, place, or concept NOT in the reference list, construct a NEW tag using the correct root category (e.g., "arquitectos/zaha_hadid" or "películas/dune").
+- Return a maximum of ${this.settings.maxSuggestedTags} tags.
+- ZERO CHATTER: Output ONLY the raw tags, one per line. Do not include # symbols, bullet points, greetings, preambles, or explanations.
+
+Reference Tags:
+${candidates.map((t) => `${t}`).join("\n")}`;
 
     new Notice("Horme: Generating tags…");
     this.setIndexingStatus("Generating tags...");
