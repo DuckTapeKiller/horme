@@ -589,8 +589,8 @@ export default class HormePlugin extends Plugin {
     const body = this.tagService.stripFrontmatter(raw);
     const context = `${file.basename}\n\n${body}`;
 
-    const keywordCandidates = this.tagService.rankCandidates(context, tags).slice(0, 60);
-    const semanticCandidates = await this.tagIndexer.getSemanticCandidates(context, 60);
+    const keywordCandidates = this.tagService.rankCandidates(context, tags).slice(0, 10);
+    const semanticCandidates = await this.tagIndexer.getSemanticCandidates(context, 10);
 
     const candidates = Array.from(new Set([...keywordCandidates, ...semanticCandidates]));
 
@@ -606,11 +606,15 @@ SCHEMA RULES:
    - Media/Works: libros, películas, obras_de_arte
    - Specific Lore: mitología/grecia/personajes, mitología/japón, etc.
 
+ANTI-HALLUCINATION RULES:
+- DO NOT tag metaphors, figures of speech, or abstract prose (e.g., do not tag "el mono enfermo"). Only tag actual, literal subjects, people, places, and works.
+- DO NOT force a tag just because it appears in the Reference Tags. If a reference tag is not highly relevant, ignore it entirely.
+
 INSTRUCTIONS:
 - First, check if the "Reference Tags" below contain appropriate matches.
-- If the text focuses on a new person, place, or concept NOT in the reference list, construct a NEW tag using the correct root category (e.g., "arquitectos/zaha_hadid" or "películas/dune").
+- If the text focuses on a new person, place, or concept NOT in the reference list, construct a NEW tag using the correct root category.
 - Return a maximum of ${this.settings.maxSuggestedTags} tags.
-- ZERO CHATTER: Output ONLY the raw tags, one per line. Do not include # symbols, bullet points, greetings, preambles, or explanations.
+- ZERO CHATTER: Output ONLY the raw tags, one per line. Do not include # symbols, bullet points, preambles, or explanations.
 
 Reference Tags:
 ${candidates.map((t) => `${t}`).join("\n")}`;
