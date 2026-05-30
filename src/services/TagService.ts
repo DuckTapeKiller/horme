@@ -17,10 +17,9 @@ export class TagService {
         };
       }
     ).fileManager;
-    const fmApi = fileManager?.processFrontMatter;
 
-    if (typeof fmApi === "function") {
-      await fmApi(file, (fm) => {
+    if (fileManager && typeof fileManager.processFrontMatter === "function") {
+      await fileManager.processFrontMatter(file, (fm) => {
         const existing = this.toArray(fm["tags"]);
         const seen = new Set(existing.map((t) => this.normalizeKey(t)));
         const merged = [...existing];
