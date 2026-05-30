@@ -18,6 +18,7 @@ import { TranslateModal } from "./src/modals/TranslateModal";
 import { RewriteModal } from "./src/modals/RewriteModal";
 import { ConfirmReplaceModal } from "./src/modals/ConfirmReplaceModal";
 import { HormeErrorModal } from "./src/modals/HormeErrorModal";
+import { FactCheckResultModal } from "./src/modals/FactCheckResultModal";
 
 // Services
 import { DocxService } from "./src/services/DocxService";
@@ -688,6 +689,9 @@ ${candidates.map((t) => `${t}`).join("\n")}`;
   /* ── Actions ── */
 
   private async runAction(editor: Editor, sel: string, sysPrompt: string, actionId?: string) {
+    // Capture the exact end of the user's text selection immediately, before any AI delay
+    const selectionEnd = editor.getCursor("to");
+    
     const STATUS_MESSAGES: Record<string, string> = {
       proofread: "Proofreading...",
       expand: "Expanding...",
@@ -759,7 +763,7 @@ RULES:
           `\n4. You may call the wikipedia skill MULTIPLE TIMES — once per claim or group of related claims.` +
           `\n5. Format your final response as:` +
           `\n\n**Claim:** [the exact claim from the text]` +
-          `\n**Verdict:** ✅ Accurate / ❌ Inaccurate / ⚠️ Unverifiable` +
+          `\n**Verdict:** Accurate / Inaccurate / Unverifiable` +
           `\n**Source:** [relevant Wikipedia excerpt]` +
           `\n**Note:** [brief explanation of match or discrepancy]` +
           `\n\nRepeat for each claim. End with an overall assessment.`;
@@ -786,10 +790,14 @@ RULES:
         const skillCalls = this.skillManager.parseSkillCalls(response);
         if (skillCalls.length === 0) {
           // Final result
-          new ConfirmReplaceModal(this.app, sel, response, (edited) => {
-            editor.replaceSelection(edited);
-            new Notice("Horme: Done ✓");
-          }).open();
+          if (actionId === "fact-check") {
+            new FactCheckResultModal(this.app, this, response, editor, selectionEnd).open();
+          } else {
+            new ConfirmReplaceModal(this.app, sel, response, (edited) => {
+              editor.replaceSelection(edited);
+              new Notice("Horme: Done ✓");
+            }).open();
+          }
           break;
         }
 

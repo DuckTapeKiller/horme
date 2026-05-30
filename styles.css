@@ -1762,3 +1762,70 @@ body.is-mobile .horme-chat-container .horme-header .horme-select.horme-select {
   color: var(--text-muted);
   font-style: italic;
 }
+
+/* Fact Check Modal */
+.horme-fact-check-modal {
+  max-width: 600px;
+}
+.horme-fact-check-header {
+  margin-top: 0;
+  margin-bottom: 16px;
+}
+.horme-fact-check-container {
+  max-height: 60vh;
+  overflow-y: auto;
+  padding-right: 12px;
+}
+.horme-fact-check-buttons {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 24px;
+  gap: 12px;
+}
+
+/* Fact Check Claim Blocks */
+.horme-claim-block {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  padding: 16px;
+  margin-bottom: 16px;
+  background-color: var(--background-primary);
+}
+.horme-claim-field {
+  margin-bottom: 8px;
+}
+.horme-claim-title {
+  color: var(--text-normal);
+}
+.horme-claim-content p {
+  display: inline;
+  margin: 0;
+}
+.horme-claim-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+/* Glowing Verdict Dots */
+.horme-verdict-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 6px;
+  margin-left: 4px;
+  box-shadow: 0 0 6px currentColor;
+}
+.horme-verdict-green {
+  background-color: var(--color-green);
+  color: var(--color-green);
+}
+.horme-verdict-red {
+  background-color: var(--color-red);
+  color: var(--color-red);
+}
+.horme-verdict-yellow {
+  background-color: var(--color-yellow);
+  color: var(--color-yellow);
+}
