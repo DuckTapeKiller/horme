@@ -691,7 +691,7 @@ ${candidates.map((t) => `${t}`).join("\n")}`;
   private async runAction(editor: Editor, sel: string, sysPrompt: string, actionId?: string) {
     // Capture the exact end of the user's text selection immediately, before any AI delay
     const selectionEnd = editor.getCursor("to");
-    
+
     const STATUS_MESSAGES: Record<string, string> = {
       proofread: "Proofreading...",
       expand: "Expanding...",
