@@ -25,7 +25,9 @@ jobs:
       - name: Use Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "18"
+          # Node 20+ required: eslint-plugin-obsidianmd uses import.meta.dirname,
+          # which is undefined on Node 18 and crashes the lint step.
+          node-version: "20"
           cache: "npm"
 
       - name: Install dependencies
