@@ -212,7 +212,7 @@ export class VaultIndexer {
     if (await adapter.exists(path)) {
       try {
         const data = await adapter.read(path);
-        const parsed = JSON.parse(data);
+        const parsed = JSON.parse(data) as Record<string, string>;
         this.tagTranslationCache = new Map(Object.entries(parsed));
       } catch (e) {
         console.error("Horme Brain: Failed to parse Tag History", e);
@@ -442,7 +442,9 @@ export class VaultIndexer {
           `Shard 0 metadata invalid. shard=${String(shardProp)} totalShards=${String(totalProp)}`,
         );
       } else {
-        expectedTotalShards = totalProp as number;
+        // In this branch totalValid is true, so totalProp is defined; `?? 0` keeps the
+        // type `number` without a redundant assertion.
+        expectedTotalShards = totalProp ?? 0;
         const decompressed = this.parseEntries(getRecordProp(parsed, "entries"));
         this.index = this.index.concat(decompressed);
         loadedShards = 1;
@@ -1189,7 +1191,7 @@ t1 -> Translation`;
           }
 
           // Mandatory 400ms pacing delay to clear context queue on local server instances
-          await new Promise((resolve) => setTimeout(resolve, 400));
+          await new Promise((resolve) => window.setTimeout(resolve, 400));
         }
 
         // 🟢 Final guaranteed storage commit after all chunks finish
@@ -1556,11 +1558,13 @@ t1 -> Translation`;
   }
 
   private getTextExtractorApi(): TextExtractorApi | undefined {
-    // Optional dependency: community plugin "Text Extractor" (id: "text-extractor")
-    // Exposes an API at (app as any).plugins?.plugins?.['text-extractor']?.api
-    return (this.plugin.app as any)?.plugins?.plugins?.["text-extractor"]?.api as
-      | TextExtractorApi
-      | undefined;
+    // Optional dependency: community plugin "Text Extractor" (id: "text-extractor").
+    // `app.plugins` is not part of Obsidian's public typings, so describe just the
+    // shape we read instead of reaching through `any`.
+    const internalApp = this.plugin.app as unknown as {
+      plugins?: { plugins?: Record<string, { api?: TextExtractorApi } | undefined> };
+    };
+    return internalApp.plugins?.plugins?.["text-extractor"]?.api;
   }
 
   private isPathIndexableByPatterns(path: string): boolean {
@@ -1728,7 +1732,9 @@ t1 -> Translation`;
 
             const chunkHashes = embeddingTexts.map((t) => VaultIndexer.chunkHash(t));
 
-            const resolvedEmbeddings: Array<Int8Array | null> = new Array(embeddingTexts.length).fill(null);
+            const resolvedEmbeddings: Array<Int8Array | null> = new Array<Int8Array | null>(
+              embeddingTexts.length,
+            ).fill(null);
             const toEmbedTexts: string[] = [];
             const toEmbedIndices: number[] = [];
 
@@ -2129,7 +2135,9 @@ t1 -> Translation`;
 
         const chunkHashes = embeddingTexts.map((t) => VaultIndexer.chunkHash(t));
 
-        const resolvedEmbeddings: Array<Int8Array | null> = new Array(embeddingTexts.length).fill(null);
+        const resolvedEmbeddings: Array<Int8Array | null> = new Array<Int8Array | null>(
+          embeddingTexts.length,
+        ).fill(null);
         const toEmbedTexts: string[] = [];
         const toEmbedIndices: number[] = [];
 

@@ -10,9 +10,10 @@ export class FolderPickerModal extends FuzzySuggestModal<TFolder> {
   }
 
   getItems(): TFolder[] {
+    const configDir = this.app.vault.configDir;
     return this.app.vault
       .getAllFolders(true)
-      .filter((f) => f.path !== ".obsidian")
+      .filter((f) => f.path !== configDir)
       .sort((a, b) => a.path.localeCompare(b.path));
   }
 

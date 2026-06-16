@@ -1050,7 +1050,7 @@ export class HormeChatView extends ItemView {
           throw new Error("Skill configuration error: no primary parameter defined.");
         }
 
-        const forcedParams: Record<string, any> = { [primaryParam]: query };
+        const forcedParams: Record<string, string | number | boolean> = { [primaryParam]: query };
 
         // Verify and inject required parameters that are not the primary one
         for (const param of skill.parameters) {
@@ -1422,7 +1422,7 @@ export class HormeChatView extends ItemView {
         }
 
         for (const m of filteredHistory) {
-          msgs.push({ role: m.role as "user" | "assistant" | "system" | "tool_result", content: m.content });
+          msgs.push({ role: m.role, content: m.content });
         }
 
         // Consolidate consecutive roles to prevent API errors
@@ -1634,8 +1634,8 @@ export class HormeChatView extends ItemView {
         // Re-render the streamed reasoning as formatted Markdown (it was plain
         // text during streaming); keep the bubble collapsed by default.
         if (fullReasoning.trim()) {
-          const reasoningDetails = el.querySelector(".horme-thinking-details") as HTMLDetailsElement | null;
-          const reasoningBody = reasoningDetails?.querySelector(".horme-thinking-body") as HTMLElement | null;
+          const reasoningDetails = el.querySelector<HTMLDetailsElement>(".horme-thinking-details");
+          const reasoningBody = reasoningDetails?.querySelector<HTMLElement>(".horme-thinking-body");
           if (reasoningDetails && reasoningBody) {
             reasoningDetails.open = false;
             reasoningBody.empty();
@@ -1793,7 +1793,7 @@ export class HormeChatView extends ItemView {
 
             for (const m of filteredHistory) {
               nextMsgs.push({
-                role: m.role as "user" | "assistant" | "system" | "tool_result",
+                role: m.role,
                 content: m.content,
               });
             }
@@ -2129,7 +2129,7 @@ export class HormeChatView extends ItemView {
 
     // Self-cleanup when the element is removed during normal operation
     // (e.g., loadingEl.remove() after generation completes).
-    const origRemove = el.remove.bind(el);
+    const origRemove = el.remove.bind(el) as () => void;
     el.remove = () => {
       window.clearInterval(intervalId);
       this.activeLoadingIntervals.delete(intervalId);

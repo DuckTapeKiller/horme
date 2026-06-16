@@ -42,7 +42,7 @@ export class FactCheckResultModal extends Modal {
 
     if (claims.length === 0) {
       // fallback if parsing fails or there are no claims formatted correctly
-      MarkdownRenderer.render(this.app, this.resultMarkdown, containerEl, "", this.plugin as any);
+      void MarkdownRenderer.render(this.app, this.resultMarkdown, containerEl, "", this.plugin);
     } else {
       for (const claim of claims) {
         this.renderClaimBlock(containerEl, claim);
@@ -121,7 +121,7 @@ export class FactCheckResultModal extends Modal {
 
       const contentSpan = fieldRow.createSpan("horme-claim-content");
       // Use MarkdownRenderer so links and simple formatting are preserved natively
-      MarkdownRenderer.render(this.app, field.content, contentSpan, "", this.plugin as any);
+      void MarkdownRenderer.render(this.app, field.content, contentSpan, "", this.plugin);
     }
 
     const actionRow = blockEl.createDiv("horme-claim-actions");
@@ -129,7 +129,7 @@ export class FactCheckResultModal extends Modal {
     const copyBtn = actionRow.createEl("button", { text: "Copy" });
     copyBtn.addEventListener("click", () => {
       const textToCopy = `**Claim:** ${claim.claim}\n**Verdict:** ${claim.verdict}\n**Source:** ${claim.source}\n**Note:** ${claim.note}`;
-      navigator.clipboard.writeText(textToCopy);
+      void navigator.clipboard.writeText(textToCopy);
       copyBtn.setText("Copied!");
     });
 

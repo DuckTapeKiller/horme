@@ -1361,7 +1361,7 @@ export class HormeSettingTab extends PluginSettingTab {
 
         // --- Test Translation ---
         const testResultsEl = ragSection.createDiv({ cls: "horme-tag-test-results" });
-        testResultsEl.style.display = "none";
+        testResultsEl.setCssStyles({ display: "none" });
 
         new Setting(ragSection)
           .setName("Test translation")
@@ -1374,7 +1374,7 @@ export class HormeSettingTab extends PluginSettingTab {
             btn.setButtonText("Run test").onClick(async () => {
               btn.setButtonText("Testing...").setDisabled(true);
               testResultsEl.empty();
-              testResultsEl.style.display = "block";
+              testResultsEl.setCssStyles({ display: "block" });
 
               const loadingEl = testResultsEl.createEl("p", {
                 text: "Contacting model — this may take 10–30 seconds on a local LLM...",

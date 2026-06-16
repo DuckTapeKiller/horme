@@ -17,7 +17,7 @@ export async function requestUrlWithTimeout(
   return Promise.race([
     requestUrl(params),
     new Promise<never>((_, reject) => {
-      setTimeout(
+      window.setTimeout(
         () => reject(new Error(`Network request timed out after ${timeoutMs / 1000}s: ${params.url}`)),
         timeoutMs,
       );

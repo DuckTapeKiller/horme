@@ -124,14 +124,25 @@ export default class HormePlugin extends Plugin {
 
   debugLog(...args: unknown[]) {
     if (!this.settings?.debugLoggingEnabled) return;
-    // eslint-disable-next-line no-console
-    console.log(...args);
+    this.diagnosticService?.report("Debug", this.formatDebugArgs(args), "info");
   }
 
   debugWarn(...args: unknown[]) {
     if (!this.settings?.debugLoggingEnabled) return;
-    // eslint-disable-next-line no-console
-    console.warn(...args);
+    this.diagnosticService?.report("Debug", this.formatDebugArgs(args), "warning");
+  }
+
+  private formatDebugArgs(args: unknown[]): string {
+    return args
+      .map((a) => {
+        if (typeof a === "string") return a;
+        try {
+          return JSON.stringify(a);
+        } catch {
+          return String(a);
+        }
+      })
+      .join(" ");
   }
 
   private isLikelyOllamaEmbeddingModel(tag: OllamaTagsModel): boolean {
