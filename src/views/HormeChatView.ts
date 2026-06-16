@@ -57,6 +57,8 @@ export class HormeChatView extends ItemView {
   private uploadedImages: string[] = [];
   private uploadedAudio: string | null = null;
   private rollingRAGContext: string[] = [];
+  /** Exact RAG passages injected on the most recent turn (reused on Regenerate). */
+  private lastInjectedPassages = "";
   private selectedContextNotes: TFile[] = [];
   private selectedContextFolders: ContextFolderSelection[] = [];
   private folderContextTruncationNoticeShown = false;
@@ -1122,6 +1124,7 @@ export class HormeChatView extends ItemView {
     let msgs: ChatMessage[];
     let model: string;
     let ragWasInjected = false;
+    let injectedPassages = "";
 
     // Capture context at start to prevent desync
     const mdLeaf = this.plugin.lastActiveMarkdownLeaf;
@@ -1134,6 +1137,7 @@ export class HormeChatView extends ItemView {
       }
       msgs = this.lastMsgs;
       model = this.lastModel;
+      injectedPassages = this.lastInjectedPassages;
     } else {
       const text = this.inputEl.value.trim();
       if (!text) return;
@@ -1314,6 +1318,8 @@ export class HormeChatView extends ItemView {
 
         if (this.rollingRAGContext.length > 0) {
           ragWasInjected = true;
+          injectedPassages = this.rollingRAGContext.join("\n\n---\n\n");
+          this.lastInjectedPassages = injectedPassages;
           if (relevantChunks.length > 0) {
             new Notice(`● Vault Brain: Consulting ${relevantChunks.length} notes...`);
           }
@@ -1442,6 +1448,7 @@ export class HormeChatView extends ItemView {
       0,
       currentSources,
       [],
+      injectedPassages,
       epoch,
     ).catch((e) => this.plugin.handleError(e));
   }
@@ -1457,6 +1464,7 @@ export class HormeChatView extends ItemView {
     skillDepth: number,
     sources: string[] = [],
     skillSourceLinks: string[] = [],
+    passages: string,
     epoch: number,
   ) {
     if (this.generationEpoch !== epoch || !this.contentEl.isConnected) {
@@ -1474,6 +1482,25 @@ export class HormeChatView extends ItemView {
     this.activeAbortController = new AbortController();
 
     const renderProgressiveMarkdown = (() => {
+      let lastRender = 0;
+      let renderTask: Promise<void> | null = null;
+      return async (text: string, target: HTMLElement) => {
+        const now = Date.now();
+        if (now - lastRender < 200) return; // Throttle 200ms
+        if (renderTask) return; // Skip if busy
+        lastRender = now;
+        renderTask = (async () => {
+          target.empty();
+          await MarkdownRenderer.render(this.app, text, target, initialSourcePath || "", this);
+          this.scrollToBottom();
+          renderTask = null;
+        })();
+      };
+    })();
+
+    // Separate throttle for the reasoning bubble so it renders as formatted
+    // Markdown while streaming (never bare), independent of the content render.
+    const renderProgressiveReasoning = (() => {
       let lastRender = 0;
       let renderTask: Promise<void> | null = null;
       return async (text: string, target: HTMLElement) => {
@@ -1556,16 +1583,19 @@ export class HormeChatView extends ItemView {
 
                   if (reasoning) {
                     if (!reasoningEl) {
-                      reasoningEl = el.createEl("details", { cls: "horme-reasoning-details" });
+                      reasoningEl = el.createEl("details", { cls: "horme-thinking-details" });
                       reasoningEl.createEl("summary", {
                         text: "Reasoning Process",
-                        cls: "horme-reasoning-summary",
+                        cls: "horme-thinking-summary",
                       });
+                      // Pin the thinking bubble to the top of the response.
+                      const contentArea = el.querySelector(".horme-content-area");
+                      if (contentArea) el.insertBefore(reasoningEl, contentArea);
                     }
                     fullReasoning += reasoning;
-                    let reasoningBody = reasoningEl.querySelector(".horme-reasoning-body");
-                    if (!reasoningBody) reasoningBody = reasoningEl.createDiv("horme-reasoning-body");
-                    (reasoningBody as HTMLElement).textContent = fullReasoning;
+                    let reasoningBody = reasoningEl.querySelector(".horme-thinking-body");
+                    if (!reasoningBody) reasoningBody = reasoningEl.createDiv("horme-thinking-body");
+                    void renderProgressiveReasoning(fullReasoning, reasoningBody as HTMLElement);
                   }
 
                   if (content) {
@@ -1601,16 +1631,38 @@ export class HormeChatView extends ItemView {
           const finalArea = el.createDiv("horme-content-area");
           await MarkdownRenderer.render(this.app, fullContent, finalArea, initialSourcePath || "", this);
         }
+        // Re-render the streamed reasoning as formatted Markdown (it was plain
+        // text during streaming); keep the bubble collapsed by default.
+        if (fullReasoning.trim()) {
+          const reasoningDetails = el.querySelector(".horme-thinking-details") as HTMLDetailsElement | null;
+          const reasoningBody = reasoningDetails?.querySelector(".horme-thinking-body") as HTMLElement | null;
+          if (reasoningDetails && reasoningBody) {
+            reasoningDetails.open = false;
+            reasoningBody.empty();
+            await MarkdownRenderer.render(
+              this.app,
+              fullReasoning,
+              reasoningBody,
+              initialSourcePath || "",
+              this,
+            );
+          }
+        }
+        // Passages bubble: exactly what RAG context was sent to the model this turn.
+        await this.appendPassagesBubble(el, passages, initialSourcePath || "");
         this.addAssistantActions(el, fullContent);
         this.renderSources(el, sources);
       }
 
-      const finalMsg = fullReasoning
-        ? `> [!thought]\n> ${fullReasoning.replace(/\n/g, "\n> ")}\n\n${fullContent}`
-        : fullContent;
       if (!this.contentEl.isConnected) return;
       if (fullContent || fullReasoning) {
-        this.history.push({ role: "assistant", content: finalMsg });
+        this.history.push({
+          role: "assistant",
+          content: fullContent,
+          reasoning: fullReasoning || undefined,
+          context: passages || undefined,
+          sources: sources.length ? sources : undefined,
+        });
 
         // --- Skill Execution Agent Loop ---
         const skillCalls = this.plugin.skillManager.parseSkillCalls(fullContent);
@@ -1780,6 +1832,7 @@ export class HormeChatView extends ItemView {
                 skillDepth + 1,
                 [],
                 aggregatedSkillLinks,
+                "",
                 epoch,
               );
             }
@@ -1874,6 +1927,49 @@ export class HormeChatView extends ItemView {
         .then(() => new Notice("Copied to clipboard"))
         .catch((e) => this.plugin.handleError(e, "Clipboard"));
     });
+  }
+
+  /** Moves a meta bubble (thinking/passages) above the answer content. */
+  private pinToTop(container: HTMLElement, el: HTMLElement): void {
+    const contentArea = container.querySelector(".horme-content-area");
+    if (contentArea) container.insertBefore(el, contentArea);
+  }
+
+  /**
+   * Renders the model's reasoning/thinking trace as a collapsed, Markdown-formatted
+   * bubble pinned to the top of the response. Used when restoring from history.
+   */
+  private async appendReasoningBubble(
+    container: HTMLElement,
+    reasoning: string,
+    sourcePath: string,
+  ): Promise<void> {
+    if (!reasoning.trim()) return;
+    const details = container.createEl("details", { cls: "horme-thinking-details" });
+    details.createEl("summary", { text: "Reasoning Process", cls: "horme-thinking-summary" });
+    const body = details.createDiv("horme-thinking-body");
+    this.pinToTop(container, details);
+    await MarkdownRenderer.render(this.app, reasoning, body, sourcePath, this);
+  }
+
+  /**
+   * Renders the exact RAG passages that were sent to the model as a collapsed,
+   * Markdown-formatted bubble shown beneath the reasoning bubble, pinned to the top.
+   */
+  private async appendPassagesBubble(
+    container: HTMLElement,
+    passages: string,
+    sourcePath: string,
+  ): Promise<void> {
+    if (!passages.trim()) return;
+    if (container.querySelector(".horme-passages-details")) return;
+    const count = passages.split("\n\n---\n\n").filter((p) => p.trim()).length;
+    const details = container.createEl("details", { cls: "horme-passages-details" });
+    const label = count > 1 ? `Passages sent to the model (${count})` : "Passage sent to the model";
+    details.createEl("summary", { text: label, cls: "horme-passages-summary" });
+    const body = details.createDiv("horme-passages-body");
+    this.pinToTop(container, details);
+    await MarkdownRenderer.render(this.app, passages, body, sourcePath, this);
   }
 
   private async renderSkillResultBox(skillId: string, displayName: string, params: unknown, result: string) {
@@ -1982,7 +2078,11 @@ export class HormeChatView extends ItemView {
     if (!(await this.app.vault.adapter.exists(folder))) await this.app.vault.createFolder(folder);
     const content = this.history
       .filter((m) => m.role !== "system")
-      .map((m) => `**${m.role === "user" ? "You" : "Horme"}**:\n${m.content}\n`)
+      .map((m) => {
+        const who = m.role === "user" ? "You" : "Horme";
+        const thought = m.reasoning ? `> [!thought]\n> ${m.reasoning.replace(/\n/g, "\n> ")}\n\n` : "";
+        return `**${who}**:\n${thought}${m.content}\n`;
+      })
       .join("\n---\n\n");
     const fileName = `${folder}/Horme chat ${new Date().getTime()}.md`;
     await this.app.vault.create(fileName, content);
@@ -2064,6 +2164,7 @@ export class HormeChatView extends ItemView {
     this.lastMsgs = null;
     this.lastModel = null;
     this.rollingRAGContext = [];
+    this.lastInjectedPassages = "";
     this.selectedContextNotes = [];
     this.selectedContextFolders = [];
     this.folderContextTruncationNoticeShown = false;
@@ -2101,7 +2202,10 @@ export class HormeChatView extends ItemView {
           } else if (displayContent) {
             await MarkdownRenderer.render(this.app, displayContent, bubble, "", this);
           }
+          await this.appendReasoningBubble(bubble, m.reasoning ?? "", "");
+          await this.appendPassagesBubble(bubble, m.context ?? "", "");
           this.addAssistantActions(bubble, m.content);
+          this.renderSources(bubble, m.sources ?? []);
         } else {
           const contentArea = bubble.querySelector(".horme-content-area") as HTMLElement;
           if (contentArea) contentArea.textContent = m.content;
@@ -2179,6 +2283,9 @@ export class HormeChatView extends ItemView {
       content: m.content,
       images: m.images,
       audio: m.audio,
+      reasoning: m.reasoning,
+      context: m.context,
+      sources: m.sources,
     }));
     this.lastMsgs = null;
     this.lastModel = null;
@@ -2351,7 +2458,9 @@ export class HormeChatView extends ItemView {
 
       const reasoning =
         this.getStringAtPath(data, ["choices", 0, "delta", "reasoning_content"]) ??
+        this.getStringAtPath(data, ["choices", 0, "delta", "reasoning"]) ??
         this.getStringAtPath(data, ["message", "reasoning"]) ??
+        this.getStringAtPath(data, ["message", "thinking"]) ??
         "";
 
       if (content || reasoning) onContent(content, reasoning);

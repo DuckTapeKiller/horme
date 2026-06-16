@@ -27,16 +27,25 @@ export class HistoryManager {
     const messages: ChatMessage[] = [];
     for (const m of messagesArr) {
       const role = getStringProp(m, "role");
-      const content = getStringProp(m, "content");
-      if (!role || !content) continue;
+      const content = getStringProp(m, "content") ?? "";
+      const reasoning = getStringProp(m, "reasoning");
+      const context = getStringProp(m, "context");
+      if (!role) continue;
       if (role !== "user" && role !== "assistant" && role !== "system") continue;
+      // Keep messages that carry only a reasoning/context trace (e.g. a stopped
+      // reasoning-model turn), but still skip genuinely empty ones.
+      if (!content && !reasoning && !context) continue;
       const imagesUnknown = getRecordProp(m, "images");
       const images = Array.isArray(imagesUnknown)
         ? imagesUnknown.filter((x): x is string => typeof x === "string")
         : undefined;
       const audioUnknown = getRecordProp(m, "audio");
       const audio = typeof audioUnknown === "string" ? audioUnknown : null;
-      messages.push({ role, content, images, audio });
+      const sourcesUnknown = getRecordProp(m, "sources");
+      const sources = Array.isArray(sourcesUnknown)
+        ? sourcesUnknown.filter((x): x is string => typeof x === "string")
+        : undefined;
+      messages.push({ role, content, images, audio, reasoning, context, sources });
     }
 
     return { id, title, timestamp, messages };

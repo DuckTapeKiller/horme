@@ -1,5 +1,6 @@
 import { requestUrl } from "obsidian";
 import { AiProvider } from "./AiProvider";
+import { fetchError, requestUrlError } from "../utils/apiError";
 import { asArray, getRecordProp, getStringProp } from "../utils/TypeGuards";
 
 export class LmStudioProvider implements AiProvider {
@@ -37,7 +38,7 @@ export class LmStudioProvider implements AiProvider {
       }),
       throw: false,
     });
-    if (res.status !== 200) throw new Error(`LM Studio error: ${res.status}`);
+    if (res.status !== 200) throw new Error(`LM Studio error: ${requestUrlError(res)}`);
     return this.extractContent(res.json as unknown);
   }
 
@@ -55,7 +56,7 @@ export class LmStudioProvider implements AiProvider {
       }),
       throw: false,
     });
-    if (res.status !== 200) throw new Error(`LM Studio error: ${res.status}`);
+    if (res.status !== 200) throw new Error(`LM Studio error: ${requestUrlError(res)}`);
     return this.extractContent(res.json as unknown);
   }
   async stream(
@@ -75,7 +76,7 @@ export class LmStudioProvider implements AiProvider {
       }),
       signal,
     });
-    if (!res.ok) throw new Error(`LM Studio stream error: ${res.status}`);
+    if (!res.ok) throw new Error(`LM Studio stream error: ${await fetchError(res)}`);
     if (!res.body) throw new Error("LM Studio: no response body");
     return res.body.getReader();
   }

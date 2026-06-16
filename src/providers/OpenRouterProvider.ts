@@ -1,5 +1,6 @@
 import { requestUrl } from "obsidian";
 import { AiProvider } from "./AiProvider";
+import { fetchError, requestUrlError } from "../utils/apiError";
 import { asArray, getRecordProp, getStringProp } from "../utils/TypeGuards";
 
 export class OpenRouterProvider implements AiProvider {
@@ -42,7 +43,7 @@ export class OpenRouterProvider implements AiProvider {
       }),
       throw: false,
     });
-    if (res.status !== 200) throw new Error(`OpenRouter error: ${res.status}`);
+    if (res.status !== 200) throw new Error(`OpenRouter error: ${requestUrlError(res)}`);
     return this.extractContent(res.json as unknown);
   }
 
@@ -65,7 +66,7 @@ export class OpenRouterProvider implements AiProvider {
       }),
       throw: false,
     });
-    if (res.status !== 200) throw new Error(`OpenRouter error: ${res.status}`);
+    if (res.status !== 200) throw new Error(`OpenRouter error: ${requestUrlError(res)}`);
     return this.extractContent(res.json as unknown);
   }
   async stream(
@@ -91,7 +92,7 @@ export class OpenRouterProvider implements AiProvider {
       }),
       signal,
     });
-    if (!res.ok) throw new Error(`OpenRouter stream error: ${res.status}`);
+    if (!res.ok) throw new Error(`OpenRouter stream error: ${await fetchError(res)}`);
     if (!res.body) throw new Error("OpenRouter: no response body");
     return res.body.getReader();
   }

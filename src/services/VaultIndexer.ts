@@ -44,6 +44,18 @@ interface IndexEntry {
   headingPath?: string;
 }
 
+interface TagTranslationRunStats {
+  primary: TagProviderId;
+  fallback: TagProviderId;
+  primaryIsCloud: boolean;
+  allowCloudTagTranslation: boolean;
+  cloudOkChunks: number;
+  fallbackUsedChunks: number;
+  totalFailures: number;
+  fallbackWarningLogged: boolean;
+  fallbackNoticeShown: boolean;
+}
+
 type VaultSearchScope = {
   files?: string[];
   folders?: string[];
@@ -139,17 +151,7 @@ export class VaultIndexer {
   // Cleared when the plugin unloads (in-memory only — intentionally not persisted).
   private tagTranslationCache: Map<string, string> = new Map();
   private hasReportedEmptyTagTranslationModel = false;
-  private tagTranslationRunStats: {
-    primary: TagProviderId;
-    fallback: TagProviderId;
-    primaryIsCloud: boolean;
-    allowCloudTagTranslation: boolean;
-    cloudOkChunks: number;
-    fallbackUsedChunks: number;
-    totalFailures: number;
-    fallbackWarningLogged: boolean;
-    fallbackNoticeShown: boolean;
-  } | null = null;
+  private tagTranslationRunStats: TagTranslationRunStats | null = null;
 
   /** O(1) lookup of entries by path */
   private getEntriesForPath(path: string): IndexEntry[] {
@@ -1874,13 +1876,14 @@ t1 -> Translation`;
       }
 
       // Summarize whether tag translation actually used cloud vs fallback for this run.
-      if (
-        this.tagTranslationRunStats?.primaryIsCloud &&
-        this.tagTranslationRunStats.allowCloudTagTranslation
-      ) {
+      // Captured into a local (with its declared type) because TS narrows the field to
+      // `null` from the reset at the top of rebuildIndex — it can't see that the
+      // pre-translation step above repopulates it via a called helper.
+      const runStats = this.tagTranslationRunStats as TagTranslationRunStats | null;
+      if (runStats?.primaryIsCloud && runStats.allowCloudTagTranslation) {
         this.plugin.diagnosticService.report(
           "Tag Translation",
-          `Tag translation: cloud ok ${this.tagTranslationRunStats.cloudOkChunks} chunks, fallback used ${this.tagTranslationRunStats.fallbackUsedChunks} chunks, total failures ${this.tagTranslationRunStats.totalFailures}.`,
+          `Tag translation: cloud ok ${runStats.cloudOkChunks} chunks, fallback used ${runStats.fallbackUsedChunks} chunks, total failures ${runStats.totalFailures}.`,
           "info",
         );
       }

@@ -147,4 +147,10 @@ export interface ChatMessage {
   content: string;
   images?: string[];
   audio?: string | null;
+  /** Model's reasoning/thinking trace, shown in a collapsed bubble. */
+  reasoning?: string;
+  /** Exact RAG passages injected into the prompt for this turn, shown in a collapsed bubble. */
+  context?: string;
+  /** Vault note paths surfaced as "Sources" pills for this turn. */
+  sources?: string[];
 }

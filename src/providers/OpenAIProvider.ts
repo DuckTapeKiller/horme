@@ -1,6 +1,7 @@
 import { requestUrl } from "obsidian";
 import { AiProvider } from "./AiProvider";
 import { asArray, getRecordProp, getStringProp } from "../utils/TypeGuards";
+import { fetchError, requestUrlError } from "../utils/apiError";
 
 export class OpenAIProvider implements AiProvider {
   private apiKey: string;
@@ -40,7 +41,7 @@ export class OpenAIProvider implements AiProvider {
       }),
       throw: false,
     });
-    if (res.status !== 200) throw new Error(`OpenAI error: ${res.status}`);
+    if (res.status !== 200) throw new Error(`OpenAI error: ${requestUrlError(res)}`);
     return this.extractContent(res.json as unknown);
   }
 
@@ -61,7 +62,7 @@ export class OpenAIProvider implements AiProvider {
       }),
       throw: false,
     });
-    if (res.status !== 200) throw new Error(`OpenAI error: ${res.status}`);
+    if (res.status !== 200) throw new Error(`OpenAI error: ${requestUrlError(res)}`);
     return this.extractContent(res.json as unknown);
   }
   async stream(
@@ -85,7 +86,7 @@ export class OpenAIProvider implements AiProvider {
       }),
       signal,
     });
-    if (!res.ok) throw new Error(`OpenAI stream error: ${res.status}`);
+    if (!res.ok) throw new Error(`OpenAI stream error: ${await fetchError(res)}`);
     if (!res.body) throw new Error("OpenAI: no response body");
     return res.body.getReader();
   }

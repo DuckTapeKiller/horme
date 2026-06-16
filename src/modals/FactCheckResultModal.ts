@@ -104,7 +104,8 @@ export class FactCheckResultModal extends Modal {
       const fieldRow = blockEl.createDiv("horme-claim-field");
 
       const titleSpan = fieldRow.createSpan("horme-claim-title");
-      titleSpan.innerHTML = `<strong>${field.title}:</strong> `;
+      titleSpan.createEl("strong", { text: `${field.title}:` });
+      titleSpan.appendText(" ");
 
       if (field.title === "Verdict") {
         const dotSpan = fieldRow.createSpan("horme-verdict-dot");

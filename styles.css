@@ -307,6 +307,44 @@ body .horme-chat-container .horme-header button.horme-select {
   background: var(--background-primary);
 }
 
+/* Thinking & Passages bubbles — borderless, primary background, theme-driven */
+.horme-thinking-details,
+.horme-passages-details {
+  background: var(--background-primary);
+  border: none;
+  border-radius: var(--radius-s);
+  margin-bottom: var(--size-4-2);
+  overflow: hidden;
+}
+
+.horme-thinking-summary,
+.horme-passages-summary {
+  padding: var(--size-4-1) var(--size-4-2);
+  font-size: var(--font-ui-smaller);
+  font-weight: var(--font-semibold);
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+  background: var(--background-primary);
+}
+
+.horme-thinking-summary::-webkit-details-marker,
+.horme-passages-summary::-webkit-details-marker {
+  display: none;
+}
+
+.horme-thinking-body,
+.horme-passages-body {
+  padding: var(--size-4-2) var(--size-4-3);
+  font-size: var(--font-ui-small);
+  line-height: var(--line-height-normal);
+  color: var(--text-normal);
+  background: var(--background-primary);
+  max-height: 320px;
+  overflow-y: auto;
+}
+
 .horme-content-area {
   width: 100%;
 }
@@ -1320,26 +1358,52 @@ body.is-mobile .horme-chat-container .horme-header .horme-select.horme-select {
   gap: 8px;
 }
 
-.horme-diag-logs-header .horme-diag-refresh-btn {
-  background: transparent;
+/* The console is fixed-dark (#121212). The active theme styles modal buttons with a
+   high-specificity rule — html body.obsidian-app .modal button:not(.mod-cta)... (0,5,3) —
+   so we out-specify it here with a :not() chain (0,6,2) instead of using !important. */
+html
+  body
+  .horme-diag-logs-header
+  .horme-diag-refresh-btn:not(.mod-cta):not(.mod-warning):not(.mod-destructive):not(.clickable-icon) {
+  background: #121212;
   border: none;
   padding: 2px;
   cursor: pointer;
-  color: var(--text-faint);
   display: flex;
   align-items: center;
   justify-content: center;
+  box-shadow: none;
   transition: color 0.2s ease;
+}
+
+/* Keep the background dark on hover too — the theme's :hover rule would otherwise paint
+   it white. The same :not() chain + :hover (0,7,2) out-specifies that hover rule. */
+html
+  body
+  .horme-diag-logs-header
+  .horme-diag-refresh-btn:not(.mod-cta):not(.mod-warning):not(.mod-destructive):not(.clickable-icon):hover {
+  background: #121212;
   box-shadow: none;
 }
 
-.horme-diag-logs-header .horme-diag-refresh-btn:hover {
-  color: var(--text-normal);
-}
-
+/* Icon: set the stroke directly on the svg. A direct value beats the button's inherited
+   color (which the theme drives to black in light mode), so the icon stays visible on the
+   dark button in both themes — no !important needed. */
 .horme-diag-logs-header .horme-diag-refresh-btn svg {
   width: 14px;
   height: 14px;
+  color: #cccccc;
+  stroke: #cccccc;
+}
+
+.horme-diag-logs-header .horme-diag-refresh-btn svg path {
+  stroke: #cccccc;
+}
+
+.horme-diag-logs-header .horme-diag-refresh-btn:hover svg,
+.horme-diag-logs-header .horme-diag-refresh-btn:hover svg path {
+  color: #ffffff;
+  stroke: #ffffff;
 }
 
 .horme-diag-logs-header .horme-diag-refresh-btn.is-spinning svg {

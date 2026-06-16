@@ -1,5 +1,6 @@
 import { requestUrl } from "obsidian";
 import { AiProvider } from "./AiProvider";
+import { fetchError, requestUrlError } from "../utils/apiError";
 import { asArray, getRecordProp, getStringProp } from "../utils/TypeGuards";
 
 type ClaudeMessage = { role: "user" | "assistant"; content: string };
@@ -62,7 +63,7 @@ export class ClaudeProvider implements AiProvider {
       throw: false,
     });
 
-    if (res.status !== 200) throw new Error(`Claude error: ${res.status}`);
+    if (res.status !== 200) throw new Error(`Claude error: ${requestUrlError(res)}`);
     return this.extractText(res.json as unknown);
   }
 
@@ -88,7 +89,7 @@ export class ClaudeProvider implements AiProvider {
       throw: false,
     });
 
-    if (res.status !== 200) throw new Error(`Claude error: ${res.status}`);
+    if (res.status !== 200) throw new Error(`Claude error: ${requestUrlError(res)}`);
     return this.extractText(res.json as unknown);
   }
 
@@ -116,7 +117,7 @@ export class ClaudeProvider implements AiProvider {
       }),
       signal,
     });
-    if (!res.ok) throw new Error(`Claude stream error: ${res.status}`);
+    if (!res.ok) throw new Error(`Claude stream error: ${await fetchError(res)}`);
     if (!res.body) throw new Error("Claude: no response body");
     return res.body.getReader();
   }

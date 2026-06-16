@@ -1,5 +1,6 @@
 import { requestUrl } from "obsidian";
 import { AiProvider } from "./AiProvider";
+import { fetchError, requestUrlError } from "../utils/apiError";
 import { asArray, getRecordProp, getStringProp } from "../utils/TypeGuards";
 
 export class GeminiProvider implements AiProvider {
@@ -34,7 +35,7 @@ export class GeminiProvider implements AiProvider {
       }),
       throw: false,
     });
-    if (res.status !== 200) throw new Error(`Gemini error: ${res.status}`);
+    if (res.status !== 200) throw new Error(`Gemini error: ${requestUrlError(res)}`);
     return this.extractContent(res.json as unknown);
   }
 
@@ -58,7 +59,7 @@ export class GeminiProvider implements AiProvider {
       }),
       throw: false,
     });
-    if (res.status !== 200) throw new Error(`Gemini error: ${res.status}`);
+    if (res.status !== 200) throw new Error(`Gemini error: ${requestUrlError(res)}`);
     return this.extractContent(res.json as unknown);
   }
   async stream(
@@ -90,7 +91,7 @@ export class GeminiProvider implements AiProvider {
         signal,
       },
     );
-    if (!res.ok) throw new Error(`Gemini stream error: ${res.status}`);
+    if (!res.ok) throw new Error(`Gemini stream error: ${await fetchError(res)}`);
     if (!res.body) throw new Error("Gemini: no response body");
     return res.body.getReader();
   }

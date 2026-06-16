@@ -1,6 +1,7 @@
 import { requestUrl } from "obsidian";
 import { AiProvider } from "./AiProvider";
 import { getRecordProp, getStringProp } from "../utils/TypeGuards";
+import { fetchError, requestUrlError } from "../utils/apiError";
 
 export class OllamaProvider implements AiProvider {
   private baseUrl: string;
@@ -26,9 +27,10 @@ export class OllamaProvider implements AiProvider {
         stream: false,
         options: { temperature: this.temperature, num_predict: this.maxTokens },
       }),
+      throw: false,
     });
 
-    if (response.status !== 200) throw new Error(`Ollama error: ${response.status}`);
+    if (response.status !== 200) throw new Error(`Ollama error: ${requestUrlError(response)}`);
     const data: unknown = response.json;
     const error = getStringProp(data, "error");
     const content = getStringProp(data, "response") ?? "";
@@ -48,9 +50,10 @@ export class OllamaProvider implements AiProvider {
         stream: false,
         options: { temperature: this.temperature },
       }),
+      throw: false,
     });
 
-    if (response.status !== 200) throw new Error(`Ollama error: ${response.status}`);
+    if (response.status !== 200) throw new Error(`Ollama error: ${requestUrlError(response)}`);
     const data: unknown = response.json;
     const error = getStringProp(data, "error");
     const message = getRecordProp(data, "message");
@@ -75,7 +78,7 @@ export class OllamaProvider implements AiProvider {
       }),
       signal,
     });
-    if (!res.ok) throw new Error(`Ollama stream error: ${res.status}`);
+    if (!res.ok) throw new Error(`Ollama stream error: ${await fetchError(res)}`);
     if (!res.body) throw new Error("Ollama: no response body");
     return res.body.getReader();
   }

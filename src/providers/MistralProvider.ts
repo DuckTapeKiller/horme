@@ -1,5 +1,6 @@
 import { requestUrl } from "obsidian";
 import { AiProvider } from "./AiProvider";
+import { fetchError, requestUrlError } from "../utils/apiError";
 import { asArray, getRecordProp, getStringProp } from "../utils/TypeGuards";
 
 export class MistralProvider implements AiProvider {
@@ -40,7 +41,7 @@ export class MistralProvider implements AiProvider {
       }),
       throw: false,
     });
-    if (res.status !== 200) throw new Error(`Mistral error: ${res.status}`);
+    if (res.status !== 200) throw new Error(`Mistral error: ${requestUrlError(res)}`);
     return this.extractContent(res.json as unknown);
   }
 
@@ -61,7 +62,7 @@ export class MistralProvider implements AiProvider {
       }),
       throw: false,
     });
-    if (res.status !== 200) throw new Error(`Mistral error: ${res.status}`);
+    if (res.status !== 200) throw new Error(`Mistral error: ${requestUrlError(res)}`);
     return this.extractContent(res.json as unknown);
   }
 
@@ -86,7 +87,7 @@ export class MistralProvider implements AiProvider {
       }),
       signal,
     });
-    if (!res.ok) throw new Error(`Mistral stream error: ${res.status}`);
+    if (!res.ok) throw new Error(`Mistral stream error: ${await fetchError(res)}`);
     if (!res.body) throw new Error("Mistral: no response body");
     return res.body.getReader();
   }
