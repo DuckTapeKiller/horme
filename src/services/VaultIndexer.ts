@@ -929,7 +929,7 @@ export class VaultIndexer {
       for (const t of cache.tags) add(t.tag);
     }
 
-    const frontmatter = cache?.frontmatter as Record<string, unknown> | undefined;
+    const frontmatter: Record<string, unknown> | undefined = cache?.frontmatter;
     if (frontmatter) {
       for (const tag of this.extractTagValues(frontmatter.tags)) add(tag);
       for (const tag of this.extractTagValues(frontmatter.tag)) add(tag);
@@ -1244,7 +1244,7 @@ t1 -> Translation`;
       if (cache?.tags) {
         for (const t of cache.tags) add(t.tag);
       }
-      const frontmatter = cache?.frontmatter as Record<string, unknown> | undefined;
+      const frontmatter: Record<string, unknown> | undefined = cache?.frontmatter;
       if (frontmatter) {
         for (const tag of this.extractTagValues(frontmatter.tags)) add(tag);
         for (const tag of this.extractTagValues(frontmatter.tag)) add(tag);
@@ -1506,7 +1506,7 @@ t1 -> Translation`;
     file: TFile,
   ): { fullText: string; summaryOnly: string; tagsOnly: string } | null {
     const cache = this.plugin.app.metadataCache.getFileCache(file);
-    const frontmatter = cache?.frontmatter as Record<string, unknown> | undefined;
+    const frontmatter: Record<string, unknown> | undefined = cache?.frontmatter;
 
     let summaryOnly = "";
     if (frontmatter) {

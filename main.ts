@@ -124,25 +124,14 @@ export default class HormePlugin extends Plugin {
 
   debugLog(...args: unknown[]) {
     if (!this.settings?.debugLoggingEnabled) return;
-    this.diagnosticService?.report("Debug", this.formatDebugArgs(args), "info");
+    // console.debug (not console.log) prints to DevTools while satisfying Obsidian's
+    // no-console rule, which allows debug/warn/error but not log.
+    console.debug(...args);
   }
 
   debugWarn(...args: unknown[]) {
     if (!this.settings?.debugLoggingEnabled) return;
-    this.diagnosticService?.report("Debug", this.formatDebugArgs(args), "warning");
-  }
-
-  private formatDebugArgs(args: unknown[]): string {
-    return args
-      .map((a) => {
-        if (typeof a === "string") return a;
-        try {
-          return JSON.stringify(a);
-        } catch {
-          return String(a);
-        }
-      })
-      .join(" ");
+    console.warn(...args);
   }
 
   private isLikelyOllamaEmbeddingModel(tag: OllamaTagsModel): boolean {
@@ -1286,7 +1275,8 @@ RULES:
     let migratedCount = 0;
 
     for (const m of mappings) {
-      const hadLegacyField = Object.prototype.hasOwnProperty.call(loaded, m.legacyField);
+      // Boolean() because Function.prototype.call is typed `any` without strictBindCallApply.
+      const hadLegacyField = Boolean(Object.prototype.hasOwnProperty.call(loaded, m.legacyField));
       const legacyRaw = loaded[m.legacyField];
       const legacyValue = typeof legacyRaw === "string" ? legacyRaw.trim() : "";
 

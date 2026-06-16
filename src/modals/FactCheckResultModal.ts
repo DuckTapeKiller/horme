@@ -1,4 +1,4 @@
-import { App, Modal, MarkdownRenderer, Editor, Notice } from "obsidian";
+import { App, Component, Modal, MarkdownRenderer, Editor, Notice } from "obsidian";
 import type HormePlugin from "../../main";
 
 interface ClaimBlock {
@@ -14,6 +14,9 @@ export class FactCheckResultModal extends Modal {
   private editor: Editor;
   private selectionEnd: { line: number; ch: number };
   private footnoteOffset: number = 0; // Tracks characters added by previous footnotes
+  // Owns the lifecycle of rendered Markdown so embedded content is cleaned up when the
+  // modal closes — passing the long-lived plugin instance here would leak (no-plugin-as-component).
+  private renderComponent = new Component();
 
   constructor(
     app: App,
@@ -32,6 +35,7 @@ export class FactCheckResultModal extends Modal {
   onOpen() {
     const { contentEl } = this;
     contentEl.addClass("horme-fact-check-modal");
+    this.renderComponent.load();
 
     const headerEl = contentEl.createEl("h2", { text: "Fact Check Results" });
     headerEl.addClass("horme-fact-check-header");
@@ -42,7 +46,7 @@ export class FactCheckResultModal extends Modal {
 
     if (claims.length === 0) {
       // fallback if parsing fails or there are no claims formatted correctly
-      void MarkdownRenderer.render(this.app, this.resultMarkdown, containerEl, "", this.plugin);
+      void MarkdownRenderer.render(this.app, this.resultMarkdown, containerEl, "", this.renderComponent);
     } else {
       for (const claim of claims) {
         this.renderClaimBlock(containerEl, claim);
@@ -121,7 +125,7 @@ export class FactCheckResultModal extends Modal {
 
       const contentSpan = fieldRow.createSpan("horme-claim-content");
       // Use MarkdownRenderer so links and simple formatting are preserved natively
-      void MarkdownRenderer.render(this.app, field.content, contentSpan, "", this.plugin);
+      void MarkdownRenderer.render(this.app, field.content, contentSpan, "", this.renderComponent);
     }
 
     const actionRow = blockEl.createDiv("horme-claim-actions");
@@ -173,6 +177,7 @@ export class FactCheckResultModal extends Modal {
   }
 
   onClose() {
+    this.renderComponent.unload();
     this.contentEl.empty();
   }
 }
