@@ -1625,7 +1625,9 @@ export class HormeChatView extends ItemView {
 
                   if (reasoning) {
                     if (!reasoningEl) {
-                      reasoningEl = el.createEl("details", { cls: "horme-thinking-details" });
+                      reasoningEl = el.createEl("details", {
+                        cls: "horme-thinking-details horme-thinking-active",
+                      });
                       reasoningEl.createEl("summary", {
                         text: "Reasoning process",
                         cls: "horme-thinking-summary",
@@ -1679,6 +1681,7 @@ export class HormeChatView extends ItemView {
           const reasoningDetails = el.querySelector<HTMLDetailsElement>(".horme-thinking-details");
           const reasoningBody = reasoningDetails?.querySelector<HTMLElement>(".horme-thinking-body");
           if (reasoningDetails && reasoningBody) {
+            reasoningDetails.removeClass("horme-thinking-active");
             reasoningDetails.open = false;
             reasoningBody.empty();
             await MarkdownRenderer.render(
@@ -1715,18 +1718,6 @@ export class HormeChatView extends ItemView {
 
       if (!this.contentEl.isConnected) return;
       if (fullContent || fullReasoning || nativeSkillCalls.length) {
-        this.history.push({
-          role: "assistant",
-          content:
-            fullContent ||
-            (nativeSkillCalls.length
-              ? `[Called skills: ${nativeSkillCalls.map((c) => c.skillId).join(", ")}]`
-              : ""),
-          reasoning: fullReasoning || undefined,
-          context: passages || undefined,
-          sources: sources.length ? sources : undefined,
-        });
-
         // --- Skill Execution Agent Loop ---
         // Native calls (structured, from tool-trained models) take priority;
         // the prompt-taught XML syntax is parsed as the fallback.
@@ -1800,148 +1791,104 @@ export class HormeChatView extends ItemView {
               if (!aggregatedSkillLinks.includes(link)) aggregatedSkillLinks.push(link);
             }
 
-            // Add the result to history (Fix 3)
             this.history.push({
               role: "tool_result",
-              content: `[SKILL RESULT: ${skillName}]\n\n${result}\n\nPlease continue your response based on this result.`,
+              content: `[SKILL RESULT: ${skillName}]\n\n${result}`,
             });
             await this.renderSkillResultBox(skillName, displayName, call.parameters, result);
             if (!this.contentEl.isConnected) return;
 
-            const isTerminal = skill?.terminal === true;
-            const shouldPromote = this.shouldPromoteSkillFailure(result);
+          }
 
-            if (isTerminal || shouldPromote) {
-              // Render result as a proper assistant bubble — same as the forced execution path
-              const resultBubble = this.addMessageBubble("assistant", "");
-              const resultArea = resultBubble.querySelector(".horme-content-area") as HTMLElement;
-              if (resultArea) {
-                resultArea.empty();
-                await MarkdownRenderer.render(this.app, result, resultArea, initialSourcePath || "", this);
-              }
-              this.addAssistantActions(resultBubble, result);
-              this.renderSkillSourceLinks(resultBubble, skillLinks);
-              this.history.push({ role: "assistant", content: result });
+          // Always continue the loop — the model needs a chance to
+          // synthesize results and call further skills for multi-part
+          // questions.  The `terminal` flag only matters for the forced
+          // skill dropdown path (handled in sendMessage), never here.
+          let nextMsgs: ChatMessage[] = [];
+          const effectivePrompt =
+            this.sessionSystemPromptOverride ?? (await this.plugin.getEffectiveSystemPrompt());
+          if (effectivePrompt) nextMsgs.push({ role: "system", content: effectivePrompt });
+
+          const filteredHistory: ChatMessage[] = [];
+          const toolResults: ChatMessage[] = [];
+          for (const m of this.history) {
+            if (
+              m.role === "tool_result" ||
+              (m.role === "system" && m.content.startsWith("[SKILL RESULT:"))
+            ) {
+              toolResults.push(m);
+            } else {
+              filteredHistory.push(m);
             }
           }
 
-          const hasTerminalSkill = skillCalls.some((c) => {
-            const s = this.plugin.skillManager.getSkillById(c.skillId);
-            return s?.terminal === true;
-          });
+          for (const m of filteredHistory) {
+            nextMsgs.push({ role: m.role, content: m.content });
+          }
 
-          if (!hasTerminalSkill) {
-            // Prepare the next turn in the loop
-            let nextMsgs: ChatMessage[] = [];
-            const effectivePrompt =
-              this.sessionSystemPromptOverride ?? (await this.plugin.getEffectiveSystemPrompt());
-            if (effectivePrompt) nextMsgs.push({ role: "system", content: effectivePrompt });
-
-            // Consolidate tool result messages from history (Fix 3)
-            const filteredHistory: ChatMessage[] = [];
-            const toolResults: ChatMessage[] = [];
-            for (const m of this.history) {
-              if (
-                m.role === "tool_result" ||
-                (m.role === "system" && m.content.startsWith("[SKILL RESULT:"))
-              ) {
-                toolResults.push(m);
-              } else {
-                filteredHistory.push(m);
-              }
-            }
-
-            let consolidatedToolResult: ChatMessage | null = null;
-            if (toolResults.length > 0) {
-              consolidatedToolResult = {
-                role: "user",
-                content: toolResults.map((r) => r.content).join("\n\n"),
-              };
-            }
-
-            // Inject immediately before the most recent assistant turn
-            let lastAssistantIdx = -1;
-            for (let i = filteredHistory.length - 1; i >= 0; i--) {
-              if (filteredHistory[i].role === "assistant") {
-                lastAssistantIdx = i;
-                break;
-              }
-            }
-
-            if (consolidatedToolResult) {
-              if (lastAssistantIdx !== -1) {
-                filteredHistory.splice(lastAssistantIdx, 0, consolidatedToolResult);
-              } else {
-                filteredHistory.push(consolidatedToolResult);
-              }
-            }
-
-            for (const m of filteredHistory) {
-              nextMsgs.push({
-                role: m.role,
-                content: m.content,
-              });
-            }
-
-            // Consolidate consecutive roles to prevent API errors
-            nextMsgs = this.cleanAndConsolidateMsgs(nextMsgs);
-
-            // Recurse with depth guard. Agent mode raises the budget; when
-            // it runs out the chain ends with an answer, not an error: one
-            // final round with skills fully suppressed.
-            const maxDepth = this.plugin.settings.agentMode
-              ? Math.min(50, Math.max(1, this.plugin.settings.agentMaxRounds))
-              : HormeChatView.MAX_SKILL_DEPTH;
-            if (skillDepth >= maxDepth) {
-              nextMsgs.push({
-                role: "user",
-                content:
-                  "[TOOL BUDGET EXHAUSTED] You have used every allowed skill call for this request. Do not call any more skills. Write your complete final answer now from everything you already found.",
-              });
-              const nextLoading = this.showLoading();
-              await this.handleStreamingResponse(
-                nextMsgs,
-                model,
-                nextLoading,
-                initialSourcePath,
-                false,
-                skillDepth + 1,
-                [],
-                aggregatedSkillLinks,
-                "",
-                epoch,
-                { seenSkillCalls, timelineEl, skillsSuppressed: true },
-              );
-            } else {
-              const nextLoading = this.showLoading();
-              await this.handleStreamingResponse(
-                nextMsgs,
-                model,
-                nextLoading,
-                initialSourcePath,
-                false,
-                skillDepth + 1,
-                [],
-                aggregatedSkillLinks,
-                "",
-                epoch,
-                { seenSkillCalls, timelineEl },
-              );
-            }
-          } else {
-            // Terminal skills: save history and stop — no LLM synthesis needed
-            if (bubbleEl && aggregatedSkillLinks.length > 0) {
-              this.renderSkillSourceLinks(bubbleEl as HTMLElement, aggregatedSkillLinks);
-            }
-            if (!this.contentEl.isConnected) return;
-            await this.plugin.historyManager.append({
-              id: this.conversationId,
-              title: this.history.find((m) => m.role === "user")?.content.slice(0, 60) || "Untitled chat",
-              timestamp: Date.now(),
-              messages: this.history,
+          if (toolResults.length > 0) {
+            const consolidated = toolResults.map((r) => r.content).join("\n\n---\n\n");
+            nextMsgs.push({
+              role: "user",
+              content:
+                consolidated +
+                "\n\n[SKILL RESULTS ABOVE] If the user's request is fully answered, write your final answer now. " +
+                "If you still need more information, call the next skill immediately — do not narrate or explain, just call it.",
             });
           }
+
+          nextMsgs = this.cleanAndConsolidateMsgs(nextMsgs);
+
+          const maxDepth = this.plugin.settings.agentMode
+            ? Math.min(50, Math.max(1, this.plugin.settings.agentMaxRounds))
+            : HormeChatView.MAX_SKILL_DEPTH;
+          if (skillDepth >= maxDepth) {
+            nextMsgs.push({
+              role: "user",
+              content:
+                "[TOOL BUDGET EXHAUSTED] You have used every allowed skill call for this request. Do not call any more skills. Write your complete final answer now from everything you already found.",
+            });
+            const nextLoading = this.showLoading();
+            await this.handleStreamingResponse(
+              nextMsgs,
+              model,
+              nextLoading,
+              initialSourcePath,
+              false,
+              skillDepth + 1,
+              [],
+              aggregatedSkillLinks,
+              "",
+              epoch,
+              { seenSkillCalls, timelineEl, skillsSuppressed: true },
+            );
+          } else {
+            const nextLoading = this.showLoading();
+            await this.handleStreamingResponse(
+              nextMsgs,
+              model,
+              nextLoading,
+              initialSourcePath,
+              false,
+              skillDepth + 1,
+              [],
+              aggregatedSkillLinks,
+              "",
+              epoch,
+              { seenSkillCalls, timelineEl },
+            );
+          }
           return;
+        }
+        // No skill calls — this is the final answer. Save it to history.
+        if (fullContent || fullReasoning) {
+          this.history.push({
+            role: "assistant",
+            content: fullContent,
+            reasoning: fullReasoning || undefined,
+            context: passages || undefined,
+            sources: sources.length ? sources : undefined,
+          });
         }
         if (bubbleEl && skillSourceLinks.length > 0) {
           this.renderSkillSourceLinks(bubbleEl as HTMLElement, skillSourceLinks);
@@ -2277,13 +2224,22 @@ export class HormeChatView extends ItemView {
       this.renderEmpty();
       return;
     }
+    const aggregatedSkillLinks: string[] = [];
     for (const m of this.history) {
+      if (m.role === "tool_result") {
+        const match = m.content.match(/^\[SKILL RESULT: ([a-zA-Z0-9_]+)\]\n\n([\s\S]*)$/);
+        if (match) {
+          const skill = this.plugin.skillManager.getSkillById(match[1]);
+          await this.renderSkillResultBox(match[1], skill?.name ?? match[1], {}, match[2]);
+          for (const link of this.extractSourceLinks(match[2])) {
+            if (!aggregatedSkillLinks.includes(link)) aggregatedSkillLinks.push(link);
+          }
+        }
+        continue;
+      }
       if (m.role === "user" || m.role === "assistant") {
         const bubble = this.addMessageBubble(m.role, "", m.images);
         if (m.role === "assistant") {
-          // Render into the .horme-content-area div (created by addMessageBubble)
-          // to match the structure used by the streaming path.
-          // Strip any raw <call:...> skill XML that was stored in history.
           const displayContent = this.stripSkillCallXml(m.content);
           const contentArea = bubble.querySelector(".horme-content-area") as HTMLElement;
           if (contentArea) {
@@ -2298,6 +2254,10 @@ export class HormeChatView extends ItemView {
           await this.appendPassagesBubble(bubble, m.context ?? "", "");
           this.addAssistantActions(bubble, m.content);
           this.renderSources(bubble, m.sources ?? []);
+          if (aggregatedSkillLinks.length > 0) {
+            this.renderSkillSourceLinks(bubble, aggregatedSkillLinks);
+            aggregatedSkillLinks.length = 0;
+          }
         } else {
           const contentArea = bubble.querySelector(".horme-content-area") as HTMLElement;
           if (contentArea) contentArea.textContent = m.content;

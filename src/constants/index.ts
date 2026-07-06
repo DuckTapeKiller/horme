@@ -25,7 +25,7 @@ export const DEFAULT_SETTINGS: HormeSettings = {
   lmStudioModel: "",
   lmStudioEmbeddingModel: "",
   nativeToolCalling: true,
-  agentMode: false,
+  agentMode: true,
   agentMaxRounds: 25,
   claudeSecretId: "",
   claudeModel: "claude-3-5-haiku-latest",

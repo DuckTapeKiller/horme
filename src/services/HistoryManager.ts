@@ -31,7 +31,7 @@ export class HistoryManager {
       const reasoning = getStringProp(m, "reasoning");
       const context = getStringProp(m, "context");
       if (!role) continue;
-      if (role !== "user" && role !== "assistant" && role !== "system") continue;
+      if (role !== "user" && role !== "assistant" && role !== "system" && role !== "tool_result") continue;
       // Keep messages that carry only a reasoning/context trace (e.g. a stopped
       // reasoning-model turn), but still skip genuinely empty ones.
       if (!content && !reasoning && !context) continue;

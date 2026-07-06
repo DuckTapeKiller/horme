@@ -232,6 +232,7 @@ body .horme-chat-container .horme-header button.horme-select {
   background: linear-gradient(135deg, var(--background-secondary) 0%, var(--background-primary-alt) 100%);
   color: var(--text-normal);
   border: 1px solid var(--background-modifier-border);
+  width: min(92%, 620px);
 }
 
 .horme-msg-assistant pre {
@@ -270,9 +271,23 @@ body .horme-chat-container .horme-header button.horme-select {
   background: var(--background-primary);
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-s);
-  margin-bottom: 12px;
+  margin-bottom: 0;
   overflow: hidden;
   transition: all 0.2s ease;
+}
+
+/* Skill-only bubbles: the inner details already has border/padding/bg,
+   so strip the outer bubble chrome to eliminate double spacing. */
+.horme-msg-assistant:has(> .horme-reasoning-details:only-child) {
+  padding: 0;
+  border: none;
+  background: none;
+}
+
+/* Tighten the skill result / reasoning / timeline cluster */
+.horme-agent-timeline + .horme-msg-assistant,
+.horme-msg-assistant + .horme-msg-assistant {
+  margin-top: -7px;
 }
 
 .horme-reasoning-summary {
@@ -327,6 +342,31 @@ body .horme-chat-container .horme-header button.horme-select {
   user-select: none;
   list-style: none;
   background: var(--background-primary);
+}
+
+/* Status dot next to "Reasoning process" */
+.horme-thinking-summary::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+  background: var(--color-red);
+  box-shadow: 0 0 4px var(--color-red);
+  transition: background 0.3s, box-shadow 0.3s;
+}
+
+.horme-thinking-active > .horme-thinking-summary::before {
+  background: var(--color-green);
+  box-shadow: 0 0 6px var(--color-green), 0 0 12px var(--color-green);
+  animation: horme-dot-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes horme-dot-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
 }
 
 .horme-thinking-summary::-webkit-details-marker,

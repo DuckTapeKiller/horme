@@ -5,7 +5,7 @@ export class DateCalculatorSkill implements Skill {
   id = "date_calc";
   name = "Date & Time Calculator";
   description =
-    "Computes time differences between dates, verifies day-of-week for historical dates, and checks chronological consistency. Pure computation — no internet required.";
+    "Computes time differences between dates, verifies day-of-week for historical dates, checks chronological consistency, and shows the current time in any timezone or city. Pure computation — no internet required.";
   terminal = true;
 
   parameters: SkillParameter[] = [
@@ -13,7 +13,7 @@ export class DateCalculatorSkill implements Skill {
       name: "operation",
       type: "string",
       description:
-        "One of: 'difference' (time between two dates), 'day_of_week' (what day was a date), 'add' (add days/months/years to a date).",
+        "One of: 'timezone' (current time in a city/timezone), 'difference' (time between two dates), 'day_of_week' (what day was a date), 'add' (add days/months/years to a date).",
       required: true,
     },
     {
@@ -34,9 +34,16 @@ export class DateCalculatorSkill implements Skill {
       description: "Amount to add, e.g. '30 days', '6 months', '2 years'. Required for 'add' operation.",
       required: false,
     },
+    {
+      name: "timezone",
+      type: "string",
+      description:
+        "IANA timezone (e.g. 'Asia/Shanghai', 'America/New_York', 'Europe/London') or city name. Required for 'timezone' operation.",
+      required: false,
+    },
   ];
 
-  instructions = `To use this skill, output exactly: <call:date_calc>{"operation": "difference", "date1": "1914-07-28", "date2": "1918-11-11"}</call>. Operations: "difference" (time between two dates), "day_of_week" (what day a date fell on), "add" (add time to a date, e.g. {"operation": "add", "date1": "2024-01-01", "amount": "90 days"}). Use this to verify historical claims about durations, dates, or chronological facts.`;
+  instructions = `To use this skill, output exactly: <call:date_calc>{"operation": "difference", "date1": "1914-07-28", "date2": "1918-11-11"}</call>. Operations: "timezone" (current time in a city, e.g. {"operation": "timezone", "timezone": "Asia/Shanghai"}), "difference" (time between two dates), "day_of_week" (what day a date fell on), "add" (add time to a date, e.g. {"operation": "add", "date1": "2024-01-01", "amount": "90 days"}). Use "timezone" whenever the user asks what time it is somewhere. Use the others to verify historical claims about durations, dates, or chronological facts.`;
 
   async execute(params: unknown): Promise<string> {
     try {
@@ -44,8 +51,17 @@ export class DateCalculatorSkill implements Skill {
       const date1 = getStringProp(params, "date1");
       const date2 = getStringProp(params, "date2");
       const amount = getStringProp(params, "amount");
-      if (!operation || !date1)
-        return `Invalid parameters for ${this.name}: expected {"operation": string, "date1": string, "date2"?: string, "amount"?: string}.`;
+      const timezone = getStringProp(params, "timezone");
+
+      if (!operation)
+        return `Invalid parameters for ${this.name}: expected {"operation": string, ...}.`;
+
+      if (operation.toLowerCase() === "timezone") {
+        return this.computeTimezone(timezone);
+      }
+
+      if (!date1)
+        return `Invalid parameters for ${this.name}: "date1" is required for "${operation}".`;
 
       const d1 = this.parseDate(date1);
       if (!d1) return `Invalid date format: "${date1}". Use YYYY-MM-DD.`;
@@ -58,7 +74,7 @@ export class DateCalculatorSkill implements Skill {
         case "add":
           return this.computeAdd(d1, date1, amount);
         default:
-          return `Unknown operation: "${operation}". Use "difference", "day_of_week", or "add".`;
+          return `Unknown operation: "${operation}". Use "timezone", "difference", "day_of_week", or "add".`;
       }
     } catch (e: unknown) {
       console.error("Horme Date Calculator Error:", e);
@@ -158,6 +174,116 @@ export class DateCalculatorSkill implements Skill {
     const dayName = this.getDayName(result);
 
     return `## Date Addition\n\n**${date1Str}** + **${amount}** = **${resultStr}** (${dayName})`;
+  }
+
+  private static readonly CITY_TO_TZ: Record<string, string> = {
+    shanghai: "Asia/Shanghai",
+    beijing: "Asia/Shanghai",
+    tokyo: "Asia/Tokyo",
+    seoul: "Asia/Seoul",
+    sydney: "Australia/Sydney",
+    melbourne: "Australia/Melbourne",
+    london: "Europe/London",
+    paris: "Europe/Paris",
+    berlin: "Europe/Berlin",
+    madrid: "Europe/Madrid",
+    rome: "Europe/Rome",
+    amsterdam: "Europe/Amsterdam",
+    moscow: "Europe/Moscow",
+    dubai: "Asia/Dubai",
+    mumbai: "Asia/Kolkata",
+    delhi: "Asia/Kolkata",
+    kolkata: "Asia/Kolkata",
+    singapore: "Asia/Singapore",
+    "hong kong": "Asia/Hong_Kong",
+    hongkong: "Asia/Hong_Kong",
+    bangkok: "Asia/Bangkok",
+    jakarta: "Asia/Jakarta",
+    cairo: "Africa/Cairo",
+    istanbul: "Europe/Istanbul",
+    "new york": "America/New_York",
+    nyc: "America/New_York",
+    "los angeles": "America/Los_Angeles",
+    la: "America/Los_Angeles",
+    chicago: "America/Chicago",
+    denver: "America/Denver",
+    phoenix: "America/Phoenix",
+    toronto: "America/Toronto",
+    vancouver: "America/Vancouver",
+    "mexico city": "America/Mexico_City",
+    "sao paulo": "America/Sao_Paulo",
+    "buenos aires": "America/Argentina/Buenos_Aires",
+    lima: "America/Lima",
+    bogota: "America/Bogota",
+    santiago: "America/Santiago",
+    honolulu: "Pacific/Honolulu",
+    anchorage: "America/Anchorage",
+    auckland: "Pacific/Auckland",
+    taipei: "Asia/Taipei",
+    manila: "Asia/Manila",
+    hanoi: "Asia/Ho_Chi_Minh",
+    "ho chi minh": "Asia/Ho_Chi_Minh",
+    nairobi: "Africa/Nairobi",
+    lagos: "Africa/Lagos",
+    johannesburg: "Africa/Johannesburg",
+    lisbon: "Europe/Lisbon",
+    dublin: "Europe/Dublin",
+    zurich: "Europe/Zurich",
+    vienna: "Europe/Vienna",
+    warsaw: "Europe/Warsaw",
+    prague: "Europe/Prague",
+    athens: "Europe/Athens",
+    helsinki: "Europe/Helsinki",
+    stockholm: "Europe/Stockholm",
+    oslo: "Europe/Oslo",
+    copenhagen: "Europe/Copenhagen",
+  };
+
+  private resolveTimezone(input: string): string | null {
+    const lower = input.trim().toLowerCase();
+    if (DateCalculatorSkill.CITY_TO_TZ[lower]) return DateCalculatorSkill.CITY_TO_TZ[lower];
+    const asIana = input.trim();
+    try {
+      Intl.DateTimeFormat(undefined, { timeZone: asIana });
+      return asIana;
+    } catch {
+      return null;
+    }
+  }
+
+  private computeTimezone(timezone?: string): string {
+    if (!timezone) return `"timezone" is required for the "timezone" operation (e.g. "Asia/Shanghai" or "Tokyo").`;
+
+    const tz = this.resolveTimezone(timezone);
+    if (!tz) return `Unknown timezone or city: "${timezone}". Use an IANA timezone (e.g. "Asia/Shanghai") or a major city name.`;
+
+    const now = new Date();
+    const formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: true,
+      timeZoneName: "longOffset",
+    });
+
+    const parts = formatter.formatToParts(now);
+    const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+
+    const time = `${get("hour")}:${get("minute")}:${get("second")} ${get("dayPeriod")}`;
+    const date = `${get("weekday")}, ${get("month")} ${get("day")}, ${get("year")}`;
+
+    return (
+      `## Current Time\n\n` +
+      `**${timezone}** (${tz})\n` +
+      `**Time:** ${time}\n` +
+      `**Date:** ${date}\n` +
+      `**Offset:** ${get("timeZoneName")}`
+    );
   }
 
   private getDayName(date: Date): string {

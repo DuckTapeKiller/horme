@@ -1,8 +1,10 @@
 export interface SkillParameter {
   name: string;
-  type: "string" | "number" | "boolean";
+  type: "string" | "number" | "boolean" | "array";
   description: string;
   required: boolean;
+  /** For array parameters: the type of each element. */
+  items?: { type: "string" | "number" | "boolean" };
 }
 
 export interface Skill {
@@ -33,7 +35,7 @@ export interface NativeTool {
     description: string;
     parameters: {
       type: "object";
-      properties: Record<string, { type: string; description: string }>;
+      properties: Record<string, Record<string, unknown>>;
       required: string[];
     };
   };

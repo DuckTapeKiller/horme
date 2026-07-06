@@ -9,6 +9,7 @@ import { DateCalculatorSkill } from "../skills/DateCalculatorSkill";
 import { CustomSkill } from "../skills/CustomSkill";
 import { CreateConceptNoteSkill } from "../skills/CreateConceptNoteSkill";
 import { FetchAndSummariseSkill } from "../skills/FetchAndSummariseSkill";
+import { DeepResearchSkill } from "../skills/DeepResearchSkill";
 
 export class SkillManager {
   private plugin: HormePlugin;
@@ -29,6 +30,7 @@ export class SkillManager {
     this.registerSkill(new VaultLinkSkill(this.plugin));
     this.registerSkill(new GrammarScholarSkill(this.plugin));
     this.registerSkill(new FetchAndSummariseSkill(this.plugin));
+    this.registerSkill(new DeepResearchSkill());
   }
 
   registerSkill(skill: Skill) {
@@ -82,7 +84,8 @@ export class SkillManager {
         "You have access to specialized skills exposed through your native function-calling mechanism. " +
         "Call them ONLY through function calling — NEVER write tool-call syntax (XML, JSON, or code blocks) in your reply text. " +
         "Only the provided functions exist and are enabled; never invent one. " +
-        "Call one skill at a time; after receiving a result you may call another if needed.\n\n";
+        "Call one skill at a time; after receiving a result you may call another if needed. " +
+        "For multi-part questions, plan ALL the lookups you need and execute them one by one — do not stop after the first result.\n\n";
       if (this.plugin.settings.agentMode) nativeInstructions += this.getAgentWorkflowBlock();
       return nativeInstructions;
     }
@@ -121,10 +124,12 @@ export class SkillManager {
     const tools: NativeTool[] = [];
     for (const skill of this.skills.values()) {
       if (!this.isSkillOffered(skill, suppressVaultSkill, targetSkillId)) continue;
-      const properties: Record<string, { type: string; description: string }> = {};
+      const properties: Record<string, Record<string, unknown>> = {};
       const required: string[] = [];
       for (const param of skill.parameters) {
-        properties[param.name] = { type: param.type, description: param.description };
+        const prop: Record<string, unknown> = { type: param.type, description: param.description };
+        if (param.type === "array" && param.items) prop.items = { type: param.items.type };
+        properties[param.name] = prop;
         if (param.required) required.push(param.name);
       }
       const usageGuidance = skill.instructions
