@@ -53,15 +53,13 @@ export class DateCalculatorSkill implements Skill {
       const amount = getStringProp(params, "amount");
       const timezone = getStringProp(params, "timezone");
 
-      if (!operation)
-        return `Invalid parameters for ${this.name}: expected {"operation": string, ...}.`;
+      if (!operation) return `Invalid parameters for ${this.name}: expected {"operation": string, ...}.`;
 
       if (operation.toLowerCase() === "timezone") {
         return this.computeTimezone(timezone);
       }
 
-      if (!date1)
-        return `Invalid parameters for ${this.name}: "date1" is required for "${operation}".`;
+      if (!date1) return `Invalid parameters for ${this.name}: "date1" is required for "${operation}".`;
 
       const d1 = this.parseDate(date1);
       if (!d1) return `Invalid date format: "${date1}". Use YYYY-MM-DD.`;
@@ -252,10 +250,12 @@ export class DateCalculatorSkill implements Skill {
   }
 
   private computeTimezone(timezone?: string): string {
-    if (!timezone) return `"timezone" is required for the "timezone" operation (e.g. "Asia/Shanghai" or "Tokyo").`;
+    if (!timezone)
+      return `"timezone" is required for the "timezone" operation (e.g. "Asia/Shanghai" or "Tokyo").`;
 
     const tz = this.resolveTimezone(timezone);
-    if (!tz) return `Unknown timezone or city: "${timezone}". Use an IANA timezone (e.g. "Asia/Shanghai") or a major city name.`;
+    if (!tz)
+      return `Unknown timezone or city: "${timezone}". Use an IANA timezone (e.g. "Asia/Shanghai") or a major city name.`;
 
     const now = new Date();
     const formatter = new Intl.DateTimeFormat("en-US", {

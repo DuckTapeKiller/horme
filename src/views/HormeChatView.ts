@@ -1797,7 +1797,6 @@ export class HormeChatView extends ItemView {
             });
             await this.renderSkillResultBox(skillName, displayName, call.parameters, result);
             if (!this.contentEl.isConnected) return;
-
           }
 
           // Always continue the loop — the model needs a chance to
@@ -1812,10 +1811,7 @@ export class HormeChatView extends ItemView {
           const filteredHistory: ChatMessage[] = [];
           const toolResults: ChatMessage[] = [];
           for (const m of this.history) {
-            if (
-              m.role === "tool_result" ||
-              (m.role === "system" && m.content.startsWith("[SKILL RESULT:"))
-            ) {
+            if (m.role === "tool_result" || (m.role === "system" && m.content.startsWith("[SKILL RESULT:"))) {
               toolResults.push(m);
             } else {
               filteredHistory.push(m);

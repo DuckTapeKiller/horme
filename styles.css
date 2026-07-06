@@ -355,18 +355,27 @@ body .horme-chat-container .horme-header button.horme-select {
   vertical-align: middle;
   background: var(--color-red);
   box-shadow: 0 0 4px var(--color-red);
-  transition: background 0.3s, box-shadow 0.3s;
+  transition:
+    background 0.3s,
+    box-shadow 0.3s;
 }
 
 .horme-thinking-active > .horme-thinking-summary::before {
   background: var(--color-green);
-  box-shadow: 0 0 6px var(--color-green), 0 0 12px var(--color-green);
+  box-shadow:
+    0 0 6px var(--color-green),
+    0 0 12px var(--color-green);
   animation: horme-dot-pulse 1.2s ease-in-out infinite;
 }
 
 @keyframes horme-dot-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
 }
 
 .horme-thinking-summary::-webkit-details-marker,

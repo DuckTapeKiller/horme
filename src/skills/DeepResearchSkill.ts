@@ -41,7 +41,7 @@ export class DeepResearchSkill implements Skill {
     try {
       const raw = isRecord(params) ? params.queries : undefined;
       const queries = this.parseQueries(raw);
-      if (!queries.length) return "Invalid parameters: expected {\"queries\": [\"...\", \"...\"]}";
+      if (!queries.length) return 'Invalid parameters: expected {"queries": ["...", "..."]}';
 
       const dossiers = await Promise.all(queries.map((q) => this.researchQuery(q)));
       let output = "# Research Dossier\n\n";
@@ -193,14 +193,13 @@ export class DeepResearchSkill implements Skill {
       const parser = new DOMParser();
       const doc = parser.parseFromString(res.text, "text/html");
       doc
-        .querySelectorAll("script, style, noscript, iframe, nav, footer, header, aside, head, .advertisement, .comments")
+        .querySelectorAll(
+          "script, style, noscript, iframe, nav, footer, header, aside, head, .advertisement, .comments",
+        )
         .forEach((el) => el.remove());
 
       const root =
-        doc.querySelector("article") ??
-        doc.querySelector("main") ??
-        doc.querySelector("#content") ??
-        doc;
+        doc.querySelector("article") ?? doc.querySelector("main") ?? doc.querySelector("#content") ?? doc;
 
       const lines: string[] = [];
       root.querySelectorAll("h1, h2, h3, p").forEach((el) => {
