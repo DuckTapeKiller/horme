@@ -1,6 +1,7 @@
 import { requestUrl } from "obsidian";
 import HormePlugin from "../../main";
-import { asArray, asNumberArray, errorToMessage, getRecordProp } from "../utils/TypeGuards";
+import { asArray, asNumberArray, errorToMessage, getRecordProp, getStringProp } from "../utils/TypeGuards";
+import { normalizeBaseUrl } from "../utils/normalizeBaseUrl";
 
 export class EmbeddingService {
   private plugin: HormePlugin;
@@ -171,14 +172,45 @@ export class EmbeddingService {
     throw new Error(`Ollama embed error: ${res.status}${errorDetail ? ` - ${errorDetail}` : ""}`);
   }
 
+  /** Cached embedding-model autodetection result for this session. */
+  private lmStudioDetectedEmbeddingModel: string | null = null;
+
+  /**
+   * Resolves the LM Studio embedding model: the dedicated setting first, then
+   * autodetection from /v1/models (embedding models cannot chat and chat
+   * models cannot embed, so the chat model must never be used here).
+   */
+  private async resolveLmStudioEmbeddingModel(): Promise<string> {
+    const configured = this.plugin.settings.lmStudioEmbeddingModel.trim();
+    if (configured) return configured;
+    if (this.lmStudioDetectedEmbeddingModel) return this.lmStudioDetectedEmbeddingModel;
+    const res = await requestUrl({
+      url: `${normalizeBaseUrl(this.plugin.settings.lmStudioUrl)}/v1/models`,
+      throw: false,
+    });
+    if (res.status === 200) {
+      const dataArr = asArray(getRecordProp(res.json as unknown, "data")) ?? [];
+      const ids = dataArr.map((m) => getStringProp(m, "id")).filter((m): m is string => Boolean(m));
+      const detected = ids.find((id) => /embed/i.test(id));
+      if (detected) {
+        this.lmStudioDetectedEmbeddingModel = detected;
+        return detected;
+      }
+    }
+    throw new Error(
+      "No LM Studio embedding model found. Load one (e.g. text-embedding-nomic-embed-text-v1.5) or set it in Horme settings.",
+    );
+  }
+
   private async getLMStudioEmbeddingsBatch(inputs: string[]): Promise<number[][]> {
     try {
+      const model = await this.resolveLmStudioEmbeddingModel();
       const res = await requestUrl({
-        url: `${this.plugin.settings.lmStudioUrl}/v1/embeddings`,
+        url: `${normalizeBaseUrl(this.plugin.settings.lmStudioUrl)}/v1/embeddings`,
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: this.plugin.settings.lmStudioModel || "local-model",
+          model,
           input: inputs,
         }),
       });

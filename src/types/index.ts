@@ -25,6 +25,14 @@ export interface HormeSettings {
   defaultModel: string;
   lmStudioUrl: string;
   lmStudioModel: string;
+  /** Embedding model id for LM Studio RAG (chat models cannot embed). */
+  lmStudioEmbeddingModel: string;
+  /** Offer skills as native OpenAI-schema tools on LM Studio/Ollama (XML stays the fallback). */
+  nativeToolCalling: boolean;
+  /** Agent mode: plan-first prompting and a larger tool budget for multi-step tasks. */
+  agentMode: boolean;
+  /** Maximum tool calls per request in agent mode. */
+  agentMaxRounds: number;
   // Cloud provider secrets (SecretStorage IDs, not raw keys)
   claudeSecretId: string;
   claudeModel: string;

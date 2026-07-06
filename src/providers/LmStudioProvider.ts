@@ -1,7 +1,10 @@
 import { requestUrl } from "obsidian";
 import { AiProvider } from "./AiProvider";
-import { fetchError, requestUrlError } from "../utils/apiError";
+import { requestUrlError } from "../utils/apiError";
 import { asArray, getRecordProp, getStringProp } from "../utils/TypeGuards";
+import { normalizeBaseUrl } from "../utils/normalizeBaseUrl";
+import { streamOpenAiCompatible } from "../utils/localStream";
+import { NativeTool } from "../skills/types";
 
 export class LmStudioProvider implements AiProvider {
   private baseUrl: string;
@@ -9,7 +12,7 @@ export class LmStudioProvider implements AiProvider {
   private maxTokens: number;
 
   constructor(baseUrl: string, temperature: number, maxTokens: number) {
-    this.baseUrl = baseUrl.replace(/\/$/, "");
+    this.baseUrl = normalizeBaseUrl(baseUrl);
     this.temperature = temperature;
     this.maxTokens = maxTokens;
   }
@@ -59,25 +62,23 @@ export class LmStudioProvider implements AiProvider {
     if (res.status !== 200) throw new Error(`LM Studio error: ${requestUrlError(res)}`);
     return this.extractContent(res.json as unknown);
   }
+
   async stream(
     msgs: Array<{ role: string; content: string }>,
     model: string,
     signal?: AbortSignal,
+    tools?: NativeTool[],
   ): Promise<ReadableStreamDefaultReader<Uint8Array>> {
-    const res = await fetch(`${this.baseUrl}/v1/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model,
-        messages: msgs,
-        temperature: this.temperature,
-        max_tokens: this.maxTokens,
-        stream: true,
-      }),
-      signal,
-    });
-    if (!res.ok) throw new Error(`LM Studio stream error: ${await fetchError(res)}`);
-    if (!res.body) throw new Error("LM Studio: no response body");
-    return res.body.getReader();
+    const body: Record<string, unknown> = {
+      model,
+      messages: msgs,
+      temperature: this.temperature,
+      max_tokens: this.maxTokens,
+      stream: true,
+    };
+    if (tools && tools.length) body.tools = tools;
+    // CORS-proof transport chain (LM Studio ships with CORS disabled and
+    // Obsidian's origin is app://obsidian.md): Node http → fetch → requestUrl.
+    return streamOpenAiCompatible(`${this.baseUrl}/v1/chat/completions`, body, signal);
   }
 }

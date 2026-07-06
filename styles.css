@@ -1893,3 +1893,60 @@ html
   background-color: var(--color-yellow);
   color: var(--color-yellow);
 }
+
+/* ── Agent step timeline (one numbered row per skill call) ── */
+.horme-agent-timeline {
+  margin: 6px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.horme-agent-timeline-title {
+  font-size: var(--font-smallest);
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.horme-agent-step {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: var(--font-smaller);
+  color: var(--text-normal);
+}
+.horme-agent-step-num {
+  color: var(--text-faint);
+  min-width: 18px;
+  text-align: right;
+}
+.horme-agent-step-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  word-break: break-word;
+}
+.horme-agent-step-status {
+  font-weight: 700;
+}
+.horme-agent-step-pending .horme-agent-step-status {
+  animation: horme-agent-step-pulse 1s infinite;
+}
+.horme-agent-step-ok .horme-agent-step-status {
+  color: var(--color-green);
+}
+.horme-agent-step-fail .horme-agent-step-status {
+  color: var(--color-red);
+}
+@keyframes horme-agent-step-pulse {
+  50% {
+    opacity: 0.2;
+  }
+}

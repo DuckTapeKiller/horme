@@ -19,7 +19,7 @@ export class HormeConnectionsView extends ItemView {
   }
 
   getDisplayText(): string {
-    return "Horme Connections";
+    return "Horme connections";
   }
 
   getIcon(): string {
@@ -34,7 +34,7 @@ export class HormeConnectionsView extends ItemView {
     headerEl.createEl("h4", { text: "Connections" });
 
     const controlsEl = headerEl.createEl("div", { cls: "horme-connections-controls" });
-    const pauseBtn = controlsEl.createEl("button", { text: "▣ Pause", cls: "horme-connections-pause-btn" });
+    const pauseBtn = controlsEl.createEl("button", { text: "▣ pause", cls: "horme-connections-pause-btn" });
     pauseBtn.onclick = () => {
       this.isPaused = !this.isPaused;
       pauseBtn.textContent = this.isPaused ? "▻ Resume" : "▣ Pause";

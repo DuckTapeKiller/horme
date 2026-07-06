@@ -24,7 +24,7 @@ export class ConfirmReplaceModal extends Modal {
     origCol.createEl("pre", { text: this.original, cls: "horme-diff-text" });
 
     const newCol = container.createDiv("horme-diff-col");
-    newCol.createEl("div", { text: "Replacement (Editable)", cls: "horme-diff-label horme-diff-label-new" });
+    newCol.createEl("div", { text: "Replacement (editable)", cls: "horme-diff-label horme-diff-label-new" });
     const editArea = newCol.createEl("textarea", { cls: "horme-diff-text horme-diff-textarea" });
     editArea.value = this.replacement;
 

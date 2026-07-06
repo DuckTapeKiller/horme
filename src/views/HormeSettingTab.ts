@@ -6,6 +6,7 @@ import { FileSuggest, FolderSuggest, FileOrFolderSuggest } from "../utils/Sugges
 import { GenericConfirmModal } from "../modals/GenericConfirmModal";
 import { CustomSkillModal } from "../modals/CustomSkillModal";
 import { asArray, getRecordProp, getStringProp } from "../utils/TypeGuards";
+import { normalizeBaseUrl } from "../utils/normalizeBaseUrl";
 
 type CloudProviderId = Exclude<AiProvider, "ollama" | "lmstudio">;
 type CloudSecretIdField =
@@ -222,7 +223,7 @@ export class HormeSettingTab extends PluginSettingTab {
 
     // SYSTEM DIAGNOSTICS & INTELLIGENCE (TOP & EXPANDED)
     const diagSection = containerEl.createDiv("horme-settings-section horme-diag-section");
-    new Setting(diagSection).setName("◈ Intelligence Dashboard").setHeading();
+    new Setting(diagSection).setName("◈ Intelligence dashboard").setHeading();
     diagSection.addClass("horme-diag-title-header");
 
     // Dashboard Grid
@@ -308,7 +309,7 @@ export class HormeSettingTab extends PluginSettingTab {
     // Dedicated Refresh Button with Icon
     const refreshBtn = logTitleContainer.createEl("button", {
       cls: "horme-diag-refresh-btn",
-      attr: { title: "Refresh Dashboard" },
+      attr: { title: "Refresh dashboard" },
     });
     setIcon(refreshBtn, "refresh-cw");
     refreshBtn.addEventListener("click", () => {
@@ -320,21 +321,21 @@ export class HormeSettingTab extends PluginSettingTab {
     });
 
     new Setting(diagSection)
-      .setName("System Health")
+      .setName("System health")
       .setDesc("Monitor integrity of your local intelligence.")
       .addButton((btn) =>
-        btn.setButtonText("Verify Integrity").onClick(() => {
+        btn.setButtonText("Verify integrity").onClick(() => {
           void refreshHealth().then(() => new Notice("Integrity scan complete."));
         }),
       )
       .addButton((btn) =>
-        btn.setButtonText("Clear Logs").onClick(() => {
+        btn.setButtonText("Clear logs").onClick(() => {
           this.plugin.diagnosticService.clear();
           renderLogs();
         }),
       )
       .addButton((btn) =>
-        btn.setButtonText("Copy Data").onClick(() => {
+        btn.setButtonText("Copy data").onClick(() => {
           void (async () => {
             const health = await this.plugin.diagnosticService.getIndexHealth();
             const logs = this.plugin.diagnosticService.getLogs();
@@ -357,16 +358,16 @@ export class HormeSettingTab extends PluginSettingTab {
     const aiSection = containerEl.createEl("details", { cls: "horme-settings-section" });
     aiSection.open = this.expandedSections["ai_providers"] ?? false;
     aiSection.ontoggle = () => (this.expandedSections["ai_providers"] = aiSection.open);
-    aiSection.createEl("summary", { text: "◈ AI Providers" });
+    aiSection.createEl("summary", { text: "◈ AI providers" });
 
-    new Setting(aiSection).setName("Active Provider").addDropdown((dd) => {
+    new Setting(aiSection).setName("Active provider").addDropdown((dd) => {
       dd.addOption("ollama", "Ollama (local)");
       dd.addOption("lmstudio", "LM Studio (local)");
       dd.addOption("claude", "Anthropic Claude (API)");
       dd.addOption("gemini", "Google Gemini (API)");
       dd.addOption("openai", "OpenAI GPT (API)");
-      dd.addOption("groq", "Groq (High Speed)");
-      dd.addOption("openrouter", "OpenRouter (Free/Aggregator)");
+      dd.addOption("groq", "Groq (high speed)");
+      dd.addOption("openrouter", "OpenRouter (free/aggregator)");
       dd.addOption("mistral", "Mistral AI (API)");
       dd.setValue(this.plugin.settings.aiProvider);
       dd.onChange((v) => {
@@ -384,7 +385,7 @@ export class HormeSettingTab extends PluginSettingTab {
     // OLLAMA
     const ollamaSection = providersContainer.createEl("details", { cls: "horme-settings-section" });
     ollamaSection.open = true;
-    ollamaSection.createEl("summary", { text: "◈ Ollama (Local)" });
+    ollamaSection.createEl("summary", { text: "◈ Ollama (local)" });
     new Setting(ollamaSection).setName("Ollama URL").addText((t) =>
       t.setValue(this.plugin.settings.ollamaBaseUrl).onChange((v) => {
         void (async () => {
@@ -414,7 +415,7 @@ export class HormeSettingTab extends PluginSettingTab {
     // LM STUDIO (FIXED)
     const lmstudioSection = providersContainer.createEl("details", { cls: "horme-settings-section" });
     lmstudioSection.open = true;
-    lmstudioSection.createEl("summary", { text: "◈ LM Studio (Local)" });
+    lmstudioSection.createEl("summary", { text: "◈ LM Studio (local)" });
     new Setting(lmstudioSection).setName("LM Studio URL").addText((t) =>
       t.setValue(this.plugin.settings.lmStudioUrl).onChange((v) => {
         void (async () => {
@@ -431,7 +432,7 @@ export class HormeSettingTab extends PluginSettingTab {
       async () => {
         // Strip trailing slash here (provider constructor does it at runtime,
         // but the settings tab URL may still have one when building this request).
-        const url = this.plugin.settings.lmStudioUrl.replace(/\/$/, "");
+        const url = normalizeBaseUrl(this.plugin.settings.lmStudioUrl);
         // Use requestUrl (Obsidian's network layer) instead of fetch — avoids
         // CORS/policy blocks that affect fetch in Obsidian's desktop renderer.
         const res = await requestUrl({ url: `${url}/v1/models` });
@@ -442,6 +443,29 @@ export class HormeSettingTab extends PluginSettingTab {
       this.plugin.settings.lmStudioModel,
       async (v) => {
         this.plugin.settings.lmStudioModel = v;
+        await this.plugin.saveSettings();
+      },
+    );
+    this.buildModelCombo(
+      new Setting(lmstudioSection)
+        .setName("Embedding model")
+        .setDesc(
+          "Embedding model for vault RAG (chat models cannot embed). Leave empty to autodetect a loaded embedding model.",
+        ),
+      "horme-lmstudio-embedding-models",
+      async () => {
+        const url = normalizeBaseUrl(this.plugin.settings.lmStudioUrl);
+        const res = await requestUrl({ url: `${url}/v1/models` });
+        const json: unknown = res.json;
+        const dataArr = asArray(getRecordProp(json, "data")) ?? [];
+        return dataArr
+          .map((m) => getStringProp(m, "id"))
+          .filter((m): m is string => Boolean(m))
+          .filter((m) => /embed/i.test(m));
+      },
+      this.plugin.settings.lmStudioEmbeddingModel,
+      async (v) => {
+        this.plugin.settings.lmStudioEmbeddingModel = v;
         await this.plugin.saveSettings();
       },
     );
@@ -461,8 +485,8 @@ export class HormeSettingTab extends PluginSettingTab {
       section.open = true;
       section.createEl("summary", { text: `◈ ${cp.name}` });
       new Setting(section)
-        .setName("API Key")
-        .setDesc("Stored in Obsidian Secret Storage (not in data.json).")
+        .setName("API key")
+        .setDesc("Stored in Obsidian secret storage (not in data.json).")
         .addComponent((el) => {
           const c = new SecretComponent(this.app, el);
           c.setValue(this.plugin.settings[cp.secretId]);
@@ -490,7 +514,7 @@ export class HormeSettingTab extends PluginSettingTab {
     const generalSection = containerEl.createEl("details", { cls: "horme-settings-section" });
     generalSection.open = this.expandedSections["general"] ?? false;
     generalSection.ontoggle = () => (this.expandedSections["general"] = generalSection.open);
-    generalSection.createEl("summary", { text: "◈ General Settings" });
+    generalSection.createEl("summary", { text: "◈ General settings" });
     const tempSetting = new Setting(generalSection)
       .setName("Temperature")
       .setDesc(`Default: 0.3 | Current: ${this.plugin.settings.temperature}`);
@@ -509,7 +533,7 @@ export class HormeSettingTab extends PluginSettingTab {
     );
 
     new Setting(generalSection)
-      .setName("Max Output Tokens")
+      .setName("Max output tokens")
       .setDesc(
         "Maximum number of tokens the model can generate per response. Default: 8192. Raise this for long documents or complex writing tasks. Check your provider's documentation for model-specific limits.",
       )
@@ -572,14 +596,60 @@ export class HormeSettingTab extends PluginSettingTab {
       }),
     );
 
+    // AGENT & TOOL CALLING
+    const agentSection = containerEl.createEl("details", { cls: "horme-settings-section" });
+    agentSection.open = this.expandedSections["agent"] ?? false;
+    agentSection.ontoggle = () => (this.expandedSections["agent"] = agentSection.open);
+    agentSection.createEl("summary", { text: "◈ Agent & tool calling" });
+    new Setting(agentSection)
+      .setName("Native tool calling")
+      .setDesc(
+        "Offer skills as structured function schemas on LM Studio and Ollama — far more reliable with tool-trained models (gemma, qwen, llama 3). The XML skill prompt remains the fallback for other providers and unsupported models.",
+      )
+      .addToggle((t) =>
+        t.setValue(this.plugin.settings.nativeToolCalling).onChange((v) => {
+          void (async () => {
+            this.plugin.settings.nativeToolCalling = v;
+            await this.plugin.saveSettings();
+          })();
+        }),
+      );
+    new Setting(agentSection)
+      .setName("Agent mode")
+      .setDesc(
+        "Plan-first prompting and a larger skill budget for multi-step tasks. Skill calls appear as a step timeline in the chat.",
+      )
+      .addToggle((t) =>
+        t.setValue(this.plugin.settings.agentMode).onChange((v) => {
+          void (async () => {
+            this.plugin.settings.agentMode = v;
+            await this.plugin.saveSettings();
+          })();
+        }),
+      );
+    new Setting(agentSection)
+      .setName("Agent tool budget")
+      .setDesc("Maximum skill calls per request in agent mode (1-50). Without agent mode the budget is 5.")
+      .addText((t) =>
+        t.setValue(String(this.plugin.settings.agentMaxRounds)).onChange((v) => {
+          void (async () => {
+            const parsed = parseInt(v, 10);
+            this.plugin.settings.agentMaxRounds = Number.isFinite(parsed)
+              ? Math.min(50, Math.max(1, parsed))
+              : 25;
+            await this.plugin.saveSettings();
+          })();
+        }),
+      );
+
     // SYSTEM PROMPT & PRESETS
     const presetSection = containerEl.createEl("details", { cls: "horme-settings-section" });
     presetSection.open = this.expandedSections["presets"] ?? false;
     presetSection.ontoggle = () => (this.expandedSections["presets"] = presetSection.open);
-    presetSection.createEl("summary", { text: "◈ System Prompt & Presets" });
+    presetSection.createEl("summary", { text: "◈ System prompt & presets" });
 
     new Setting(presetSection)
-      .setName("System Prompt Note")
+      .setName("System prompt note")
       .setDesc(
         "Select a note in your vault to use as the master system prompt. This note defines the AI's identity and rules.",
       )
@@ -603,7 +673,7 @@ export class HormeSettingTab extends PluginSettingTab {
         .setDesc("A note or folder path.")
         .addText((t) => {
           new FileOrFolderSuggest(this.app, t.inputEl);
-          t.setPlaceholder("path/to/note_or_folder")
+          t.setPlaceholder("Path/to/note_or_folder")
             .setValue(path)
             .onChange((v) => {
               void (async () => {
@@ -640,10 +710,10 @@ export class HormeSettingTab extends PluginSettingTab {
     const platformSection = containerEl.createEl("details", { cls: "horme-settings-section" });
     platformSection.open = this.expandedSections["platform"] ?? false;
     platformSection.ontoggle = () => (this.expandedSections["platform"] = platformSection.open);
-    platformSection.createEl("summary", { text: "◈ Platform Overrides" });
+    platformSection.createEl("summary", { text: "◈ Platform overrides" });
 
     new Setting(platformSection)
-      .setName("Enable Mobile Override")
+      .setName("Enable mobile override")
       .setDesc("Automatically switch to a specific provider/model when on a mobile device.")
       .addToggle((t) =>
         t.setValue(this.plugin.settings.useMobileOverride).onChange((v) => {
@@ -656,14 +726,14 @@ export class HormeSettingTab extends PluginSettingTab {
       );
 
     if (this.plugin.settings.useMobileOverride) {
-      new Setting(platformSection).setName("Mobile Provider").addDropdown((dd) => {
+      new Setting(platformSection).setName("Mobile provider").addDropdown((dd) => {
         dd.addOption("ollama", "Ollama (local)");
         dd.addOption("lmstudio", "LM Studio (local)");
         dd.addOption("claude", "Anthropic Claude (API)");
         dd.addOption("gemini", "Google Gemini (API)");
         dd.addOption("openai", "OpenAI GPT (API)");
-        dd.addOption("groq", "Groq (High Speed)");
-        dd.addOption("openrouter", "OpenRouter (Free/Aggregator)");
+        dd.addOption("groq", "Groq (high speed)");
+        dd.addOption("openrouter", "OpenRouter (free/aggregator)");
         dd.addOption("mistral", "Mistral AI (API)");
         dd.setValue(this.plugin.settings.mobileProvider);
         dd.onChange((v) => {
@@ -678,7 +748,7 @@ export class HormeSettingTab extends PluginSettingTab {
 
       this.buildModelCombo(
         new Setting(platformSection)
-          .setName("Mobile Model")
+          .setName("Mobile model")
           .setDesc("Select a suggestion or type any custom model ID."),
         "horme-mobile-models",
         async () => {
@@ -692,7 +762,7 @@ export class HormeSettingTab extends PluginSettingTab {
             const models = asArray(getRecordProp(json, "models")) ?? [];
             return models.map((m) => getStringProp(m, "name")).filter((m): m is string => Boolean(m));
           } else if (provider === "lmstudio") {
-            const url = this.plugin.settings.lmStudioUrl.replace(/\/$/, "");
+            const url = normalizeBaseUrl(this.plugin.settings.lmStudioUrl);
             const res = await requestUrl({ url: `${url}/v1/models` });
             const json: unknown = res.json;
             const dataArr = asArray(getRecordProp(json, "data")) ?? [];
@@ -713,10 +783,10 @@ export class HormeSettingTab extends PluginSettingTab {
     const grammarSection = containerEl.createEl("details", { cls: "horme-settings-section" });
     grammarSection.open = this.expandedSections["grammar"] ?? false;
     grammarSection.ontoggle = () => (this.expandedSections["grammar"] = grammarSection.open);
-    grammarSection.createEl("summary", { text: "◈ Grammar Scholar Index" });
+    grammarSection.createEl("summary", { text: "◈ Grammar scholar index" });
 
     new Setting(grammarSection)
-      .setName("Grammar Manual Folder")
+      .setName("Grammar manual folder")
       .setDesc("The folder in your vault containing grammar rules for your primary language.")
       .addText((t) => {
         new FolderSuggest(this.app, t.inputEl);
@@ -729,7 +799,7 @@ export class HormeSettingTab extends PluginSettingTab {
       });
 
     new Setting(grammarSection)
-      .setName("Grammar Language")
+      .setName("Grammar language")
       .setDesc(
         "The language your grammar manuals cover. Proofreading will only consult grammar manuals when the text is in this language.",
       )
@@ -743,19 +813,19 @@ export class HormeSettingTab extends PluginSettingTab {
       );
 
     new Setting(grammarSection)
-      .setName("Rebuild Grammar Index")
+      .setName("Rebuild grammar index")
       .setDesc("Synchronise the skill with the latest content in your grammar manuals folder.")
       .addButton((btn) => {
-        btn.setButtonText("Rebuild Now").onClick(() => {
+        btn.setButtonText("Rebuild now").onClick(() => {
           void (async () => {
             await this.plugin.grammarIndexer.rebuildIndex();
-            new Notice("✅ Grammar Index Rebuilt");
+            new Notice("✅ Grammar index rebuilt");
           })();
         });
       })
       .addButton((btn) => {
         btn
-          .setButtonText("Delete Index")
+          .setButtonText("Delete index")
           .setWarning()
           .onClick(() => {
             new GenericConfirmModal(
@@ -776,10 +846,10 @@ export class HormeSettingTab extends PluginSettingTab {
     const summarySection = containerEl.createEl("details", { cls: "horme-settings-section" });
     summarySection.open = this.expandedSections["summary"] ?? false;
     summarySection.ontoggle = () => (this.expandedSections["summary"] = summarySection.open);
-    summarySection.createEl("summary", { text: "◈ Frontmatter Summary" });
+    summarySection.createEl("summary", { text: "◈ Frontmatter summary" });
 
     new Setting(summarySection)
-      .setName("Summary Field")
+      .setName("Summary field")
       .setDesc(
         "The frontmatter key where generated summaries are stored (e.g. 'summary', 'resumen', 'abstract').",
       )
@@ -793,7 +863,7 @@ export class HormeSettingTab extends PluginSettingTab {
       );
 
     new Setting(summarySection)
-      .setName("Summary Language")
+      .setName("Summary language")
       .setDesc("The language summaries should be written in.")
       .addText((t) =>
         t.setValue(this.plugin.settings.summaryLanguage).onChange((v) => {
@@ -808,10 +878,10 @@ export class HormeSettingTab extends PluginSettingTab {
     const tagSection = containerEl.createEl("details", { cls: "horme-settings-section" });
     tagSection.open = this.expandedSections["tags"] ?? false;
     tagSection.ontoggle = () => (this.expandedSections["tags"] = tagSection.open);
-    tagSection.createEl("summary", { text: "◈ Tag Taxonomy Index" });
+    tagSection.createEl("summary", { text: "◈ Tag taxonomy index" });
 
     new Setting(tagSection)
-      .setName("Tag List Note")
+      .setName("Tag list note")
       .setDesc("Optional: A note containing a list of allowed tags (one per line).")
       .addText((t) =>
         t.setValue(this.plugin.settings.tagsFilePath).onChange((v) => {
@@ -823,19 +893,19 @@ export class HormeSettingTab extends PluginSettingTab {
       );
 
     new Setting(tagSection)
-      .setName("Rebuild Tag Index")
+      .setName("Rebuild tag index")
       .setDesc("Index your vault's tag structure for semantic suggestions. (Global access enabled)")
       .addButton((btn) => {
-        btn.setButtonText("Rebuild Now").onClick(() => {
+        btn.setButtonText("Rebuild now").onClick(() => {
           void (async () => {
             await this.plugin.tagIndexer.rebuildTagIndex();
-            new Notice("✅ Tag Index Ready");
+            new Notice("✅ Tag index ready");
           })();
         });
       })
       .addButton((btn) => {
         btn
-          .setButtonText("Delete Index")
+          .setButtonText("Delete index")
           .setWarning()
           .onClick(() => {
             new GenericConfirmModal(
@@ -856,15 +926,15 @@ export class HormeSettingTab extends PluginSettingTab {
     {
       const allowCloud = this.plugin.settings.allowCloudRAG;
       const tagProviderSetting = new Setting(tagSection)
-        .setName("Tag Generation Provider")
+        .setName("Tag generation provider")
         .setDesc(
           allowCloud
             ? "Provider used exclusively for the Tags button and command. Changing this does not affect the chat. Leave the model below empty to use the current chat provider instead."
             : 'Provider used exclusively for the Tags button and command. Only local providers are available to protect your privacy. Enable "Allow Cloud Provider Access" in Vault Brain to unlock cloud providers.',
         )
         .addDropdown((drp) => {
-          drp.addOption("ollama", "Ollama (Local)");
-          drp.addOption("lmstudio", "LM Studio (Local)");
+          drp.addOption("ollama", "Ollama (local)");
+          drp.addOption("lmstudio", "LM Studio (local)");
           if (allowCloud) {
             drp.addOption("claude", "Anthropic Claude");
             drp.addOption("gemini", "Google Gemini");
@@ -901,7 +971,7 @@ export class HormeSettingTab extends PluginSettingTab {
 
     this.buildModelCombo(
       new Setting(tagSection)
-        .setName("Tag Generation Model")
+        .setName("Tag generation model")
         .setDesc(
           "The exact model used for tag generation. Leave blank to use the current chat model. For local providers, type the model name or pick from the dropdown. For cloud providers, type any valid model ID.",
         ),
@@ -919,7 +989,7 @@ export class HormeSettingTab extends PluginSettingTab {
             return models.map((m) => getStringProp(m, "name")).filter((m): m is string => Boolean(m));
           }
           if (p === "lmstudio") {
-            const url = this.plugin.settings.lmStudioUrl.replace(/\/$/, "");
+            const url = normalizeBaseUrl(this.plugin.settings.lmStudioUrl);
             const res = await requestUrl({ url: `${url}/v1/models`, throw: false });
             const json: unknown = res.json;
             const dataArr = asArray(getRecordProp(json, "data")) ?? [];
@@ -940,7 +1010,7 @@ export class HormeSettingTab extends PluginSettingTab {
     if (!this.plugin.settings.allowCloudRAG) {
       const tagsCloudNote = tagSection.createDiv("horme-settings-muted");
       tagsCloudNote.setText(
-        'Cloud providers are locked. To unlock them, enable "Allow Cloud Provider Access" in the Vault Brain section.',
+        'Cloud providers are locked. To unlock them, enable "allow cloud provider access" in the Vault Brain section.',
       );
     }
 
@@ -948,10 +1018,10 @@ export class HormeSettingTab extends PluginSettingTab {
     const connectionsSection = containerEl.createEl("details", { cls: "horme-settings-section" });
     connectionsSection.open = this.expandedSections["connections"] ?? false;
     connectionsSection.ontoggle = () => (this.expandedSections["connections"] = connectionsSection.open);
-    connectionsSection.createEl("summary", { text: "◈ Live Connections" });
+    connectionsSection.createEl("summary", { text: "◈ Live connections" });
 
     new Setting(connectionsSection)
-      .setName("Enable Live Connections")
+      .setName("Enable live connections")
       .setDesc(
         "Automatically surface related notes in a sidebar panel as you write. (Requires Vault Brain to be enabled and indexed).",
       )
@@ -967,7 +1037,7 @@ export class HormeSettingTab extends PluginSettingTab {
 
     if (this.plugin.settings.connectionsEnabled) {
       const threshSetting = new Setting(connectionsSection)
-        .setName("Similarity Threshold")
+        .setName("Similarity threshold")
         .setDesc(
           `Minimum similarity required to show a connection. (Current: ${this.plugin.settings.connectionsThreshold})`,
         );
@@ -986,7 +1056,7 @@ export class HormeSettingTab extends PluginSettingTab {
       );
 
       const maxResultsSetting = new Setting(connectionsSection)
-        .setName("Max Results Limit")
+        .setName("Max results limit")
         .setDesc(
           `Maximum number of connections to display. (Current: ${this.plugin.settings.connectionsMaxResults})`,
         );
@@ -1005,11 +1075,11 @@ export class HormeSettingTab extends PluginSettingTab {
       );
 
       new Setting(connectionsSection)
-        .setName("Excluded Folders")
-        .setDesc("Comma-separated list of folder prefixes to ignore (e.g., 'Templates, Daily Notes').")
+        .setName("Excluded folders")
+        .setDesc("Comma-separated list of folder prefixes to ignore (e.g., 'templates, daily notes').")
         .addText((t) =>
           t
-            .setPlaceholder("e.g. Templates, Daily Notes")
+            .setPlaceholder("E.g. Templates, daily notes")
             .setValue(this.plugin.settings.connectionsExcludedFolders)
             .onChange((v) => {
               void (async () => {
@@ -1020,7 +1090,7 @@ export class HormeSettingTab extends PluginSettingTab {
         );
 
       new Setting(connectionsSection)
-        .setName("Open in New Tab")
+        .setName("Open in new tab")
         .setDesc("Clicking a connection opens it in a new split pane instead of replacing the active view.")
         .addToggle((t) =>
           t.setValue(this.plugin.settings.connectionsOpenInNewTab).onChange((v) => {
@@ -1032,12 +1102,12 @@ export class HormeSettingTab extends PluginSettingTab {
         );
 
       new Setting(connectionsSection)
-        .setName("Display Style")
+        .setName("Display style")
         .setDesc("Choose how connections are rendered in the sidebar.")
         .addDropdown((dd) =>
           dd
-            .addOption("minimal", "Minimal (Title only)")
-            .addOption("detailed", "Detailed (Title + Path)")
+            .addOption("minimal", "Minimal (title only)")
+            .addOption("detailed", "Detailed (title + path)")
             .setValue(this.plugin.settings.connectionsDisplayStyle)
             .onChange((v) => {
               void (async () => {
@@ -1052,7 +1122,7 @@ export class HormeSettingTab extends PluginSettingTab {
     const ragSection = containerEl.createEl("details", { cls: "horme-settings-section" });
     ragSection.open = this.expandedSections["vault_brain"] ?? false;
     ragSection.ontoggle = () => (this.expandedSections["vault_brain"] = ragSection.open);
-    ragSection.createEl("summary", { text: "◈ Vault Brain" });
+    ragSection.createEl("summary", { text: "◈ Vault brain" });
 
     const isLocal =
       this.plugin.settings.aiProvider === "ollama" || this.plugin.settings.aiProvider === "lmstudio";
@@ -1070,7 +1140,7 @@ export class HormeSettingTab extends PluginSettingTab {
     }
 
     new Setting(ragSection)
-      .setName("Enable Local Vault Memory")
+      .setName("Enable local vault memory")
       .setDesc("Let Horme remember everything in your vault.")
       .addToggle((t) => {
         const canEnable = isLocal || this.plugin.settings.allowCloudRAG;
@@ -1086,9 +1156,9 @@ export class HormeSettingTab extends PluginSettingTab {
       });
 
     new Setting(ragSection)
-      .setName("Allow Cloud Provider Access")
+      .setName("Allow cloud provider access")
       .setDesc(
-        "WARNING: If enabled, snippets from your notes will be sent to cloud servers. This reduces privacy.",
+        "Warning: If enabled, snippets from your notes will be sent to cloud servers. This reduces privacy.",
       )
       .addToggle((t) => {
         t.setValue(this.plugin.settings.allowCloudRAG).onChange((v) => {
@@ -1118,7 +1188,7 @@ export class HormeSettingTab extends PluginSettingTab {
     if (this.plugin.settings.vaultBrainEnabled && (isLocal || this.plugin.settings.allowCloudRAG)) {
       this.buildModelCombo(
         new Setting(ragSection)
-          .setName("Embedding Model")
+          .setName("Embedding model")
           .setDesc(
             "Must be a specialized embedding model. Type a custom name or pick from those running in Ollama.",
           ),
@@ -1139,9 +1209,9 @@ export class HormeSettingTab extends PluginSettingTab {
       );
 
       new Setting(ragSection)
-        .setName("Bilingual Tag Shadowing")
+        .setName("Bilingual tag shadowing")
         .setDesc(
-          "Automatically translates your tags into a second language during indexing. This 'shadows' your tags so that search queries in either language will find the note. (Note: This only affects the AI Index; it will never modify your actual note files or tags.)",
+          "Automatically translates your tags into a second language during indexing. This 'shadows' your tags so that search queries in either language will find the note. (Note: This only affects the AI index; it will never modify your actual note files or tags.)",
         )
         .addToggle((toggle) =>
           toggle.setValue(this.plugin.settings.tagShadowingEnabled).onChange((v) => {
@@ -1164,7 +1234,7 @@ export class HormeSettingTab extends PluginSettingTab {
         }
 
         new Setting(ragSection)
-          .setName("Shadowing Target Language")
+          .setName("Shadowing target language")
           .setDesc("The language that tags will be translated into.")
           .addDropdown((drp) =>
             drp
@@ -1193,7 +1263,7 @@ export class HormeSettingTab extends PluginSettingTab {
           );
 
         new Setting(ragSection)
-          .setName("Allow Cloud Tag Translation")
+          .setName("Allow cloud tag translation")
           .setDesc(
             "If enabled, Horme may send tag strings (not note contents) to a cloud provider for higher-quality translation. Tag names may still contain sensitive information.",
           )
@@ -1213,9 +1283,9 @@ export class HormeSettingTab extends PluginSettingTab {
           );
 
         new Setting(ragSection)
-          .setName("Tag Translation Provider")
+          .setName("Tag translation provider")
           .setDesc(
-            "Primary provider used for tag translation during indexing. This is independent of the Chat Provider.",
+            "Primary provider used for tag translation during indexing. This is independent of the chat provider.",
           )
           .addDropdown((drp) => {
             drp.addOption("ollama", "Ollama").addOption("lmstudio", "LM Studio");
@@ -1264,7 +1334,7 @@ export class HormeSettingTab extends PluginSettingTab {
 
           this.buildModelCombo(
             new Setting(ragSection)
-              .setName("Tag Translation Model (Cloud)")
+              .setName("Tag translation model (cloud)")
               .setDesc(
                 "Model used on the selected cloud provider for tag translation. Only tag strings are sent (not note contents).",
               ),
@@ -1279,7 +1349,7 @@ export class HormeSettingTab extends PluginSettingTab {
           );
 
           new Setting(ragSection)
-            .setName("Tag Translation Fallback (Local)")
+            .setName("Tag translation fallback (local)")
             .setDesc("Used if the cloud provider is unavailable (no internet, API error, etc).")
             .addDropdown((drp) =>
               drp
@@ -1433,7 +1503,7 @@ export class HormeSettingTab extends PluginSettingTab {
 
                   const statusCell = tr.createEl("td");
                   if (!row.translated) {
-                    statusCell.createEl("span", { text: "✗ Failed", cls: "horme-tag-test-fail" });
+                    statusCell.createEl("span", { text: "✗ failed", cls: "horme-tag-test-fail" });
                   } else if (row.warning) {
                     statusCell.createEl("span", { text: "⚠ Check format", cls: "horme-tag-test-warn" });
                   } else {
@@ -1466,7 +1536,7 @@ export class HormeSettingTab extends PluginSettingTab {
       }
 
       new Setting(ragSection)
-        .setName("Index Highlights")
+        .setName("Index highlights")
         .setDesc(
           "Adds a highlights-only embedding per note (detects ==highlights== and <mark>...</mark>) to improve retrieval toward your curated text. Requires a rebuild.",
         )
@@ -1481,7 +1551,7 @@ export class HormeSettingTab extends PluginSettingTab {
         );
 
       const highlightBoostSetting = new Setting(ragSection)
-        .setName("Highlight Boost")
+        .setName("Highlight boost")
         .setDesc(
           `Extra weight applied to highlights-only results. Current: ${Math.round(this.plugin.settings.highlightBoost * 100)}%`,
         );
@@ -1503,7 +1573,7 @@ export class HormeSettingTab extends PluginSettingTab {
       );
 
       new Setting(ragSection)
-        .setName("Max Highlights Per Note")
+        .setName("Max highlights per note")
         .setDesc(
           "Caps how many highlight segments are indexed per note (prevents over-highlighted notes dominating cost).",
         )
@@ -1521,7 +1591,7 @@ export class HormeSettingTab extends PluginSettingTab {
         );
 
       new Setting(ragSection)
-        .setName("Max Highlight Characters Per Note")
+        .setName("Max highlight characters per note")
         .setDesc("Caps the total highlight text indexed per note (reduces embedding cost/time).")
         .addSlider((sl) =>
           sl
@@ -1537,9 +1607,9 @@ export class HormeSettingTab extends PluginSettingTab {
         );
 
       new Setting(ragSection)
-        .setName("Hybrid Search Fusion (RRF)")
+        .setName("Hybrid search fusion (RRF)")
         .setDesc(
-          "Fuse embedding similarity + keyword matches via Reciprocal Rank Fusion. Recommended for more robust retrieval across mixed note types.",
+          "Fuse embedding similarity + keyword matches via reciprocal rank fusion. Recommended for more robust retrieval across mixed note types.",
         )
         .addToggle((t) =>
           t.setValue(this.plugin.settings.vaultBrainUseRrfHybridSearch).onChange((v) => {
@@ -1554,7 +1624,7 @@ export class HormeSettingTab extends PluginSettingTab {
       if (this.plugin.settings.vaultBrainUseRrfHybridSearch) {
         new Setting(ragSection)
           .setName("RRF k")
-          .setDesc("Smoothing constant for Reciprocal Rank Fusion (Default: 60).")
+          .setDesc("Smoothing constant for reciprocal rank fusion (default: 60).")
           .addSlider((sl) =>
             sl
               .setLimits(10, 200, 5)
@@ -1570,9 +1640,9 @@ export class HormeSettingTab extends PluginSettingTab {
       }
 
       new Setting(ragSection)
-        .setName("Metadata Keyword Weight")
+        .setName("Metadata keyword weight")
         .setDesc(
-          "Maximum priority bonus given to exact keyword matches in titles, tags, and summaries (Default: 0.25)",
+          "Maximum priority bonus given to exact keyword matches in titles, tags, and summaries (default: 0.25)",
         )
         .addSlider((slider) =>
           slider
@@ -1586,9 +1656,9 @@ export class HormeSettingTab extends PluginSettingTab {
         );
 
       new Setting(ragSection)
-        .setName("Content Keyword Weight")
+        .setName("Content keyword weight")
         .setDesc(
-          "Maximum priority bonus given to exact keyword matches found deep inside the note body (Default: 0.20)",
+          "Maximum priority bonus given to exact keyword matches found deep inside the note body (default: 0.20)",
         )
         .addSlider((slider) =>
           slider
@@ -1602,10 +1672,10 @@ export class HormeSettingTab extends PluginSettingTab {
         );
 
       new Setting(ragSection)
-        .setName("Reset Search Weights")
-        .setDesc("Restore the mathematically optimal defaults (Metadata: 0.25, Content: 0.20).")
+        .setName("Reset search weights")
+        .setDesc("Restore the mathematically optimal defaults (metadata: 0.25, Content: 0.20).")
         .addButton((btn) =>
-          btn.setButtonText("Reset to Defaults").onClick(() => {
+          btn.setButtonText("Reset to defaults").onClick(() => {
             void (async () => {
               this.plugin.settings.searchMetadataCap = 0.25;
               this.plugin.settings.searchContentCap = 0.2;
@@ -1617,7 +1687,7 @@ export class HormeSettingTab extends PluginSettingTab {
         );
 
       new Setting(ragSection)
-        .setName("Index Include Patterns")
+        .setName("Index include patterns")
         .setDesc(
           "Optional comma or newline-separated globs for which files are indexed by Vault Brain. Leave blank to include all. Requires a rebuild.",
         )
@@ -1634,13 +1704,13 @@ export class HormeSettingTab extends PluginSettingTab {
         );
 
       new Setting(ragSection)
-        .setName("Index Exclude Patterns")
+        .setName("Index exclude patterns")
         .setDesc(
           "Optional comma or newline-separated globs to exclude files from Vault Brain indexing. Requires a rebuild.",
         )
         .addTextArea((t) =>
           t
-            .setPlaceholder("e.g.\nTemplates/**\nArchive/**")
+            .setPlaceholder("E.g.\nTemplates/**\narchive/**")
             .setValue(this.plugin.settings.vaultIndexExcludePatterns)
             .onChange((v) => {
               void (async () => {
@@ -1653,7 +1723,7 @@ export class HormeSettingTab extends PluginSettingTab {
       new Setting(ragSection)
         .setName('Index PDFs (requires "Text Extractor")')
         .setDesc(
-          'If enabled, Vault Brain will index PDFs by using extracted text from the community plugin "Text Extractor" (plugin id: text-extractor). Requires a rebuild.',
+          'If enabled, Vault Brain will index PDFs by using extracted text from the community plugin "Text Extractor" (plugin ID: text-extractor). Requires a rebuild.',
         )
         .addToggle((t) =>
           t.setValue(this.plugin.settings.vaultIndexIndexPdf).onChange((v) => {
@@ -1667,7 +1737,7 @@ export class HormeSettingTab extends PluginSettingTab {
 
       if (this.plugin.settings.vaultIndexIndexPdf) {
         new Setting(ragSection)
-          .setName("Max PDF Extracted Text (chars)")
+          .setName("Max PDF extracted text (chars)")
           .setDesc("Caps extracted PDF text per file to limit embedding cost/time. Requires a rebuild.")
           .addSlider((sl) =>
             sl
@@ -1684,10 +1754,10 @@ export class HormeSettingTab extends PluginSettingTab {
       }
 
       new Setting(ragSection)
-        .setName("Index Control")
+        .setName("Index control")
         .setDesc(`Vault Index: ${this.plugin.settings.indexStatus}`)
         .addButton((btn) => {
-          btn.setButtonText("Rebuild Vault Index").onClick(() => {
+          btn.setButtonText("Rebuild vault index").onClick(() => {
             void (async () => {
               new Notice("Vault indexing started...");
               await this.plugin.vaultIndexer.rebuildIndex();
@@ -1697,7 +1767,7 @@ export class HormeSettingTab extends PluginSettingTab {
         })
         .addButton((btn) => {
           btn
-            .setButtonText("Delete Vault Index")
+            .setButtonText("Delete vault index")
             .setWarning()
             .onClick(() => {
               new GenericConfirmModal(
@@ -1706,8 +1776,8 @@ export class HormeSettingTab extends PluginSettingTab {
                 () => {
                   void (async () => {
                     const result = await this.plugin.vaultIndexer.deleteIndex();
-                    if (result === "deleted") new Notice("Vault Index deleted.");
-                    else if (result === "missing") new Notice("No Vault Index detected.");
+                    if (result === "deleted") new Notice("Vault index deleted.");
+                    else if (result === "missing") new Notice("No vault index detected.");
                     this.displayPreserveScroll();
                   })();
                 },
@@ -1720,11 +1790,11 @@ export class HormeSettingTab extends PluginSettingTab {
         "Recommended: A full rebuild is required to enable bilingual tag support for existing notes.";
     } else {
       new Setting(ragSection)
-        .setName("Index Control")
+        .setName("Index control")
         .setDesc(`Vault Index: ${this.plugin.settings.indexStatus}`)
         .addButton((btn) => {
           btn
-            .setButtonText("Delete Vault Index")
+            .setButtonText("Delete vault index")
             .setWarning()
             .onClick(() => {
               new GenericConfirmModal(
@@ -1733,8 +1803,8 @@ export class HormeSettingTab extends PluginSettingTab {
                 () => {
                   void (async () => {
                     const result = await this.plugin.vaultIndexer.deleteIndex();
-                    if (result === "deleted") new Notice("Vault Index deleted.");
-                    else if (result === "missing") new Notice("No Vault Index detected.");
+                    if (result === "deleted") new Notice("Vault index deleted.");
+                    else if (result === "missing") new Notice("No vault index detected.");
                     this.displayPreserveScroll();
                   })();
                 },
@@ -1747,10 +1817,10 @@ export class HormeSettingTab extends PluginSettingTab {
     const conceptSection = containerEl.createEl("details", { cls: "horme-settings-section" });
     conceptSection.open = this.expandedSections["concept_notes"] ?? false;
     conceptSection.ontoggle = () => (this.expandedSections["concept_notes"] = conceptSection.open);
-    conceptSection.createEl("summary", { text: "◈ Concept Note Creation" });
+    conceptSection.createEl("summary", { text: "◈ Concept note creation" });
 
     new Setting(conceptSection)
-      .setName("Concept Folder Path")
+      .setName("Concept folder path")
       .setDesc("Folder where concept notes will be created.")
       .addText((t) => {
         new FolderSuggest(this.app, t.inputEl);
@@ -1763,7 +1833,7 @@ export class HormeSettingTab extends PluginSettingTab {
       });
 
     new Setting(conceptSection)
-      .setName("Source Property Name")
+      .setName("Source property name")
       .setDesc("Frontmatter key used for the research link (template: ${sourceField}).")
       .addText((t) => {
         t.setValue(this.plugin.settings.conceptNoteSourceField).onChange((v) => {
@@ -1775,7 +1845,7 @@ export class HormeSettingTab extends PluginSettingTab {
       });
 
     new Setting(conceptSection)
-      .setName("Note Template")
+      .setName("Note template")
       .setDesc("Placeholders: ${title}, ${tag}, ${sourceField}, ${source}, ${content}.")
       .addTextArea((t) => {
         t.setValue(this.plugin.settings.conceptNoteTemplate).onChange((v) => {
@@ -1791,7 +1861,7 @@ export class HormeSettingTab extends PluginSettingTab {
     const customSkillsSection = containerEl.createEl("details", { cls: "horme-settings-section" });
     customSkillsSection.open = this.expandedSections["custom_skills"] ?? false;
     customSkillsSection.ontoggle = () => (this.expandedSections["custom_skills"] = customSkillsSection.open);
-    customSkillsSection.createEl("summary", { text: "◈ Custom Skills" });
+    customSkillsSection.createEl("summary", { text: "◈ Custom skills" });
 
     const renderCustomSkills = (container: HTMLElement) => {
       container.empty();
@@ -1829,7 +1899,7 @@ export class HormeSettingTab extends PluginSettingTab {
     renderCustomSkills(listContainer);
 
     new Setting(customSkillsSection).addButton((btn) =>
-      btn.setButtonText("+ Add Custom Skill").onClick(() => {
+      btn.setButtonText("+ Add custom skill").onClick(() => {
         new CustomSkillModal(this.app, this.plugin, (def) => {
           void (async () => {
             this.plugin.settings.customSkills.push(def);

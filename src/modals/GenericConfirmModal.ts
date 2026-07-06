@@ -15,7 +15,7 @@ export class GenericConfirmModal extends Modal {
 
   onOpen() {
     const { contentEl } = this;
-    contentEl.createEl("h3", { text: "Confirm Action" });
+    contentEl.createEl("h3", { text: "Confirm action" });
     contentEl.createEl("p", { text: this.message });
 
     new Setting(contentEl)

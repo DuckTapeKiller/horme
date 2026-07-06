@@ -2,6 +2,8 @@ import { requestUrl } from "obsidian";
 import { AiProvider } from "./AiProvider";
 import { getRecordProp, getStringProp } from "../utils/TypeGuards";
 import { fetchError, requestUrlError } from "../utils/apiError";
+import { normalizeBaseUrl } from "../utils/normalizeBaseUrl";
+import { NativeTool } from "../skills/types";
 
 export class OllamaProvider implements AiProvider {
   private baseUrl: string;
@@ -9,7 +11,7 @@ export class OllamaProvider implements AiProvider {
   private maxTokens: number;
 
   constructor(baseUrl: string, temperature: number, maxTokens: number) {
-    this.baseUrl = baseUrl.replace(/\/$/, "");
+    this.baseUrl = normalizeBaseUrl(baseUrl);
     this.temperature = temperature;
     this.maxTokens = maxTokens;
   }
@@ -66,16 +68,21 @@ export class OllamaProvider implements AiProvider {
     msgs: Array<{ role: string; content: string }>,
     model: string,
     signal?: AbortSignal,
+    tools?: NativeTool[],
   ): Promise<ReadableStreamDefaultReader<Uint8Array>> {
+    const body: Record<string, unknown> = {
+      model,
+      messages: msgs,
+      stream: true,
+      options: { temperature: this.temperature },
+    };
+    // Ollama's /api/chat native tools API (tool-trained models emit
+    // structured message.tool_calls instead of prompt-taught XML).
+    if (tools && tools.length) body.tools = tools;
     const res = await fetch(`${this.baseUrl}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model,
-        messages: msgs,
-        stream: true,
-        options: { temperature: this.temperature },
-      }),
+      body: JSON.stringify(body),
       signal,
     });
     if (!res.ok) throw new Error(`Ollama stream error: ${await fetchError(res)}`);

@@ -50,6 +50,7 @@ import {
   DEFAULT_SYSTEM_PROMPT,
 } from "./src/constants";
 import { HormeSettings, AiProvider } from "./src/types";
+import { normalizeBaseUrl } from "./src/utils/normalizeBaseUrl";
 
 interface OllamaTagsModel {
   name: string;
@@ -825,7 +826,7 @@ RULES:
   async generateFrontmatterSummary() {
     const file = this.app.workspace.getActiveFile();
     if (!file || !file.path.endsWith(".md")) {
-      new Notice("Horme: Open a markdown note first.");
+      new Notice("Horme: Open a Markdown note first.");
       return;
     }
 
@@ -1010,7 +1011,10 @@ RULES:
         fetchedModels = tagsModels.map((m) => m.name).filter(Boolean);
         await this.maybeAutodetectOllamaDefaultModel(tagsModels, fetchedModels);
       } else if (provider === "lmstudio") {
-        const res = await requestUrl({ url: `${this.settings.lmStudioUrl}/v1/models`, throw: false });
+        const res = await requestUrl({
+          url: `${normalizeBaseUrl(this.settings.lmStudioUrl)}/v1/models`,
+          throw: false,
+        });
         if (res.status === 200) {
           const json: unknown = res.json;
           const dataArr = asArray(getRecordProp(json, "data")) ?? [];
@@ -1039,7 +1043,10 @@ RULES:
         return res.status === 200;
       }
       if (p === "lmstudio")
-        return (await requestUrl({ url: `${this.settings.lmStudioUrl}/v1/models` })).status === 200;
+        return (
+          (await requestUrl({ url: `${normalizeBaseUrl(this.settings.lmStudioUrl)}/v1/models` })).status ===
+          200
+        );
 
       // Live Cloud Provider Check
       const apiKey = this.getApiKeyForProvider(p);

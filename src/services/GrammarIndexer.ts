@@ -90,7 +90,7 @@ export class GrammarIndexer {
 
   async rebuildIndex() {
     if (this.isIndexing) {
-      new Notice("Horme Grammar: Indexing is already in progress.");
+      new Notice("Horme Grammar Scholar: Indexing is already in progress.");
       return;
     }
     this.isIndexing = true;
@@ -109,7 +109,7 @@ export class GrammarIndexer {
         return;
       }
 
-      new Notice("Horme: Generating Grammar Index (view progress in status bar)...");
+      new Notice("Horme: Generating grammar index (view progress in status bar)...");
       const newChunks: GrammarChunk[] = [];
 
       const files = this.getFilesRecursively(folder);

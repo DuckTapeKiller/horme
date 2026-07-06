@@ -1,5 +1,5 @@
 import HormePlugin from "../../main";
-import { Skill, SkillCall } from "../skills/types";
+import { NativeTool, Skill, SkillCall } from "../skills/types";
 import { WikipediaSkill } from "../skills/WikipediaSkill";
 import { VaultLinkSkill } from "../skills/VaultLinkSkill";
 import { GrammarScholarSkill } from "../skills/GrammarScholarSkill";
@@ -35,11 +35,57 @@ export class SkillManager {
     this.skills.set(skill.id, skill);
   }
 
-  getSkillInstructions(suppressVaultSkill = false, targetSkillId?: string): string {
-    // Privacy guard: never advertise vault_links if vault search is locked
-    const vaultLocked =
+  /** Privacy guard: never advertise vault_links if vault search is locked. */
+  private isVaultSkillLocked(): boolean {
+    return (
       !this.plugin.settings.vaultBrainEnabled ||
-      (!this.plugin.isLocalProviderActive() && !this.plugin.settings.allowCloudRAG);
+      (!this.plugin.isLocalProviderActive() && !this.plugin.settings.allowCloudRAG)
+    );
+  }
+
+  private isSkillOffered(skill: Skill, suppressVaultSkill: boolean, targetSkillId?: string): boolean {
+    // If a specific skill is targeted, skip all others
+    if (targetSkillId && skill.id !== targetSkillId) return false;
+    // Suppress vault_links when RAG context has already been injected OR vault is privacy-locked
+    if ((suppressVaultSkill || this.isVaultSkillLocked()) && skill.id === "vault_links") return false;
+    return true;
+  }
+
+  /**
+   * Plan-first agent workflow appended when agent mode is on. The
+   * "reply text stays empty until the final answer" rule keeps plans and
+   * step notes out of the chat bubble.
+   */
+  private getAgentWorkflowBlock(): string {
+    const rounds = Math.min(50, Math.max(1, this.plugin.settings.agentMaxRounds));
+    return (
+      `## AGENT WORKFLOW (up to ${rounds} skill calls for this request)\n` +
+      "For any task that needs multiple steps (research, comparing sources, gathering material, creating notes):\n" +
+      "1. FIRST think through a short numbered plan of the steps you intend to take. Keep it to one line per step.\n" +
+      "2. Execute the plan one skill call at a time. After each result, decide whether the plan still holds; revise it if a step failed or a result changed the picture.\n" +
+      "3. Never repeat a call that already failed with the same arguments — change the approach instead.\n" +
+      "4. When the plan is complete (or further calls stop adding information), write the final answer synthesizing everything you found.\n" +
+      "CRITICAL — WHERE TO WRITE WHAT: the plan and your notes between steps belong in your reasoning/thinking, NEVER in the reply text. While you still intend to call more skills, output NOTHING as reply text — no plan, no progress notes, no partial answers. The ONLY prose you ever write as reply text is the single final answer, after your last skill call.\n\n"
+    );
+  }
+
+  getSkillInstructions(
+    suppressVaultSkill = false,
+    targetSkillId?: string,
+    options: { native?: boolean } = {},
+  ): string {
+    // Native mode: the skill list (names, descriptions, JSON schemas) travels
+    // in the request's `tools` array — the prompt only carries policy.
+    if (options.native === true) {
+      let nativeInstructions = "## AGENT SKILLS\n";
+      nativeInstructions +=
+        "You have access to specialized skills exposed through your native function-calling mechanism. " +
+        "Call them ONLY through function calling — NEVER write tool-call syntax (XML, JSON, or code blocks) in your reply text. " +
+        "Only the provided functions exist and are enabled; never invent one. " +
+        "Call one skill at a time; after receiving a result you may call another if needed.\n\n";
+      if (this.plugin.settings.agentMode) nativeInstructions += this.getAgentWorkflowBlock();
+      return nativeInstructions;
+    }
 
     let instructions = "## AGENT SKILLS\n";
     instructions +=
@@ -47,11 +93,7 @@ export class SkillManager {
       "Do not explain the skill call, just output the tag. You can think first, then call the skill.\n\n";
 
     for (const skill of this.skills.values()) {
-      // If a specific skill is targeted, skip all others
-      if (targetSkillId && skill.id !== targetSkillId) continue;
-
-      // Suppress vault_links when RAG context has already been injected OR vault is privacy-locked
-      if ((suppressVaultSkill || vaultLocked) && skill.id === "vault_links") continue;
+      if (!this.isSkillOffered(skill, suppressVaultSkill, targetSkillId)) continue;
       instructions += `### Skill: ${skill.name} (id: ${skill.id})\n`;
       instructions += `Description: ${skill.description}\n`;
       instructions += `Instructions: ${skill.instructions}\n`;
@@ -64,7 +106,40 @@ export class SkillManager {
       instructions += `\n`;
     }
 
+    if (this.plugin.settings.agentMode) instructions += this.getAgentWorkflowBlock();
+
     return instructions;
+  }
+
+  /**
+   * The offered skills as OpenAI-schema tools for native function calling
+   * (LM Studio, Ollama). Same visibility rules as getSkillInstructions. The
+   * XML call syntax embedded in each skill's prose instructions is stripped —
+   * native callers must never see it.
+   */
+  getNativeTools(suppressVaultSkill = false, targetSkillId?: string): NativeTool[] {
+    const tools: NativeTool[] = [];
+    for (const skill of this.skills.values()) {
+      if (!this.isSkillOffered(skill, suppressVaultSkill, targetSkillId)) continue;
+      const properties: Record<string, { type: string; description: string }> = {};
+      const required: string[] = [];
+      for (const param of skill.parameters) {
+        properties[param.name] = { type: param.type, description: param.description };
+        if (param.required) required.push(param.name);
+      }
+      const usageGuidance = skill.instructions
+        .replace(/To use this skill, output exactly:\s*/gi, "")
+        .replace(/<call:[a-zA-Z0-9_]+>[\s\S]*?<\/call>\.?\s*/g, "");
+      tools.push({
+        type: "function",
+        function: {
+          name: skill.id,
+          description: `${skill.description} ${usageGuidance}`.trim(),
+          parameters: { type: "object", properties, required },
+        },
+      });
+    }
+    return tools;
   }
 
   parseSkillCalls(text: string): SkillCall[] {

@@ -12,6 +12,7 @@ import {
 import HormePlugin from "../../main";
 import { VIEW_TYPE } from "../constants";
 import { ChatMessage, SavedConversation } from "../types";
+import { SkillCall } from "../skills/types";
 import { NotePickerModal } from "../modals/NotePickerModal";
 import { FolderPickerModal } from "../modals/FolderPickerModal";
 import { GenericConfirmModal } from "../modals/GenericConfirmModal";
@@ -1466,6 +1467,14 @@ export class HormeChatView extends ItemView {
     skillSourceLinks: string[] = [],
     passages: string,
     epoch: number,
+    extras: {
+      /** Repeated-call guard shared across the whole skill chain. */
+      seenSkillCalls?: Set<string>;
+      /** Step timeline element shared across the whole skill chain. */
+      timelineEl?: HTMLElement | null;
+      /** Final budget-exhausted round: no skills offered or parsed. */
+      skillsSuppressed?: boolean;
+    } = {},
   ) {
     if (this.generationEpoch !== epoch || !this.contentEl.isConnected) {
       return;
@@ -1478,6 +1487,38 @@ export class HormeChatView extends ItemView {
     let fullContent = "";
     let fullReasoning = "";
     let reasoningEl: HTMLDetailsElement | null = null;
+    const seenSkillCalls = extras.seenSkillCalls ?? new Set<string>();
+    let timelineEl = extras.timelineEl ?? null;
+    const skillsSuppressed = extras.skillsSuppressed === true;
+    // Native tool-call fragments (OpenAI delta shape indexes fragments; the
+    // Ollama shape sends whole calls) assembled across the stream.
+    const nativeCallParts = new Map<number, { name: string; args: string; argsObj?: unknown }>();
+    let nativeCallCursor = 0;
+    const collectToolCallFragments = (fragments: unknown[]) => {
+      for (const fragment of fragments) {
+        if (!fragment || typeof fragment !== "object") continue;
+        const record = fragment as Record<string, unknown>;
+        const index = typeof record.index === "number" ? record.index : nativeCallCursor;
+        let part = nativeCallParts.get(index);
+        if (!part) {
+          part = { name: "", args: "" };
+          nativeCallParts.set(index, part);
+        }
+        nativeCallCursor = Math.max(nativeCallCursor, index + 1);
+        const fn = record.function;
+        if (fn && typeof fn === "object") {
+          const fnRecord = fn as Record<string, unknown>;
+          if (typeof fnRecord.name === "string" && fnRecord.name && !part.name) {
+            part.name = fnRecord.name;
+          }
+          if (typeof fnRecord.arguments === "string") {
+            part.args += fnRecord.arguments;
+          } else if (fnRecord.arguments && typeof fnRecord.arguments === "object") {
+            part.argsObj = fnRecord.arguments;
+          }
+        }
+      }
+    };
 
     this.activeAbortController = new AbortController();
 
@@ -1523,6 +1564,7 @@ export class HormeChatView extends ItemView {
         model,
         this.activeAbortController.signal,
         suppressVaultSkill,
+        skillsSuppressed,
       );
       if (!this.contentEl.isConnected) return;
       this.activeReader = reader;
@@ -1564,7 +1606,7 @@ export class HormeChatView extends ItemView {
               braceCount--;
               if (braceCount === 0) {
                 const jsonStr = buffer.slice(start, i + 1);
-                this.processChunk(jsonStr, (content, reasoning) => {
+                this.processChunk(jsonStr, collectToolCallFragments, (content, reasoning) => {
                   if (!hasReceivedFirstChunk && (content || reasoning)) {
                     hasReceivedFirstChunk = true;
                     if (loadingEl) {
@@ -1585,7 +1627,7 @@ export class HormeChatView extends ItemView {
                     if (!reasoningEl) {
                       reasoningEl = el.createEl("details", { cls: "horme-thinking-details" });
                       reasoningEl.createEl("summary", {
-                        text: "Reasoning Process",
+                        text: "Reasoning process",
                         cls: "horme-thinking-summary",
                       });
                       // Pin the thinking bubble to the top of the response.
@@ -1654,18 +1696,45 @@ export class HormeChatView extends ItemView {
         this.renderSources(el, sources);
       }
 
+      // Assemble native tool calls (if any) from the streamed fragments.
+      const nativeSkillCalls: SkillCall[] = [];
+      if (!skillsSuppressed) {
+        for (const part of nativeCallParts.values()) {
+          if (!part.name) continue;
+          let parameters: unknown = part.argsObj ?? {};
+          if (part.argsObj === undefined && part.args) {
+            try {
+              parameters = JSON.parse(part.args);
+            } catch {
+              parameters = {};
+            }
+          }
+          nativeSkillCalls.push({ skillId: part.name, parameters });
+        }
+      }
+
       if (!this.contentEl.isConnected) return;
-      if (fullContent || fullReasoning) {
+      if (fullContent || fullReasoning || nativeSkillCalls.length) {
         this.history.push({
           role: "assistant",
-          content: fullContent,
+          content:
+            fullContent ||
+            (nativeSkillCalls.length
+              ? `[Called skills: ${nativeSkillCalls.map((c) => c.skillId).join(", ")}]`
+              : ""),
           reasoning: fullReasoning || undefined,
           context: passages || undefined,
           sources: sources.length ? sources : undefined,
         });
 
         // --- Skill Execution Agent Loop ---
-        const skillCalls = this.plugin.skillManager.parseSkillCalls(fullContent);
+        // Native calls (structured, from tool-trained models) take priority;
+        // the prompt-taught XML syntax is parsed as the fallback.
+        const skillCalls = skillsSuppressed
+          ? []
+          : nativeSkillCalls.length
+            ? nativeSkillCalls
+            : this.plugin.skillManager.parseSkillCalls(fullContent);
         if (skillCalls.length > 0) {
           // Clean the assistant bubble: strip raw <call:...> XML and leave
           // only the model's natural language text (if any).
@@ -1673,7 +1742,9 @@ export class HormeChatView extends ItemView {
             const bEl = bubbleEl as HTMLElement;
             const contentArea = bEl.querySelector(".horme-content-area") as HTMLElement;
             if (contentArea) {
-              const cleanedContent = this.stripSkillCallXml(fullContent);
+              // Text written in a round that ended in tool calls is interim
+              // (plan, notes) — it never belongs in the reply bubble.
+              const cleanedContent = nativeSkillCalls.length ? "" : this.stripSkillCallXml(fullContent);
               contentArea.empty();
               if (cleanedContent) {
                 await MarkdownRenderer.render(
@@ -1707,7 +1778,21 @@ export class HormeChatView extends ItemView {
               setIcon(iconEl, this.getSkillIcon(skillName));
               loadingSpan.insertBefore(iconEl, loadingSpan.firstChild);
             }
-            const result = await this.plugin.skillManager.executeSkill(call);
+            timelineEl = this.ensureAgentTimeline(timelineEl);
+            const stepRow = this.addTimelineStep(timelineEl, displayName, call.parameters);
+            // Repeated-call guard: a model that re-issues the exact same call
+            // (a common small-model failure) gets told to answer instead.
+            const callKey = `${skillName}:${JSON.stringify(call.parameters ?? {})
+              .replace(/\s+/g, "")
+              .toLowerCase()}`;
+            let result: string;
+            if (seenSkillCalls.has(callKey)) {
+              result = `You already ran ${skillName} with these exact arguments and have the results above. Do not repeat this call. Answer the user's question now using what you already found.`;
+            } else {
+              seenSkillCalls.add(callKey);
+              result = await this.plugin.skillManager.executeSkill(call);
+            }
+            this.completeTimelineStep(stepRow, /^Error:/i.test(result));
             if (!this.contentEl.isConnected) return;
             skillLoading.remove();
             const skillLinks = this.extractSourceLinks(result);
@@ -1801,26 +1886,32 @@ export class HormeChatView extends ItemView {
             // Consolidate consecutive roles to prevent API errors
             nextMsgs = this.cleanAndConsolidateMsgs(nextMsgs);
 
-            // Recurse with depth guard
-            if (skillDepth >= HormeChatView.MAX_SKILL_DEPTH) {
-              new Notice("Horme: Maximum skill depth reached. Stopping skill loop. (conversation saved)");
-
-              await this.plugin.historyManager.append({
-                id: this.conversationId,
-                title: this.history.find((m) => m.role === "user")?.content.slice(0, 60) || "Untitled chat",
-                timestamp: Date.now(),
-                messages: this.history,
+            // Recurse with depth guard. Agent mode raises the budget; when
+            // it runs out the chain ends with an answer, not an error: one
+            // final round with skills fully suppressed.
+            const maxDepth = this.plugin.settings.agentMode
+              ? Math.min(50, Math.max(1, this.plugin.settings.agentMaxRounds))
+              : HormeChatView.MAX_SKILL_DEPTH;
+            if (skillDepth >= maxDepth) {
+              nextMsgs.push({
+                role: "user",
+                content:
+                  "[TOOL BUDGET EXHAUSTED] You have used every allowed skill call for this request. Do not call any more skills. Write your complete final answer now from everything you already found.",
               });
-
-              if (this.contentEl.isConnected) {
-                const limitBubble = this.addMessageBubble("assistant", "");
-                const contentArea = limitBubble.querySelector(".horme-content-area") as HTMLElement;
-                if (contentArea) {
-                  contentArea.textContent =
-                    "The skill chain has reached the maximum allowed depth. The conversation has been saved.";
-                }
-                this.scrollToBottom();
-              }
+              const nextLoading = this.showLoading();
+              await this.handleStreamingResponse(
+                nextMsgs,
+                model,
+                nextLoading,
+                initialSourcePath,
+                false,
+                skillDepth + 1,
+                [],
+                aggregatedSkillLinks,
+                "",
+                epoch,
+                { seenSkillCalls, timelineEl, skillsSuppressed: true },
+              );
             } else {
               const nextLoading = this.showLoading();
               await this.handleStreamingResponse(
@@ -1834,6 +1925,7 @@ export class HormeChatView extends ItemView {
                 aggregatedSkillLinks,
                 "",
                 epoch,
+                { seenSkillCalls, timelineEl },
               );
             }
           } else {
@@ -1946,7 +2038,7 @@ export class HormeChatView extends ItemView {
   ): Promise<void> {
     if (!reasoning.trim()) return;
     const details = container.createEl("details", { cls: "horme-thinking-details" });
-    details.createEl("summary", { text: "Reasoning Process", cls: "horme-thinking-summary" });
+    details.createEl("summary", { text: "Reasoning process", cls: "horme-thinking-summary" });
     const body = details.createDiv("horme-thinking-body");
     this.pinToTop(container, details);
     await MarkdownRenderer.render(this.app, reasoning, body, sourcePath, this);
@@ -2220,7 +2312,7 @@ export class HormeChatView extends ItemView {
     this.messagesEl.empty();
     const panel = this.messagesEl.createDiv("horme-history-panel");
     const header = panel.createDiv("horme-history-header");
-    header.createEl("h4", { text: "Chat History" });
+    header.createEl("h4", { text: "Chat history" });
 
     const backBtn = header.createEl("button", { text: "Close", cls: "horme-history-back" });
     backBtn.addEventListener("click", () => {
@@ -2441,13 +2533,64 @@ export class HormeChatView extends ItemView {
     return `Skill used: ${skillName}`;
   }
 
-  private processChunk(line: string, onContent: (c: string, r?: string) => void) {
+  /**
+   * Step timeline: one visible numbered row per skill call for the whole
+   * chain (Dive-style), instead of transient loading spinners only.
+   */
+  private ensureAgentTimeline(timelineEl: HTMLElement | null): HTMLElement {
+    if (timelineEl && timelineEl.isConnected) return timelineEl;
+    const el = this.messagesEl.createDiv("horme-agent-timeline");
+    el.createDiv({ cls: "horme-agent-timeline-title", text: "Steps" });
+    this.scrollToBottom();
+    return el;
+  }
+
+  private addTimelineStep(timelineEl: HTMLElement, displayName: string, params: unknown): HTMLElement {
+    const stepNumber = timelineEl.querySelectorAll(".horme-agent-step").length + 1;
+    const row = timelineEl.createDiv("horme-agent-step horme-agent-step-pending");
+    row.createSpan({ cls: "horme-agent-step-num", text: `${stepNumber}.` });
+    let summary = "";
+    if (params && typeof params === "object") {
+      const values = Object.values(params as Record<string, unknown>);
+      const firstString = values.find((v) => typeof v === "string" && v.trim());
+      if (typeof firstString === "string") summary = firstString;
+    }
+    const label = row.createSpan({
+      cls: "horme-agent-step-label",
+      text: summary ? `${displayName} — ${summary}` : displayName,
+    });
+    label.title = label.textContent ?? "";
+    row.createSpan({ cls: "horme-agent-step-status", text: "…" });
+    this.scrollToBottom();
+    return row;
+  }
+
+  private completeTimelineStep(stepRow: HTMLElement, isError: boolean) {
+    stepRow.removeClass("horme-agent-step-pending");
+    stepRow.addClass(isError ? "horme-agent-step-fail" : "horme-agent-step-ok");
+    const status = stepRow.querySelector(".horme-agent-step-status");
+    if (status) status.textContent = isError ? "✗" : "✓";
+  }
+
+  private processChunk(
+    line: string,
+    onToolCalls: (fragments: unknown[]) => void,
+    onContent: (c: string, r?: string) => void,
+  ) {
     const raw = line.trim();
     if (!raw || raw === "data: [DONE]") return;
     try {
       // The upstream brace-counting parser already extracts clean JSON objects,
       // so no SSE "data: " prefix stripping is needed here.
       const data: unknown = JSON.parse(raw);
+
+      // Native tool calls: OpenAI streams indexed fragments in
+      // choices[0].delta.tool_calls; Ollama sends whole calls in
+      // message.tool_calls.
+      const toolCallFragments =
+        this.getArrayAtPath(data, ["choices", 0, "delta", "tool_calls"]) ??
+        this.getArrayAtPath(data, ["message", "tool_calls"]);
+      if (toolCallFragments && toolCallFragments.length) onToolCalls(toolCallFragments);
 
       const content =
         this.getStringAtPath(data, ["message", "content"]) ??
@@ -2467,6 +2610,20 @@ export class HormeChatView extends ItemView {
     } catch {
       // Ignore malformed partial chunks.
     }
+  }
+
+  private getArrayAtPath(obj: unknown, path: Array<string | number>): unknown[] | undefined {
+    let cur: unknown = obj;
+    for (const key of path) {
+      if (typeof key === "number") {
+        if (!Array.isArray(cur)) return undefined;
+        cur = cur[key];
+        continue;
+      }
+      if (typeof cur !== "object" || cur === null) return undefined;
+      cur = (cur as Record<string, unknown>)[key];
+    }
+    return Array.isArray(cur) ? cur : undefined;
   }
 
   private getStringAtPath(obj: unknown, path: Array<string | number>): string | undefined {

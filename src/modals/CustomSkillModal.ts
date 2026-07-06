@@ -21,7 +21,7 @@ export class CustomSkillModal extends Modal {
 
   onOpen() {
     const { contentEl } = this;
-    contentEl.createEl("h3", { text: "Create HTTP Skill" });
+    contentEl.createEl("h3", { text: "Create HTTP skill" });
 
     contentEl.createEl("p", {
       cls: "horme-settings-muted",
@@ -29,10 +29,10 @@ export class CustomSkillModal extends Modal {
     });
 
     new Setting(contentEl)
-      .setName("Skill Name")
-      .setDesc("Shown in the Skills dropdown.")
+      .setName("Skill name")
+      .setDesc("Shown in the skills dropdown.")
       .addText((t) =>
-        t.setPlaceholder("RAE Dictionary").onChange((v) => {
+        t.setPlaceholder("RAE dictionary").onChange((v) => {
           this.name = v.trim();
         }),
       );
@@ -86,7 +86,7 @@ export class CustomSkillModal extends Modal {
     headersSetting.settingEl.addClass("horme-modal-vertical-setting");
 
     const bodySetting = new Setting(contentEl)
-      .setName("Request Body (POST only)")
+      .setName("Request body (POST only)")
       .setDesc("JSON body template. Use {{query}} for the user's input.")
       .addTextArea((t) => {
         t.setPlaceholder('{"q": "{{query}}", "source": "en", "target": "fr"}');
@@ -101,7 +101,7 @@ export class CustomSkillModal extends Modal {
     bodySetting.settingEl.setCssProps({ display: this.method === "POST" ? "" : "none" });
 
     new Setting(contentEl)
-      .setName("Response Path")
+      .setName("Response path")
       .setDesc(
         "Dot-path to extract data from JSON response (e.g. results[0].text). Leave empty to use full response.",
       )
@@ -115,7 +115,7 @@ export class CustomSkillModal extends Modal {
 
     new Setting(contentEl).addButton((btn) =>
       btn
-        .setButtonText("Save Skill")
+        .setButtonText("Save skill")
         .setCta()
         .onClick(() => {
           if (!this.name) {

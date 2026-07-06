@@ -30,9 +30,63 @@ export default defineConfig([
       // Streaming chat requires `fetch` — Obsidian's `requestUrl` cannot stream
       // responses. Kept intentionally (see provider stream() methods).
       "no-restricted-globals": "off",
-      // Sentence-case for UI text is an Obsidian style guideline, not a blocker;
-      // surface it as advisory rather than failing the build.
-      "obsidianmd/ui/sentence-case": "warn",
+      // Sentence-case for UI text, enforced at error level so the build fails
+      // exactly where the Obsidian review would flag it. Brand names and
+      // acronyms used across the UI are declared so they keep their casing.
+      "obsidianmd/ui/sentence-case": [
+        "error",
+        {
+          brands: [
+            "Horme",
+            "Obsidian",
+            "Ollama",
+            "LM Studio",
+            "Wikipedia",
+            "Wiktionary",
+            "DuckDuckGo",
+            "Claude",
+            "Anthropic",
+            "Gemini",
+            "Google",
+            "OpenAI",
+            "GPT",
+            "Groq",
+            "OpenRouter",
+            "Mistral",
+            "Markdown",
+            "YAML",
+            "Text Extractor",
+            // Feature names and languages that keep their capitalization.
+            "Vault Brain",
+            "Grammar Scholar",
+            "Spanish",
+            "English",
+          ],
+          acronyms: [
+            "AI",
+            "API",
+            "URL",
+            "RAG",
+            "RRF",
+            "ID",
+            "JSON",
+            "PDF",
+            "HTTP",
+            "XML",
+            "CORS",
+            "LLM",
+            "DOCX",
+            "RAE",
+            "POST",
+            "GET",
+          ],
+          // Strings opening with a decorative glyph ("◈ Section", "+ Add …")
+          // capitalize their first word by design; the rule would treat the
+          // glyph as the sentence start and lowercase the word after it.
+          ignoreRegex: ["^◈", "^\\+", "^●", "\\[\\d+\\]"],
+          allowAutoFix: true,
+        },
+      ],
       "@typescript-eslint/no-unused-vars": [
         "warn",
         { argsIgnorePattern: "^_", varsIgnorePattern: "^_", caughtErrorsIgnorePattern: "^_" },

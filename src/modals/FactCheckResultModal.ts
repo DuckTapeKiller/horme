@@ -37,7 +37,7 @@ export class FactCheckResultModal extends Modal {
     contentEl.addClass("horme-fact-check-modal");
     this.renderComponent.load();
 
-    const headerEl = contentEl.createEl("h2", { text: "Fact Check Results" });
+    const headerEl = contentEl.createEl("h2", { text: "Fact check results" });
     headerEl.addClass("horme-fact-check-header");
 
     const containerEl = contentEl.createDiv("horme-fact-check-container");
@@ -137,7 +137,7 @@ export class FactCheckResultModal extends Modal {
       copyBtn.setText("Copied!");
     });
 
-    const insertBtn = actionRow.createEl("button", { text: "Insert as Footnote" });
+    const insertBtn = actionRow.createEl("button", { text: "Insert as footnote" });
     insertBtn.addEventListener("click", () => {
       try {
         const currentText = this.editor.getValue();
