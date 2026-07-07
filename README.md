@@ -10,7 +10,7 @@
 
 _In Greek mythology, Horme (/ˈhɔːrmiː/; Ancient Greek: Ὁρμή) is the Greek spirit personifying energetic activity, impulse or effort (to do a thing), eagerness, setting oneself in motion, and starting an action, and particularly onrush in battle._
 
-![Illustration](images/illustration.png)
+![Illustration](images/illustration.jpeg)
 
 ---
 
@@ -27,9 +27,9 @@ _In Greek mythology, Horme (/ˈhɔːrmiː/; Ancient Greek: Ὁρμή) is the Gre
 >
 > ---
 >
-> ### Prerequisites: Setting up Ollama
+> ### Prerequisites: Setting up LM Studio
 >
-> We recommend using **Ollama** to manage your local models. You can download it here: [Download Ollama](https://ollama.com/download).
+> We recommend using **LM Studio* to manage your local models. You can download it here: [Download LM Studio]([https://ollama.com/download](https://lmstudio.ai/download).
 >
 > **1. Download the Indexing Model:**
 > This model is _only_ for indexing your vault in a compressed format; you cannot chat with it.
@@ -38,21 +38,16 @@ _In Greek mythology, Horme (/ˈhɔːrmiː/; Ancient Greek: Ὁρμή) is the Gre
 >
 > - `nomic-embed-text:latest` (274 MB) **if** your vault contains text in one language;
 > - `nomic-embed-text-v2-moe` (957 MB) **if** you have a multilingual vault.
-> - **Command (in your terminal):**
 >
->  ```bash
->   ollama pull nomic-embed-text:latest
->  ```
->
+> Open LM Studio, go to "Model search", type one of the models described above.
+> 
 > **2. Download the Interaction Model:**
 >
 > This is the model you will use for asking questions.
 >
-> - **Strong Recommendation:** `gemma4:e4b` (9.6 GB)
-> - **Command (in your terminal):**
->   ```bash
->   ollama pull gemma4:e4b
->   ```
+> - **Strong Recommendation:** `gemma-4-e4b` (9.6 GB)
+>
+> In LM Studio, go to "Model search", type one of the models described above.
 >
 > ### Manual Installation Steps
 >
@@ -274,7 +269,7 @@ Horme is built with a "Privacy-First" architecture with four layers of protectio
 Open the chat panel from the ribbon icon (&#9653;) or the command palette (`Horme: Open chat panel`).
 
 - **Streaming UI:** Responses rendered as live Markdown with code blocks, lists, and full text selection.
-- **Connection Indicator:** Live coloured dot showing Ollama status.
+- **Connection Indicator:** Live coloured dot showing LM Studio status.
 - **Model Selector:** Switch between available models directly from the chat header.
 - **Micro-Batching:** Optimized for Apple Silicon; handles large context windows by processing embeddings in small, stable groups.
 
