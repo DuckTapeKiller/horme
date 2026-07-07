@@ -75,8 +75,7 @@ export class GeminiProvider implements AiProvider {
         role: m.role === "assistant" ? "model" : "user",
         parts: [{ text: m.content }],
       }));
-    // eslint-disable-next-line no-restricted-globals -- requestUrl cannot stream
-    const res = await fetch(
+    const res = await window.fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse`,
       {
         method: "POST",

@@ -100,8 +100,7 @@ export class ClaudeProvider implements AiProvider {
   ): Promise<ReadableStreamDefaultReader<Uint8Array>> {
     if (!this.apiKey) throw new Error("No Claude API Key");
     const { system, history } = this.normalizeMsgs(msgs);
-    // eslint-disable-next-line no-restricted-globals -- requestUrl cannot stream
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
+    const res = await window.fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

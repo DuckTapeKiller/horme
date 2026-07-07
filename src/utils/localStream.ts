@@ -181,8 +181,7 @@ export async function streamOpenAiCompatible(
     return nodeHttpStream(httpModule, url, body, signal);
   }
   try {
-    // eslint-disable-next-line no-restricted-globals -- requestUrl cannot stream
-    const res = await fetch(url, {
+    const res = await window.fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),

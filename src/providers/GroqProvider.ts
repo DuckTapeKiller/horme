@@ -71,8 +71,7 @@ export class GroqProvider implements AiProvider {
     signal?: AbortSignal,
   ): Promise<ReadableStreamDefaultReader<Uint8Array>> {
     if (!this.apiKey) throw new Error("No Groq API Key");
-    // eslint-disable-next-line no-restricted-globals -- requestUrl cannot stream
-    const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    const res = await window.fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
