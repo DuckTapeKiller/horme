@@ -10,6 +10,7 @@ import { CustomSkill } from "../skills/CustomSkill";
 import { CreateConceptNoteSkill } from "../skills/CreateConceptNoteSkill";
 import { FetchAndSummariseSkill } from "../skills/FetchAndSummariseSkill";
 import { DeepResearchSkill } from "../skills/DeepResearchSkill";
+import { BritannicaSkill } from "../skills/BritannicaSkill";
 
 export class SkillManager {
   private plugin: HormePlugin;
@@ -31,6 +32,7 @@ export class SkillManager {
     this.registerSkill(new GrammarScholarSkill(this.plugin));
     this.registerSkill(new FetchAndSummariseSkill(this.plugin));
     this.registerSkill(new DeepResearchSkill());
+    this.registerSkill(new BritannicaSkill());
   }
 
   registerSkill(skill: Skill) {

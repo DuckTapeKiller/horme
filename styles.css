@@ -278,7 +278,7 @@ body .horme-chat-container .horme-header button.horme-select {
 
 /* Skill-only bubbles: the inner details already has border/padding/bg,
    so strip the outer bubble chrome to eliminate double spacing. */
-.horme-msg-assistant:has(> .horme-reasoning-details:only-child) {
+.horme-msg-assistant.horme-skill-only {
   padding: 0;
   border: none;
   background: none;

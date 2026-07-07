@@ -522,7 +522,7 @@ export class HormeSettingTab extends PluginSettingTab {
       sl
         .setLimits(0, 1, 0.1)
         .setValue(this.plugin.settings.temperature)
-        .setDynamicTooltip()
+
         .onChange((v) => {
           void (async () => {
             this.plugin.settings.temperature = v;
@@ -1045,7 +1045,7 @@ export class HormeSettingTab extends PluginSettingTab {
         sl
           .setLimits(0.1, 0.9, 0.05)
           .setValue(this.plugin.settings.connectionsThreshold)
-          .setDynamicTooltip()
+
           .onChange((v) => {
             void (async () => {
               this.plugin.settings.connectionsThreshold = v;
@@ -1064,7 +1064,7 @@ export class HormeSettingTab extends PluginSettingTab {
         sl
           .setLimits(5, 50, 1)
           .setValue(this.plugin.settings.connectionsMaxResults)
-          .setDynamicTooltip()
+
           .onChange((v) => {
             void (async () => {
               this.plugin.settings.connectionsMaxResults = v;
@@ -1560,7 +1560,7 @@ export class HormeSettingTab extends PluginSettingTab {
         sl
           .setLimits(0.0, 1.0, 0.05)
           .setValue(this.plugin.settings.highlightBoost)
-          .setDynamicTooltip()
+
           .onChange((value) => {
             void (async () => {
               this.plugin.settings.highlightBoost = value;
@@ -1581,7 +1581,7 @@ export class HormeSettingTab extends PluginSettingTab {
           sl
             .setLimits(0, 60, 1)
             .setValue(this.plugin.settings.maxHighlightsPerNote)
-            .setDynamicTooltip()
+
             .onChange((value) => {
               void (async () => {
                 this.plugin.settings.maxHighlightsPerNote = value;
@@ -1597,7 +1597,7 @@ export class HormeSettingTab extends PluginSettingTab {
           sl
             .setLimits(0, 10_000, 250)
             .setValue(this.plugin.settings.maxHighlightCharsPerNote)
-            .setDynamicTooltip()
+
             .onChange((value) => {
               void (async () => {
                 this.plugin.settings.maxHighlightCharsPerNote = value;
@@ -1629,7 +1629,7 @@ export class HormeSettingTab extends PluginSettingTab {
             sl
               .setLimits(10, 200, 5)
               .setValue(this.plugin.settings.vaultBrainRrfK)
-              .setDynamicTooltip()
+
               .onChange((value) => {
                 void (async () => {
                   this.plugin.settings.vaultBrainRrfK = value;
@@ -1648,7 +1648,7 @@ export class HormeSettingTab extends PluginSettingTab {
           slider
             .setLimits(0.0, 1.0, 0.05)
             .setValue(this.plugin.settings.searchMetadataCap)
-            .setDynamicTooltip()
+
             .onChange(async (value) => {
               this.plugin.settings.searchMetadataCap = value;
               await this.plugin.saveSettings();
@@ -1664,7 +1664,7 @@ export class HormeSettingTab extends PluginSettingTab {
           slider
             .setLimits(0.0, 1.0, 0.05)
             .setValue(this.plugin.settings.searchContentCap)
-            .setDynamicTooltip()
+
             .onChange(async (value) => {
               this.plugin.settings.searchContentCap = value;
               await this.plugin.saveSettings();
@@ -1743,7 +1743,7 @@ export class HormeSettingTab extends PluginSettingTab {
             sl
               .setLimits(10_000, 2_000_000, 10_000)
               .setValue(this.plugin.settings.vaultIndexPdfMaxChars)
-              .setDynamicTooltip()
+
               .onChange((value) => {
                 void (async () => {
                   this.plugin.settings.vaultIndexPdfMaxChars = value;

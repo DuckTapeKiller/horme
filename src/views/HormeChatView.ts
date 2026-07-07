@@ -2009,7 +2009,7 @@ export class HormeChatView extends ItemView {
 
   private async renderSkillResultBox(skillId: string, displayName: string, params: unknown, result: string) {
     const summaryText = this.formatSkillSummary(displayName, params);
-    const resultBubble = this.messagesEl.createDiv("horme-msg horme-msg-assistant");
+    const resultBubble = this.messagesEl.createDiv("horme-msg horme-msg-assistant horme-skill-only");
     const details = resultBubble.createEl("details", { cls: "horme-reasoning-details" });
     const summaryEl = details.createEl("summary", { cls: "horme-reasoning-summary" });
     const summaryIcon = summaryEl.createSpan({ cls: "horme-skill-summary-icon" });
