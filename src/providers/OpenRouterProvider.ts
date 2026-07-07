@@ -75,6 +75,7 @@ export class OpenRouterProvider implements AiProvider {
     signal?: AbortSignal,
   ): Promise<ReadableStreamDefaultReader<Uint8Array>> {
     if (!this.apiKey) throw new Error("No OpenRouter API Key");
+    // eslint-disable-next-line no-restricted-globals -- requestUrl cannot stream
     const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {

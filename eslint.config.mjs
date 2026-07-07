@@ -27,9 +27,6 @@ export default defineConfig([
       // TypeScript already reports undefined identifiers and knows the Electron
       // runtime globals (Buffer, process); eslint's no-undef is redundant here.
       "no-undef": "off",
-      // Streaming chat requires `fetch` — Obsidian's `requestUrl` cannot stream
-      // responses. Kept intentionally (see provider stream() methods).
-      "no-restricted-globals": "off",
       // Sentence-case for UI text, enforced at error level so the build fails
       // exactly where the Obsidian review would flag it. Brand names and
       // acronyms used across the UI are declared so they keep their casing.

@@ -79,6 +79,7 @@ export class OllamaProvider implements AiProvider {
     // Ollama's /api/chat native tools API (tool-trained models emit
     // structured message.tool_calls instead of prompt-taught XML).
     if (tools && tools.length) body.tools = tools;
+    // eslint-disable-next-line no-restricted-globals -- requestUrl cannot stream
     const res = await fetch(`${this.baseUrl}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

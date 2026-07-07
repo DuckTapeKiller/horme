@@ -72,6 +72,7 @@ export class MistralProvider implements AiProvider {
     signal?: AbortSignal,
   ): Promise<ReadableStreamDefaultReader<Uint8Array>> {
     if (!this.apiKey) throw new Error("No Mistral API Key");
+    // eslint-disable-next-line no-restricted-globals -- requestUrl cannot stream
     const res = await fetch("https://api.mistral.ai/v1/chat/completions", {
       method: "POST",
       headers: {
