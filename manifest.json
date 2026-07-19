@@ -1,9 +1,9 @@
 {
   "id": "horme",
   "name": "Horme",
-  "version": "3.0.9",
+  "version": "4.0.0",
   "minAppVersion": "1.11.4",
-  "description": "AI-powered assistant with chat, right-click actions, vault-wide RAG, and an extensible skill system. Supports Ollama, Claude, Gemini, OpenAI, Groq, OpenRouter, Mistral, and LM Studio.",
+  "description": "AI-powered assistant with chat, right-click actions, vault-wide RAG, and an extensible skill system. Supports llama.cpp, Ollama, LM Studio, Claude, Gemini, OpenAI, Groq, OpenRouter, and Mistral.",
   "author": "DuckTapeKiller",
   "authorUrl": "https://github.com/DuckTapeKiller",
   "isDesktopOnly": false

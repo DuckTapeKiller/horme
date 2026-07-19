@@ -282,6 +282,9 @@ export default class HormePlugin extends Plugin {
       } else if (p === "lmstudio") {
         this._originalModel = this.settings.lmStudioModel;
         this.settings.lmStudioModel = m;
+      } else if (p === "llamacpp") {
+        this._originalModel = this.settings.llamaCppModel;
+        this.settings.llamaCppModel = m;
       } else {
         this._originalModel = this.settings.defaultModel;
         this.settings.defaultModel = m;
@@ -945,7 +948,7 @@ RULES:
 
   isLocalProviderActive(): boolean {
     const p = this.settings.aiProvider;
-    return p === "ollama" || p === "lmstudio";
+    return p === "ollama" || p === "lmstudio" || p === "llamacpp";
   }
 
   /* ── Core ── */
@@ -1020,6 +1023,20 @@ RULES:
           const dataArr = asArray(getRecordProp(json, "data")) ?? [];
           fetchedModels = dataArr.map((m) => getStringProp(m, "id")).filter((m): m is string => Boolean(m));
         }
+      } else if (provider === "llamacpp") {
+        const res = await requestUrl({
+          url: `${normalizeBaseUrl(this.settings.llamaCppUrl)}/v1/models`,
+          throw: false,
+        });
+        if (res.status === 200) {
+          const json: unknown = res.json;
+          const dataArr = asArray(getRecordProp(json, "data")) ?? [];
+          fetchedModels = dataArr
+            .map((m) => getStringProp(m, "id"))
+            .filter((m): m is string => Boolean(m))
+            // Embedding models can't chat; keep them out of the chat dropdown.
+            .filter((m) => !/embed/i.test(m));
+        }
       } else {
         fetchedModels = PROVIDER_MODELS[provider] || [];
       }
@@ -1045,6 +1062,11 @@ RULES:
       if (p === "lmstudio")
         return (
           (await requestUrl({ url: `${normalizeBaseUrl(this.settings.lmStudioUrl)}/v1/models` })).status ===
+          200
+        );
+      if (p === "llamacpp")
+        return (
+          (await requestUrl({ url: `${normalizeBaseUrl(this.settings.llamaCppUrl)}/v1/models` })).status ===
           200
         );
 
@@ -1382,6 +1404,9 @@ RULES:
       } else if (p === "lmstudio") {
         overriddenModel = this.settings.lmStudioModel;
         this.settings.lmStudioModel = this._originalModel || "";
+      } else if (p === "llamacpp") {
+        overriddenModel = this.settings.llamaCppModel;
+        this.settings.llamaCppModel = this._originalModel || "";
       } else {
         overriddenModel = this.settings.defaultModel;
         this.settings.defaultModel = this._originalModel || "";
@@ -1397,6 +1422,7 @@ RULES:
       else if (p === "openrouter") this.settings.openRouterModel = overriddenModel;
       else if (p === "mistral") this.settings.mistralModel = overriddenModel;
       else if (p === "lmstudio") this.settings.lmStudioModel = overriddenModel;
+      else if (p === "llamacpp") this.settings.llamaCppModel = overriddenModel;
       else this.settings.defaultModel = overriddenModel;
     } else {
       await this.saveData(this.settings);

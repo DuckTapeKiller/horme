@@ -43,6 +43,7 @@ export class HormeSettingTab extends PluginSettingTab {
     return (
       value === "ollama" ||
       value === "lmstudio" ||
+      value === "llamacpp" ||
       value === "claude" ||
       value === "gemini" ||
       value === "openai" ||
@@ -361,6 +362,7 @@ export class HormeSettingTab extends PluginSettingTab {
     aiSection.createEl("summary", { text: "◈ AI providers" });
 
     new Setting(aiSection).setName("Active provider").addDropdown((dd) => {
+      dd.addOption("llamacpp", "llama.cpp (local)");
       dd.addOption("ollama", "Ollama (local)");
       dd.addOption("lmstudio", "LM Studio (local)");
       dd.addOption("claude", "Anthropic Claude (API)");
@@ -381,6 +383,78 @@ export class HormeSettingTab extends PluginSettingTab {
     });
 
     const providersContainer = aiSection.createDiv("horme-nested-settings");
+
+    // LLAMA.CPP
+    const llamaCppSection = providersContainer.createEl("details", { cls: "horme-settings-section" });
+    llamaCppSection.open = true;
+    llamaCppSection.createEl("summary", { text: "◈ llama.cpp (local)" });
+    new Setting(llamaCppSection)
+      .setName("llama.cpp URL")
+      .setDesc("Base URL of the llama-server chat instance (router mode or single-model).")
+      .addText((t) =>
+        t.setValue(this.plugin.settings.llamaCppUrl).onChange((v) => {
+          void (async () => {
+            this.plugin.settings.llamaCppUrl = v;
+            await this.plugin.saveSettings();
+          })();
+        }),
+      );
+    this.buildModelCombo(
+      new Setting(llamaCppSection)
+        .setName("Model")
+        .setDesc("Select from available models or type a custom name. Leave empty for automatic."),
+      "horme-llamacpp-models",
+      async () => {
+        const url = normalizeBaseUrl(this.plugin.settings.llamaCppUrl);
+        // requestUrl (Obsidian's network layer) instead of fetch — llama-server
+        // has no CORS allowance for the app://obsidian.md origin.
+        const res = await requestUrl({ url: `${url}/v1/models` });
+        const json: unknown = res.json;
+        const dataArr = asArray(getRecordProp(json, "data")) ?? [];
+        return dataArr
+          .map((m) => getStringProp(m, "id") ?? getStringProp(m, "name"))
+          .filter((m): m is string => Boolean(m))
+          .filter((m) => !/embed/i.test(m));
+      },
+      this.plugin.settings.llamaCppModel,
+      async (v) => {
+        this.plugin.settings.llamaCppModel = v;
+        await this.plugin.saveSettings();
+      },
+    );
+    new Setting(llamaCppSection)
+      .setName("Embedding URL")
+      .setDesc(
+        "Base URL of the llama-server started with --embedding (typically the chat port + 1). Used for vault RAG.",
+      )
+      .addText((t) =>
+        t.setValue(this.plugin.settings.llamaCppEmbeddingUrl).onChange((v) => {
+          void (async () => {
+            this.plugin.settings.llamaCppEmbeddingUrl = v;
+            await this.plugin.saveSettings();
+          })();
+        }),
+      );
+    this.buildModelCombo(
+      new Setting(llamaCppSection)
+        .setName("Embedding model")
+        .setDesc("Embedding model for vault RAG (chat models cannot embed). Leave empty to autodetect."),
+      "horme-llamacpp-embedding-models",
+      async () => {
+        const url = normalizeBaseUrl(this.plugin.settings.llamaCppEmbeddingUrl);
+        const res = await requestUrl({ url: `${url}/v1/models` });
+        const json: unknown = res.json;
+        const dataArr = asArray(getRecordProp(json, "data")) ?? [];
+        return dataArr
+          .map((m) => getStringProp(m, "id") ?? getStringProp(m, "name"))
+          .filter((m): m is string => Boolean(m));
+      },
+      this.plugin.settings.llamaCppEmbeddingModel,
+      async (v) => {
+        this.plugin.settings.llamaCppEmbeddingModel = v;
+        await this.plugin.saveSettings();
+      },
+    );
 
     // OLLAMA
     const ollamaSection = providersContainer.createEl("details", { cls: "horme-settings-section" });
@@ -727,6 +801,7 @@ export class HormeSettingTab extends PluginSettingTab {
 
     if (this.plugin.settings.useMobileOverride) {
       new Setting(platformSection).setName("Mobile provider").addDropdown((dd) => {
+        dd.addOption("llamacpp", "llama.cpp (local)");
         dd.addOption("ollama", "Ollama (local)");
         dd.addOption("lmstudio", "LM Studio (local)");
         dd.addOption("claude", "Anthropic Claude (API)");
@@ -767,6 +842,15 @@ export class HormeSettingTab extends PluginSettingTab {
             const json: unknown = res.json;
             const dataArr = asArray(getRecordProp(json, "data")) ?? [];
             return dataArr.map((m) => getStringProp(m, "id")).filter((m): m is string => Boolean(m));
+          } else if (provider === "llamacpp") {
+            const url = normalizeBaseUrl(this.plugin.settings.llamaCppUrl);
+            const res = await requestUrl({ url: `${url}/v1/models` });
+            const json: unknown = res.json;
+            const dataArr = asArray(getRecordProp(json, "data")) ?? [];
+            return dataArr
+              .map((m) => getStringProp(m, "id") ?? getStringProp(m, "name"))
+              .filter((m): m is string => Boolean(m))
+              .filter((m) => !/embed/i.test(m));
           } else {
             return HormeSettingTab.UPDATED_MODELS[provider] ?? PROVIDER_MODELS[provider] ?? [];
           }
@@ -933,6 +1017,7 @@ export class HormeSettingTab extends PluginSettingTab {
             : 'Provider used exclusively for the Tags button and command. Only local providers are available to protect your privacy. Enable "Allow Cloud Provider Access" in Vault Brain to unlock cloud providers.',
         )
         .addDropdown((drp) => {
+          drp.addOption("llamacpp", "llama.cpp (local)");
           drp.addOption("ollama", "Ollama (local)");
           drp.addOption("lmstudio", "LM Studio (local)");
           if (allowCloud) {
@@ -994,6 +1079,16 @@ export class HormeSettingTab extends PluginSettingTab {
             const json: unknown = res.json;
             const dataArr = asArray(getRecordProp(json, "data")) ?? [];
             return dataArr.map((m) => getStringProp(m, "id")).filter((m): m is string => Boolean(m));
+          }
+          if (p === "llamacpp") {
+            const url = normalizeBaseUrl(this.plugin.settings.llamaCppUrl);
+            const res = await requestUrl({ url: `${url}/v1/models`, throw: false });
+            const json: unknown = res.json;
+            const dataArr = asArray(getRecordProp(json, "data")) ?? [];
+            return dataArr
+              .map((m) => getStringProp(m, "id") ?? getStringProp(m, "name"))
+              .filter((m): m is string => Boolean(m))
+              .filter((m) => !/embed/i.test(m));
           }
           return PROVIDER_MODELS[p] ?? [];
         } catch {
@@ -1125,7 +1220,9 @@ export class HormeSettingTab extends PluginSettingTab {
     ragSection.createEl("summary", { text: "◈ Vault brain" });
 
     const isLocal =
-      this.plugin.settings.aiProvider === "ollama" || this.plugin.settings.aiProvider === "lmstudio";
+      this.plugin.settings.aiProvider === "ollama" ||
+      this.plugin.settings.aiProvider === "lmstudio" ||
+      this.plugin.settings.aiProvider === "llamacpp";
 
     if (!isLocal && !this.plugin.settings.allowCloudRAG) {
       const warning = ragSection.createDiv("horme-settings-warning");
@@ -1227,7 +1324,8 @@ export class HormeSettingTab extends PluginSettingTab {
         // If cloud tag translation is disabled, ensure the selected provider cannot be cloud.
         const tagProviderIsCloud =
           this.plugin.settings.tagTranslationProvider !== "ollama" &&
-          this.plugin.settings.tagTranslationProvider !== "lmstudio";
+          this.plugin.settings.tagTranslationProvider !== "lmstudio" &&
+          this.plugin.settings.tagTranslationProvider !== "llamacpp";
         if (tagProviderIsCloud && !this.plugin.settings.allowCloudTagTranslation) {
           this.plugin.settings.tagTranslationProvider = this.plugin.settings.tagTranslationFallbackProvider;
           void this.plugin.saveSettings();
@@ -1288,7 +1386,10 @@ export class HormeSettingTab extends PluginSettingTab {
             "Primary provider used for tag translation during indexing. This is independent of the chat provider.",
           )
           .addDropdown((drp) => {
-            drp.addOption("ollama", "Ollama").addOption("lmstudio", "LM Studio");
+            drp
+              .addOption("llamacpp", "llama.cpp")
+              .addOption("ollama", "Ollama")
+              .addOption("lmstudio", "LM Studio");
             if (this.plugin.settings.allowCloudTagTranslation) {
               drp
                 .addOption("openai", "OpenAI")
@@ -1310,7 +1411,8 @@ export class HormeSettingTab extends PluginSettingTab {
 
         const tagProviderIsCloudNow =
           this.plugin.settings.tagTranslationProvider !== "ollama" &&
-          this.plugin.settings.tagTranslationProvider !== "lmstudio";
+          this.plugin.settings.tagTranslationProvider !== "lmstudio" &&
+          this.plugin.settings.tagTranslationProvider !== "llamacpp";
 
         if (tagProviderIsCloudNow) {
           ragSection.createDiv({
@@ -1353,12 +1455,16 @@ export class HormeSettingTab extends PluginSettingTab {
             .setDesc("Used if the cloud provider is unavailable (no internet, API error, etc).")
             .addDropdown((drp) =>
               drp
+                .addOption("llamacpp", "llama.cpp")
                 .addOption("ollama", "Ollama")
                 .addOption("lmstudio", "LM Studio")
                 .setValue(this.plugin.settings.tagTranslationFallbackProvider)
                 .onChange((v) => {
                   void (async () => {
-                    this.plugin.settings.tagTranslationFallbackProvider = v as "ollama" | "lmstudio";
+                    this.plugin.settings.tagTranslationFallbackProvider = v as
+                      | "ollama"
+                      | "lmstudio"
+                      | "llamacpp";
                     await this.plugin.saveSettings();
                     this.displayPreserveScroll();
                   })();
@@ -1380,11 +1486,22 @@ export class HormeSettingTab extends PluginSettingTab {
           async () => {
             const localProvider =
               this.plugin.settings.tagTranslationProvider === "ollama" ||
-              this.plugin.settings.tagTranslationProvider === "lmstudio"
+              this.plugin.settings.tagTranslationProvider === "lmstudio" ||
+              this.plugin.settings.tagTranslationProvider === "llamacpp"
                 ? this.plugin.settings.tagTranslationProvider
                 : this.plugin.settings.tagTranslationFallbackProvider;
             if (localProvider === "lmstudio") return [];
             try {
+              if (localProvider === "llamacpp") {
+                const url = normalizeBaseUrl(this.plugin.settings.llamaCppUrl);
+                const res = await requestUrl({ url: `${url}/v1/models`, throw: false });
+                const json: unknown = res.json;
+                const dataArr = asArray(getRecordProp(json, "data")) ?? [];
+                return dataArr
+                  .map((m) => getStringProp(m, "id") ?? getStringProp(m, "name"))
+                  .filter((m): m is string => Boolean(m))
+                  .filter((m) => !/embed/i.test(m));
+              }
               const res = await requestUrl({
                 url: `${this.plugin.settings.ollamaBaseUrl}/api/tags`,
                 throw: false,
@@ -1406,14 +1523,17 @@ export class HormeSettingTab extends PluginSettingTab {
 
         const localFallbackProvider =
           this.plugin.settings.tagTranslationProvider === "ollama" ||
-          this.plugin.settings.tagTranslationProvider === "lmstudio"
+          this.plugin.settings.tagTranslationProvider === "lmstudio" ||
+          this.plugin.settings.tagTranslationProvider === "llamacpp"
             ? this.plugin.settings.tagTranslationProvider
             : this.plugin.settings.tagTranslationFallbackProvider;
         const localFallbackModel =
           this.plugin.settings.tagTranslationModel.trim() ||
           (localFallbackProvider === "lmstudio"
             ? this.plugin.settings.lmStudioModel.trim()
-            : this.plugin.settings.defaultModel.trim());
+            : localFallbackProvider === "llamacpp"
+              ? this.plugin.settings.llamaCppModel.trim()
+              : this.plugin.settings.defaultModel.trim());
 
         if (!localFallbackModel) {
           const warn = ragSection.createDiv("horme-settings-warning");

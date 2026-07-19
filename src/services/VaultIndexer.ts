@@ -13,6 +13,7 @@ import {
 import type { AiProvider as TagProviderId } from "../types";
 import { OllamaProvider } from "../providers/OllamaProvider";
 import { LmStudioProvider } from "../providers/LmStudioProvider";
+import { LlamaCppProvider } from "../providers/LlamaCppProvider";
 import type { AiProvider as AiProviderClient } from "../providers/AiProvider";
 import { ClaudeProvider } from "../providers/ClaudeProvider";
 import { GeminiProvider } from "../providers/GeminiProvider";
@@ -1426,7 +1427,7 @@ t1 -> Translation`;
   }
 
   private isCloudProvider(provider: TagProviderId): boolean {
-    return provider !== "ollama" && provider !== "lmstudio";
+    return provider !== "ollama" && provider !== "lmstudio" && provider !== "llamacpp";
   }
 
   private getTagTranslationModelFor(provider: TagProviderId): string {
@@ -1435,6 +1436,8 @@ t1 -> Translation`;
     // Local: explicit translation model is preferred, but we can fall back to the configured local chat model.
     if (provider === "lmstudio")
       return (s.tagTranslationModel || "").trim() || (s.lmStudioModel || "").trim();
+    if (provider === "llamacpp")
+      return (s.tagTranslationModel || "").trim() || (s.llamaCppModel || "").trim();
     if (provider === "ollama") return (s.tagTranslationModel || "").trim() || (s.defaultModel || "").trim();
 
     // Cloud: reuse the provider's configured model setting.
@@ -1467,6 +1470,8 @@ t1 -> Translation`;
         return new MistralProvider(apiKey, s.temperature, maxTokens);
       case "lmstudio":
         return new LmStudioProvider(s.lmStudioUrl, s.temperature, maxTokens);
+      case "llamacpp":
+        return new LlamaCppProvider(s.llamaCppUrl, s.temperature, maxTokens);
       default:
         return new OllamaProvider(s.ollamaBaseUrl, s.temperature, maxTokens);
     }

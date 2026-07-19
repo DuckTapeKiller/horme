@@ -1,4 +1,5 @@
 export type AiProvider =
+  | "llamacpp"
   | "ollama"
   | "lmstudio"
   | "claude"
@@ -27,6 +28,13 @@ export interface HormeSettings {
   lmStudioModel: string;
   /** Embedding model id for LM Studio RAG (chat models cannot embed). */
   lmStudioEmbeddingModel: string;
+  /** llama-server base URL (works with router mode and single-model servers). */
+  llamaCppUrl: string;
+  llamaCppModel: string;
+  /** Separate llama-server for embeddings (llama.cpp needs --embedding; typically chat port + 1). */
+  llamaCppEmbeddingUrl: string;
+  /** Embedding model id for llama.cpp RAG (chat models cannot embed). */
+  llamaCppEmbeddingModel: string;
   /** Offer skills as native OpenAI-schema tools on LM Studio/Ollama (XML stays the fallback). */
   nativeToolCalling: boolean;
   /** Agent mode: plan-first prompting and a larger tool budget for multi-step tasks. */
@@ -121,7 +129,7 @@ export interface HormeSettings {
   tagShadowingLanguage: string;
   tagTranslationModel: string;
   tagTranslationProvider: AiProvider;
-  tagTranslationFallbackProvider: "ollama" | "lmstudio";
+  tagTranslationFallbackProvider: "ollama" | "lmstudio" | "llamacpp";
   tagsProvider: AiProvider;
   tagsModel: string;
   /**

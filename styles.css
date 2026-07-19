@@ -58,6 +58,9 @@ body .horme-chat-container .horme-header button.horme-select {
   font-family: var(--font-interface);
   cursor: pointer;
   text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .horme-select:disabled {

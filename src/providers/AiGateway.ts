@@ -2,6 +2,7 @@ import HormePlugin from "../../main";
 import { AiProvider } from "./AiProvider";
 import { OllamaProvider } from "./OllamaProvider";
 import { LmStudioProvider } from "./LmStudioProvider";
+import { LlamaCppProvider } from "./LlamaCppProvider";
 import { ClaudeProvider } from "./ClaudeProvider";
 import { GeminiProvider } from "./GeminiProvider";
 import { OpenAIProvider } from "./OpenAIProvider";
@@ -35,6 +36,8 @@ export class AiGateway {
         return new MistralProvider(apiKey, settings.temperature, settings.maxTokens);
       case "lmstudio":
         return new LmStudioProvider(settings.lmStudioUrl, settings.temperature, settings.maxTokens);
+      case "llamacpp":
+        return new LlamaCppProvider(settings.llamaCppUrl, settings.temperature, settings.maxTokens);
       default:
         return new OllamaProvider(settings.ollamaBaseUrl, settings.temperature, settings.maxTokens);
     }
@@ -106,7 +109,7 @@ export class AiGateway {
     const nativeEligible =
       !suppressAllSkills &&
       this.plugin.settings.nativeToolCalling &&
-      (providerId === "lmstudio" || providerId === "ollama");
+      (providerId === "lmstudio" || providerId === "ollama" || providerId === "llamacpp");
     const tools = nativeEligible ? this.plugin.skillManager.getNativeTools(suppressVaultSkill) : [];
     const useNative = tools.length > 0;
 
@@ -183,6 +186,7 @@ export class AiGateway {
     if (p === "openrouter") return settings.openRouterModel;
     if (p === "mistral") return settings.mistralModel;
     if (p === "lmstudio") return settings.lmStudioModel;
+    if (p === "llamacpp") return settings.llamaCppModel;
     return settings.defaultModel;
   }
 
@@ -221,6 +225,9 @@ export class AiGateway {
         break;
       case "lmstudio":
         provider = new LmStudioProvider(settings.lmStudioUrl, settings.temperature, settings.maxTokens);
+        break;
+      case "llamacpp":
+        provider = new LlamaCppProvider(settings.llamaCppUrl, settings.temperature, settings.maxTokens);
         break;
       default:
         provider = new OllamaProvider(settings.ollamaBaseUrl, settings.temperature, settings.maxTokens);

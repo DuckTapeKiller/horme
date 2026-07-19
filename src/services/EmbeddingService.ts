@@ -23,7 +23,10 @@ export class EmbeddingService {
    */
   async getEmbeddings(texts: string[]): Promise<number[][]> {
     const chatProvider = this.plugin.settings.aiProvider;
-    const embedProvider = chatProvider === "ollama" || chatProvider === "lmstudio" ? chatProvider : "ollama";
+    const embedProvider =
+      chatProvider === "ollama" || chatProvider === "lmstudio" || chatProvider === "llamacpp"
+        ? chatProvider
+        : "ollama";
 
     const BATCH_SIZE = 32;
     const allEmbeddings: number[][] = [];
@@ -36,6 +39,9 @@ export class EmbeddingService {
         allEmbeddings.push(...result);
       } else if (embedProvider === "lmstudio") {
         const result = await this.getLMStudioEmbeddingsBatch(batch);
+        allEmbeddings.push(...result);
+      } else if (embedProvider === "llamacpp") {
+        const result = await this.getLlamaCppEmbeddingsBatch(batch);
         allEmbeddings.push(...result);
       }
     }
@@ -229,6 +235,69 @@ export class EmbeddingService {
       return out;
     } catch (e: unknown) {
       throw new Error(`LM Studio Batch Embedding Failed: ${errorToMessage(e)}`);
+    }
+  }
+
+  /** Cached llama.cpp embedding-model autodetection result for this session. */
+  private llamaCppDetectedEmbeddingModel: string | null = null;
+
+  /**
+   * Resolves the llama.cpp embedding model: the dedicated setting first, then
+   * autodetection from the embedding server's /v1/models. llama.cpp serves
+   * embeddings from a separate llama-server started with --embedding
+   * (llamaCppEmbeddingUrl), never from the chat server.
+   */
+  private async resolveLlamaCppEmbeddingModel(): Promise<string> {
+    const configured = this.plugin.settings.llamaCppEmbeddingModel.trim();
+    if (configured) return configured;
+    if (this.llamaCppDetectedEmbeddingModel) return this.llamaCppDetectedEmbeddingModel;
+    const res = await requestUrl({
+      url: `${normalizeBaseUrl(this.plugin.settings.llamaCppEmbeddingUrl)}/v1/models`,
+      throw: false,
+    });
+    if (res.status === 200) {
+      const dataArr = asArray(getRecordProp(res.json as unknown, "data")) ?? [];
+      const ids = dataArr.map((m) => getStringProp(m, "id")).filter((m): m is string => Boolean(m));
+      // The embedding server usually serves only embedding models, so any
+      // model it lists is usable; prefer one whose name says "embed".
+      const detected = ids.find((id) => /embed/i.test(id)) ?? ids[0];
+      if (detected) {
+        this.llamaCppDetectedEmbeddingModel = detected;
+        return detected;
+      }
+    }
+    throw new Error(
+      "No llama.cpp embedding model found. Start a llama-server with --embedding on the embedding URL, or set the model in Horme settings.",
+    );
+  }
+
+  private async getLlamaCppEmbeddingsBatch(inputs: string[]): Promise<number[][]> {
+    try {
+      const model = await this.resolveLlamaCppEmbeddingModel();
+      const res = await requestUrl({
+        url: `${normalizeBaseUrl(this.plugin.settings.llamaCppEmbeddingUrl)}/v1/embeddings`,
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model,
+          input: inputs,
+        }),
+      });
+      if (res.status !== 200) throw new Error(`llama.cpp error: ${res.status} - ${res.text}`);
+      const json: unknown = res.json;
+      const dataArr = asArray(getRecordProp(json, "data"));
+      if (!dataArr || dataArr.length !== inputs.length)
+        throw new Error("llama.cpp response data missing or length mismatch");
+
+      const out: number[][] = [];
+      for (const item of dataArr) {
+        const embedding = asNumberArray(getRecordProp(item, "embedding"));
+        if (!embedding) throw new Error("llama.cpp item missing vector data");
+        out.push(embedding);
+      }
+      return out;
+    } catch (e: unknown) {
+      throw new Error(`llama.cpp batch embedding failed: ${errorToMessage(e)}`);
     }
   }
 

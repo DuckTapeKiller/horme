@@ -69,6 +69,7 @@ export class HormeChatView extends ItemView {
   private forcedSkillId: string | null = null;
   private skillsMenuEl: HTMLElement | null = null;
   private activeLoadingIntervals: Set<number> = new Set();
+  private connectionPollId: number | null = null;
 
   private async pickImage() {
     const fileInput = activeDocument.createElement("input");
@@ -534,6 +535,9 @@ export class HormeChatView extends ItemView {
       });
 
       await this.updateConnectionStatus();
+      this.connectionPollId = window.setInterval(() => {
+        void this.updateConnectionStatus();
+      }, 15000);
     } catch (e: unknown) {
       this.plugin.handleError(e, "Chat Interface");
     }
@@ -542,6 +546,10 @@ export class HormeChatView extends ItemView {
   async onClose() {
     this.generationEpoch++;
     void this.stopGeneration();
+    if (this.connectionPollId !== null) {
+      window.clearInterval(this.connectionPollId);
+      this.connectionPollId = null;
+    }
     // Flush any pending history write before the view is destroyed
     await this.plugin.historyManager.flush();
     this.unregisterSettingsListener?.();
