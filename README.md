@@ -6,6 +6,8 @@
 
 # <span style="color:#7c3aed">&#9653; Horme</span>
 
+<a href="https://community.obsidian.md/plugins/horme"><img alt="Get it on Obsidian" src="assets/get-it-on-obsidian.svg"></a>
+
 **AVAILABLE IN OBSIDIAN COMMUNITY PLUGINS**
 
 _In Greek mythology, Horme (/ˈhɔːrmiː/; Ancient Greek: Ὁρμή) is the Greek spirit personifying energetic activity, impulse or effort (to do a thing), eagerness, setting oneself in motion, and starting an action, and particularly onrush in battle._
