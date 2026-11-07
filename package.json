@@ -1,11 +1,11 @@
 {
   "name": "horme",
-  "version": "4.0.0",
+  "version": "4.0.1",
   "description": "AI-powered assistant with chat, right-click actions, vault-wide RAG, and an extensible skill system. Supports llama.cpp, Ollama, LM Studio, Claude, Gemini, OpenAI, Groq, OpenRouter, and Mistral.",
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",
-    "build": "node esbuild.config.mjs production",
+    "build": "eslint . --max-warnings=0 && node esbuild.config.mjs production",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier . --write",
@@ -19,8 +19,7 @@
     "esbuild": "^0.28.0",
     "eslint": "^9.39.4",
     "eslint-config-prettier": "^9.1.0",
-    "eslint-plugin-obsidianmd": "^0.3.0",
-    "moment": "^2.30.1",
+    "eslint-plugin-obsidianmd": "^0.5.1",
     "obsidian": "latest",
     "prettier": "^3.3.2",
     "style-mod": "^4.1.3",

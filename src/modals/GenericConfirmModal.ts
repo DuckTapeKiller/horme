@@ -1,4 +1,5 @@
 import { App, Modal, Setting } from "obsidian";
+import { markDestructive } from "../utils/destructiveButton";
 
 export class GenericConfirmModal extends Modal {
   private message: string;
@@ -20,14 +21,11 @@ export class GenericConfirmModal extends Modal {
 
     new Setting(contentEl)
       .addButton((btn) =>
-        btn
-          .setButtonText("Confirm")
-          .setWarning()
-          .onClick(() => {
-            this.resolved = true;
-            this.close();
-            this.onConfirm();
-          }),
+        markDestructive(btn.setButtonText("Confirm")).onClick(() => {
+          this.resolved = true;
+          this.close();
+          this.onConfirm();
+        }),
       )
       .addButton((btn) =>
         btn.setButtonText("Cancel").onClick(() => {

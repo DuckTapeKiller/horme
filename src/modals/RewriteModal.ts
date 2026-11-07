@@ -21,22 +21,11 @@ export class RewriteModal extends Modal {
     const { contentEl } = this;
     contentEl.createEl("h3", { text: "Rewrite in what tone?" });
 
-    const grid = contentEl.createDiv();
-    grid.setCssProps({
-      display: "grid",
-      gridTemplateColumns: "1fr 1fr",
-      gap: "8px",
-      marginTop: "8px",
-    });
+    const grid = contentEl.createDiv("horme-tone-grid");
 
     for (const tone of TONES) {
       const btn = grid.createEl("button", { text: tone.label });
-      btn.addClass("mod-cta");
-      btn.setCssProps({
-        padding: "10px 16px",
-        fontSize: "14px",
-        cursor: "pointer",
-      });
+      btn.addClasses(["mod-cta", "horme-tone-btn"]);
       btn.addEventListener("click", () => {
         this.onSubmit(tone.value);
         this.close();

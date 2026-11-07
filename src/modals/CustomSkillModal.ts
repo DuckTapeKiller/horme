@@ -62,7 +62,7 @@ export class CustomSkillModal extends Modal {
       .setDesc("Use {{query}} where the user's input should go.")
       .addText((t) => {
         t.setPlaceholder("https://api.example.com/search?q={{query}}");
-        t.inputEl.setCssProps({ width: "100%" });
+        t.inputEl.addClass("horme-full-width");
         t.onChange((v) => {
           this.url = v.trim();
         });
@@ -77,8 +77,7 @@ export class CustomSkillModal extends Modal {
       .addTextArea((t) => {
         t.setPlaceholder("Authorization: Bearer {{secret:horme-openai-api-key}}\nX-Custom: value");
         t.inputEl.rows = 3;
-        t.inputEl.setCssProps({ width: "100%" });
-        t.inputEl.setCssProps({ resize: "vertical" });
+        t.inputEl.addClasses(["horme-full-width", "horme-resize-vertical"]);
         t.onChange((v) => {
           this.headersRaw = v;
         });
@@ -91,8 +90,7 @@ export class CustomSkillModal extends Modal {
       .addTextArea((t) => {
         t.setPlaceholder('{"q": "{{query}}", "source": "en", "target": "fr"}');
         t.inputEl.rows = 4;
-        t.inputEl.setCssProps({ width: "100%" });
-        t.inputEl.setCssProps({ resize: "vertical" });
+        t.inputEl.addClasses(["horme-full-width", "horme-resize-vertical"]);
         t.onChange((v) => {
           this.body = v;
         });
@@ -107,7 +105,7 @@ export class CustomSkillModal extends Modal {
       )
       .addText((t) => {
         t.setPlaceholder("data.items[0].content");
-        t.inputEl.setCssProps({ width: "100%" });
+        t.inputEl.addClass("horme-full-width");
         t.onChange((v) => {
           this.responsePath = v.trim();
         });

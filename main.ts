@@ -450,7 +450,8 @@ export default class HormePlugin extends Plugin {
     await this.grammarIndexer.loadIndex();
 
     this.statusBarItem = this.addStatusBarItem();
-    this.statusBarItem.setCssStyles({ display: "none" });
+    this.statusBarItem.addClass("horme-status-bar-item");
+    this.statusBarItem.hide();
 
     this.models = await this.fetchModels();
 
@@ -1258,11 +1259,10 @@ RULES:
         : null);
 
     if (displayValue === null) {
-      this.statusBarItem.setCssStyles({ display: "none" });
+      this.statusBarItem.hide();
     } else {
-      this.statusBarItem.setCssStyles({ display: "" });
+      this.statusBarItem.show();
       this.statusBarItem.textContent = `● ${displayValue}`;
-      this.statusBarItem.setCssStyles({ color: "var(--text-success)" });
     }
   }
 

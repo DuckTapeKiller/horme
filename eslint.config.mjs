@@ -1,32 +1,29 @@
 import { defineConfig } from "eslint/config";
 import obsidianmd from "eslint-plugin-obsidianmd";
-import eslintConfigPrettier from "eslint-config-prettier";
+import tseslint from "typescript-eslint";
 
-// Flat config (ESLint 9+). Runs the official Obsidian community-plugin review
-// (eslint-plugin-obsidianmd) plus type-aware typescript-eslint rules so plugin
-// compliance can be verified locally and in CI instead of via the online review.
+// Flat config (ESLint 9+). Obsidian's official plugin lint, as the community-plugin
+// review bot runs it: `obsidianmd.configs.recommended` with its own file globs (every
+// TS and JS file, package.json, manifest.json and the licence) and full type
+// information. Only the build output and the dependencies are left out, and no rule
+// is switched off.
 export default defineConfig([
-  // Lint the shipped plugin source only: main.ts + src/**. Exclude the build
-  // artifact, tooling, tests, and all JSON (the recommended config's JSON handling
-  // misparses arbitrary JSON; manifest is validated by the store separately).
   {
-    ignores: ["node_modules/", "main.js", "eslint.config.mjs", "esbuild.config.mjs", "test/", "**/*.json"],
+    ignores: ["node_modules/", "main.js"],
   },
 
   ...obsidianmd.configs.recommended,
 
   {
+    // The type-aware rules need the TypeScript program.
     files: ["**/*.ts"],
     languageOptions: {
-      // Enable type-aware linting for the plugin's TypeScript sources.
-      parserOptions: { project: "./tsconfig.json" },
+      parserOptions: {
+        projectService: true,
+        tsconfigRootDir: import.meta.dirname,
+      },
     },
     rules: {
-      // Intentional `while (true)` loops drive the skill/tool iteration queues.
-      "no-constant-condition": "off",
-      // TypeScript already reports undefined identifiers and knows the Electron
-      // runtime globals (Buffer, process); eslint's no-undef is redundant here.
-      "no-undef": "off",
       // Sentence-case for UI text, enforced at error level so the build fails
       // exactly where the Obsidian review would flag it. Brand names and
       // acronyms used across the UI are declared so they keep their casing.
@@ -58,6 +55,9 @@ export default defineConfig([
             "Grammar Scholar",
             "Spanish",
             "English",
+            // The Support section names the author and the donation site.
+            "DuckTapeKiller",
+            "Ko-fi",
           ],
           acronyms: [
             "AI",
@@ -84,13 +84,13 @@ export default defineConfig([
           allowAutoFix: true,
         },
       ],
-      "@typescript-eslint/no-unused-vars": [
-        "warn",
-        { argsIgnorePattern: "^_", varsIgnorePattern: "^_", caughtErrorsIgnorePattern: "^_" },
-      ],
     },
   },
 
-  // Keep ESLint out of Prettier's formatting domain.
-  eslintConfigPrettier,
+  {
+    // The build and lint configs are plain ESM outside the TS program, so the
+    // type-aware rules cannot run on them.
+    files: ["**/*.{js,cjs,mjs}"],
+    ...tseslint.configs.disableTypeChecked,
+  },
 ]);

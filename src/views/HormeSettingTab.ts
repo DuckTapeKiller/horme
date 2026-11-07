@@ -1,4 +1,14 @@
-import { App, PluginSettingTab, Setting, Notice, setIcon, requestUrl, SecretComponent } from "obsidian";
+import {
+  App,
+  PluginSettingTab,
+  Setting,
+  Notice,
+  setIcon,
+  requestUrl,
+  requireApiVersion,
+  SecretComponent,
+  type SettingDefinitionItem,
+} from "obsidian";
 import HormePlugin from "../../main";
 import { PROVIDER_MODELS } from "../constants";
 import { AiProvider } from "../types";
@@ -7,6 +17,7 @@ import { GenericConfirmModal } from "../modals/GenericConfirmModal";
 import { CustomSkillModal } from "../modals/CustomSkillModal";
 import { asArray, getRecordProp, getStringProp } from "../utils/TypeGuards";
 import { normalizeBaseUrl } from "../utils/normalizeBaseUrl";
+import { markDestructive } from "../utils/destructiveButton";
 
 type CloudProviderId = Exclude<AiProvider, "ollama" | "lmstudio">;
 type CloudSecretIdField =
@@ -29,6 +40,9 @@ type CloudProviderConfig = {
   secretId: CloudSecretIdField;
   model: CloudModelField;
 };
+
+const KOFI_URL = "https://ko-fi.com/ducktapekiller";
+const ISSUES_URL = "https://github.com/DuckTapeKiller/horme/issues";
 
 export class HormeSettingTab extends PluginSettingTab {
   plugin: HormePlugin;
@@ -136,7 +150,7 @@ export class HormeSettingTab extends PluginSettingTab {
   ): void {
     setting.addText((t) => {
       t.setPlaceholder("Type or select a model…");
-      t.inputEl.setCssProps({ width: "100%" });
+      t.inputEl.addClass("horme-full-width");
 
       // Set saved value immediately — never wait on network for this
       t.setValue(currentValue);
@@ -203,17 +217,53 @@ export class HormeSettingTab extends PluginSettingTab {
     });
   }
 
+  // Obsidian 1.13 and later draw a settings tab from getSettingDefinitions() and no
+  // longer call display(). The page is drawn as before, into the one row Obsidian
+  // gives it, in a group of its own.
+  getSettingDefinitions(): SettingDefinitionItem[] {
+    return [
+      {
+        type: "group",
+        cls: "horme-settings-host-group",
+        items: [
+          {
+            name: "Horme settings",
+            searchable: false,
+            render: (setting: Setting) => {
+              // Obsidian's group styles reach every row inside a group and would
+              // restyle all of this page's rows, so this group drops the class
+              // they hang on. Only this group is touched.
+              setting.settingEl.closest(".horme-settings-host-group")?.removeClass("setting-group");
+              setting.settingEl.empty();
+              setting.settingEl.addClass("horme-settings-host");
+              this.renderSettings(setting.settingEl);
+            },
+          },
+        ],
+      },
+    ];
+  }
+
+  /** The settings page for Obsidian before 1.13, which calls display(). */
+  display(): void {
+    this.renderSettings(this.containerEl);
+  }
+
+  /** Draw the settings again after a change to what they show, keeping the scroll position. */
   private displayPreserveScroll() {
     const scroller = this.containerEl.closest(".vertical-tab-content");
-    const scrollTop = scroller instanceof HTMLElement ? scroller.scrollTop : 0;
-    this.display();
+    const scrollTop = scroller?.instanceOf(HTMLElement) ? scroller.scrollTop : 0;
+    if (requireApiVersion("1.13.0")) {
+      this.update();
+    } else {
+      this.renderSettings(this.containerEl);
+    }
     window.requestAnimationFrame(() => {
-      if (scroller instanceof HTMLElement) scroller.scrollTop = scrollTop;
+      if (scroller?.instanceOf(HTMLElement)) scroller.scrollTop = scrollTop;
     });
   }
 
-  display(): void {
-    const { containerEl } = this;
+  private renderSettings(containerEl: HTMLElement): void {
     containerEl.empty();
 
     // Header Section
@@ -234,7 +284,7 @@ export class HormeSettingTab extends PluginSettingTab {
     const logWrapper = diagSection.createDiv("horme-diag-logs-wrapper");
     const logHeaderTop = logWrapper.createDiv("horme-diag-logs-header");
     const logTitleContainer = logHeaderTop.createDiv({ cls: "horme-diag-logs-title-container" });
-    logTitleContainer.createSpan({ text: "RECENT ACTIVITY LOG" });
+    logTitleContainer.createSpan({ text: "Recent activity log", cls: "horme-diag-logs-title" });
     const summarySpan = logHeaderTop.createSpan();
     const logContent = logWrapper.createDiv("horme-diag-logs-content");
 
@@ -263,9 +313,10 @@ export class HormeSettingTab extends PluginSettingTab {
           entry.createSpan({ text: log.message, cls: "horme-diag-entry-msg" });
         });
       } else {
-        logContent
-          .createDiv({ text: "> No issues detected. System healthy.", cls: "horme-diag-entry-msg" })
-          .setCssProps({ opacity: "0.4" });
+        logContent.createDiv({
+          text: "> No issues detected. System healthy.",
+          cls: "horme-diag-entry-msg horme-diag-entry-quiet",
+        });
       }
       updateSummary();
     };
@@ -377,7 +428,7 @@ export class HormeSettingTab extends PluginSettingTab {
           if (!this.isAiProvider(v)) return;
           this.plugin.settings.aiProvider = v;
           await this.plugin.saveSettings();
-          this.display();
+          this.displayPreserveScroll();
         })();
       });
     });
@@ -566,7 +617,7 @@ export class HormeSettingTab extends PluginSettingTab {
           c.setValue(this.plugin.settings[cp.secretId]);
           c.onChange((v) => {
             void (async () => {
-              this.plugin.settings[cp.secretId] = v.trim();
+              this.plugin.settings[cp.secretId] = (v ?? "").trim();
               await this.plugin.saveSettings();
             })();
           });
@@ -908,22 +959,19 @@ export class HormeSettingTab extends PluginSettingTab {
         });
       })
       .addButton((btn) => {
-        btn
-          .setButtonText("Delete index")
-          .setWarning()
-          .onClick(() => {
-            new GenericConfirmModal(
-              this.app,
-              "Delete the Grammar Index from memory and disk? You can rebuild it later.",
-              () => {
-                void (async () => {
-                  const result = await this.plugin.grammarIndexer.deleteIndex();
-                  new Notice(result === "deleted" ? "Grammar Index deleted." : "No Grammar Index detected.");
-                  this.displayPreserveScroll();
-                })();
-              },
-            ).open();
-          });
+        markDestructive(btn.setButtonText("Delete index")).onClick(() => {
+          new GenericConfirmModal(
+            this.app,
+            "Delete the Grammar Index from memory and disk? You can rebuild it later.",
+            () => {
+              void (async () => {
+                const result = await this.plugin.grammarIndexer.deleteIndex();
+                new Notice(result === "deleted" ? "Grammar Index deleted." : "No Grammar Index detected.");
+                this.displayPreserveScroll();
+              })();
+            },
+          ).open();
+        });
       });
 
     // --- Frontmatter Summary ---
@@ -988,22 +1036,19 @@ export class HormeSettingTab extends PluginSettingTab {
         });
       })
       .addButton((btn) => {
-        btn
-          .setButtonText("Delete index")
-          .setWarning()
-          .onClick(() => {
-            new GenericConfirmModal(
-              this.app,
-              "Delete the Tag Index from memory and disk? You can rebuild it later.",
-              () => {
-                void (async () => {
-                  const result = await this.plugin.tagIndexer.deleteIndex();
-                  new Notice(result === "deleted" ? "Tag Index deleted." : "No Tag Index detected.");
-                  this.displayPreserveScroll();
-                })();
-              },
-            ).open();
-          });
+        markDestructive(btn.setButtonText("Delete index")).onClick(() => {
+          new GenericConfirmModal(
+            this.app,
+            "Delete the Tag Index from memory and disk? You can rebuild it later.",
+            () => {
+              void (async () => {
+                const result = await this.plugin.tagIndexer.deleteIndex();
+                new Notice(result === "deleted" ? "Tag Index deleted." : "No Tag Index detected.");
+                this.displayPreserveScroll();
+              })();
+            },
+          ).open();
+        });
       });
 
     // --- Tag Generation Model Override ---
@@ -1227,13 +1272,6 @@ export class HormeSettingTab extends PluginSettingTab {
     if (!isLocal && !this.plugin.settings.allowCloudRAG) {
       const warning = ragSection.createDiv("horme-settings-warning");
       warning.setText("⚠️ Vault Brain is disabled for cloud providers to protect your privacy.");
-      warning.setCssProps({
-        color: "var(--text-error)",
-        padding: "10px",
-        marginBottom: "10px",
-        border: "1px solid var(--background-modifier-border)",
-        borderRadius: "var(--radius-s)",
-      });
     }
 
     new Setting(ragSection)
@@ -1540,18 +1578,11 @@ export class HormeSettingTab extends PluginSettingTab {
           warn.textContent = tagProviderIsCloudNow
             ? "⚠️ Cloud tag translation is enabled, but no local fallback model is configured. If the cloud provider fails, tag translation will be skipped."
             : "⚠️ Tag shadowing is enabled but Tag Translation Model is empty. Tags will not be translated until you set a model.";
-          warn.setCssProps({
-            color: "var(--text-error)",
-            padding: "10px",
-            marginTop: "8px",
-            border: "1px solid var(--background-modifier-border)",
-            borderRadius: "var(--radius-s)",
-          });
         }
 
         // --- Test Translation ---
         const testResultsEl = ragSection.createDiv({ cls: "horme-tag-test-results" });
-        testResultsEl.setCssStyles({ display: "none" });
+        testResultsEl.hide();
 
         new Setting(ragSection)
           .setName("Test translation")
@@ -1564,7 +1595,7 @@ export class HormeSettingTab extends PluginSettingTab {
             btn.setButtonText("Run test").onClick(async () => {
               btn.setButtonText("Testing...").setDisabled(true);
               testResultsEl.empty();
-              testResultsEl.setCssStyles({ display: "block" });
+              testResultsEl.show();
 
               const loadingEl = testResultsEl.createEl("p", {
                 text: "Contacting model — this may take 10–30 seconds on a local LLM...",
@@ -1623,11 +1654,11 @@ export class HormeSettingTab extends PluginSettingTab {
 
                   const statusCell = tr.createEl("td");
                   if (!row.translated) {
-                    statusCell.createEl("span", { text: "✗ failed", cls: "horme-tag-test-fail" });
+                    statusCell.createSpan({ text: "✗ failed", cls: "horme-tag-test-fail" });
                   } else if (row.warning) {
-                    statusCell.createEl("span", { text: "⚠ Check format", cls: "horme-tag-test-warn" });
+                    statusCell.createSpan({ text: "⚠ Check format", cls: "horme-tag-test-warn" });
                   } else {
-                    statusCell.createEl("span", { text: "✓", cls: "horme-tag-test-ok" });
+                    statusCell.createSpan({ text: "✓", cls: "horme-tag-test-ok" });
                   }
                 }
 
@@ -1886,23 +1917,20 @@ export class HormeSettingTab extends PluginSettingTab {
           });
         })
         .addButton((btn) => {
-          btn
-            .setButtonText("Delete vault index")
-            .setWarning()
-            .onClick(() => {
-              new GenericConfirmModal(
-                this.app,
-                "Delete the Vault Index from memory and disk? This removes all index shards until you rebuild.",
-                () => {
-                  void (async () => {
-                    const result = await this.plugin.vaultIndexer.deleteIndex();
-                    if (result === "deleted") new Notice("Vault index deleted.");
-                    else if (result === "missing") new Notice("No vault index detected.");
-                    this.displayPreserveScroll();
-                  })();
-                },
-              ).open();
-            });
+          markDestructive(btn.setButtonText("Delete vault index")).onClick(() => {
+            new GenericConfirmModal(
+              this.app,
+              "Delete the Vault Index from memory and disk? This removes all index shards until you rebuild.",
+              () => {
+                void (async () => {
+                  const result = await this.plugin.vaultIndexer.deleteIndex();
+                  if (result === "deleted") new Notice("Vault index deleted.");
+                  else if (result === "missing") new Notice("No vault index detected.");
+                  this.displayPreserveScroll();
+                })();
+              },
+            ).open();
+          });
         });
 
       const rebuildNotice = ragSection.createDiv("horme-settings-muted");
@@ -1913,23 +1941,20 @@ export class HormeSettingTab extends PluginSettingTab {
         .setName("Index control")
         .setDesc(`Vault Index: ${this.plugin.settings.indexStatus}`)
         .addButton((btn) => {
-          btn
-            .setButtonText("Delete vault index")
-            .setWarning()
-            .onClick(() => {
-              new GenericConfirmModal(
-                this.app,
-                "Delete the Vault Index from memory and disk? This removes all index shards until you rebuild.",
-                () => {
-                  void (async () => {
-                    const result = await this.plugin.vaultIndexer.deleteIndex();
-                    if (result === "deleted") new Notice("Vault index deleted.");
-                    else if (result === "missing") new Notice("No vault index detected.");
-                    this.displayPreserveScroll();
-                  })();
-                },
-              ).open();
-            });
+          markDestructive(btn.setButtonText("Delete vault index")).onClick(() => {
+            new GenericConfirmModal(
+              this.app,
+              "Delete the Vault Index from memory and disk? This removes all index shards until you rebuild.",
+              () => {
+                void (async () => {
+                  const result = await this.plugin.vaultIndexer.deleteIndex();
+                  if (result === "deleted") new Notice("Vault index deleted.");
+                  else if (result === "missing") new Notice("No vault index detected.");
+                  this.displayPreserveScroll();
+                })();
+              },
+            ).open();
+          });
         });
     }
 
@@ -1975,7 +2000,7 @@ export class HormeSettingTab extends PluginSettingTab {
           })().catch((e) => this.plugin.handleError(e, "Concept Notes"));
         });
         t.inputEl.rows = 8;
-        t.inputEl.setCssProps({ width: "100%", resize: "vertical" });
+        t.inputEl.addClasses(["horme-full-width", "horme-resize-vertical"]);
       });
 
     const customSkillsSection = containerEl.createEl("details", { cls: "horme-settings-section" });
@@ -2029,5 +2054,41 @@ export class HormeSettingTab extends PluginSettingTab {
         }).open();
       }),
     );
+
+    // SUPPORT
+    const supportSection = containerEl.createEl("details", { cls: "horme-settings-section" });
+    supportSection.open = this.expandedSections["support"] ?? false;
+    supportSection.ontoggle = () => (this.expandedSections["support"] = supportSection.open);
+    supportSection.createEl("summary", { text: "◈ Support" });
+    this.renderSupportCard(supportSection);
+
+    new Setting(supportSection)
+      .setName("Report a bug or suggest an idea")
+      .setDesc("Open an issue on GitHub.")
+      .controlEl.createEl("a", { cls: "horme-support-link", text: "Open issues", href: ISSUES_URL });
+
+    new Setting(supportSection)
+      .setName("Version")
+      .setDesc(`${this.plugin.manifest.name} ${this.plugin.manifest.version}`);
+  }
+
+  private renderSupportCard(containerEl: HTMLElement): void {
+    const pluginName = this.plugin.manifest.name;
+    const card = containerEl.createDiv({ cls: "horme-support" });
+    setIcon(card.createDiv({ cls: "horme-support-icon" }), "heart");
+    card.createDiv({ cls: "horme-support-title", text: `Enjoying ${pluginName}?` });
+    const about = card.createEl("p", {
+      text: `${pluginName} is free and open source, made and maintained by DuckTapeKiller. If it is useful to you, you can support its development on `,
+    });
+    // The name is kept on one line, so a narrow screen never breaks it at its hyphen.
+    about.createSpan({ cls: "horme-support-nowrap", text: "Ko-fi" });
+    about.appendText(".");
+    const kofi = card.createEl("a", {
+      cls: "horme-support-button",
+      href: KOFI_URL,
+      attr: { "aria-label": "Support DuckTapeKiller on Ko-fi" },
+    });
+    setIcon(kofi.createSpan({ cls: "horme-support-button-icon" }), "coffee");
+    kofi.createSpan({ text: "Support on Ko-fi" });
   }
 }

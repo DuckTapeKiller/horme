@@ -30,10 +30,10 @@ export class HormeConnectionsView extends ItemView {
     this.contentEl.empty();
     this.contentEl.addClass("horme-connections-view");
 
-    const headerEl = this.contentEl.createEl("div", { cls: "horme-connections-header" });
+    const headerEl = this.contentEl.createDiv({ cls: "horme-connections-header" });
     headerEl.createEl("h4", { text: "Connections" });
 
-    const controlsEl = headerEl.createEl("div", { cls: "horme-connections-controls" });
+    const controlsEl = headerEl.createDiv({ cls: "horme-connections-controls" });
     const pauseBtn = controlsEl.createEl("button", { text: "▣ pause", cls: "horme-connections-pause-btn" });
     pauseBtn.onclick = () => {
       this.isPaused = !this.isPaused;
@@ -43,7 +43,7 @@ export class HormeConnectionsView extends ItemView {
       }
     };
 
-    this.connectionsListEl = this.contentEl.createEl("div", { cls: "horme-connections-list" });
+    this.connectionsListEl = this.contentEl.createDiv({ cls: "horme-connections-list" });
 
     // Initial render
     this.renderEmptyState();
@@ -55,7 +55,7 @@ export class HormeConnectionsView extends ItemView {
 
   private renderEmptyState() {
     this.connectionsListEl.empty();
-    const emptyEl = this.connectionsListEl.createEl("div", { cls: "horme-connections-empty" });
+    const emptyEl = this.connectionsListEl.createDiv({ cls: "horme-connections-empty" });
     emptyEl.createEl("p", { text: "Open a note to see related connections." });
   }
 
@@ -75,7 +75,7 @@ export class HormeConnectionsView extends ItemView {
   private async _doUpdateConnections(filePath: string) {
     this.connectionsListEl.empty();
 
-    const loadingEl = this.connectionsListEl.createEl("div", { cls: "horme-connections-loading" });
+    const loadingEl = this.connectionsListEl.createDiv({ cls: "horme-connections-loading" });
     loadingEl.createEl("p", { text: "Finding connections..." });
 
     try {
@@ -84,27 +84,27 @@ export class HormeConnectionsView extends ItemView {
       this.connectionsListEl.empty();
 
       if (connections === null) {
-        const emptyEl = this.connectionsListEl.createEl("div", { cls: "horme-connections-empty" });
+        const emptyEl = this.connectionsListEl.createDiv({ cls: "horme-connections-empty" });
         emptyEl.createEl("p", { text: "Index is still loading..." });
         return;
       }
 
       if (connections === undefined) {
-        const emptyEl = this.connectionsListEl.createEl("div", { cls: "horme-connections-empty" });
+        const emptyEl = this.connectionsListEl.createDiv({ cls: "horme-connections-empty" });
         emptyEl.createEl("p", { text: "This note has not been indexed yet." });
         return;
       }
 
       if (connections.length === 0) {
-        const emptyEl = this.connectionsListEl.createEl("div", { cls: "horme-connections-empty" });
+        const emptyEl = this.connectionsListEl.createDiv({ cls: "horme-connections-empty" });
         emptyEl.createEl("p", { text: "No strong connections found." });
         return;
       }
 
       for (const conn of connections) {
-        const itemEl = this.connectionsListEl.createEl("div", { cls: "horme-connection-item" });
+        const itemEl = this.connectionsListEl.createDiv({ cls: "horme-connection-item" });
 
-        const titleContainer = itemEl.createEl("div", { cls: "horme-connection-title-container" });
+        const titleContainer = itemEl.createDiv({ cls: "horme-connection-title-container" });
 
         const titleEl = titleContainer.createEl("a", {
           text: conn.path.split("/").pop()?.replace(".md", "") || conn.path,
@@ -115,7 +115,7 @@ export class HormeConnectionsView extends ItemView {
           const folderParts = conn.path.split("/");
           if (folderParts.length > 1) {
             folderParts.pop(); // remove file name
-            titleContainer.createEl("div", {
+            titleContainer.createDiv({
               text: folderParts.join("/"),
               cls: "horme-connection-path",
             });
@@ -135,14 +135,14 @@ export class HormeConnectionsView extends ItemView {
           })();
         };
 
-        itemEl.createEl("span", {
+        itemEl.createSpan({
           text: `${Math.round(conn.score * 100)}%`,
           cls: "horme-connection-score",
         });
       }
     } catch (e: unknown) {
       this.connectionsListEl.empty();
-      const errorEl = this.connectionsListEl.createEl("div", { cls: "horme-connections-error" });
+      const errorEl = this.connectionsListEl.createDiv({ cls: "horme-connections-error" });
       errorEl.createEl("p", { text: "Failed to load connections." });
       console.error(e);
       this.plugin.diagnosticService.report(

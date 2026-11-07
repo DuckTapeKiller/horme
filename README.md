@@ -408,6 +408,8 @@ Horme supports multiple AI providers. Local providers are recommended for privac
 
 ---
 
+The last section of the settings, **◈ Support**, has a link to support Horme on [Ko-fi](https://ko-fi.com/ducktapekiller), a link to report a bug or suggest an idea in the [issues](https://github.com/DuckTapeKiller/horme/issues), and the installed version.
+
 ## <span style="color:#7c3aed">&#9744; Release Files</span>
 
 To install Horme, you need exactly three files:

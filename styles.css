@@ -1410,6 +1410,11 @@ body.is-mobile .horme-chat-container .horme-header .horme-select.horme-select {
   gap: 8px;
 }
 
+/* The log title is written in sentence case and shown in capitals. */
+.horme-diag-logs-title {
+  text-transform: uppercase;
+}
+
 /* The console is fixed-dark (#121212). The active theme styles modal buttons with a
    high-specificity rule — html body.obsidian-app .modal button:not(.mod-cta)... (0,5,3) —
    so we out-specify it here with a :not() chain (0,6,2) instead of using !important. */
@@ -2001,4 +2006,166 @@ html
   50% {
     opacity: 0.2;
   }
+}
+
+/* ── Styles that were set inline ── */
+
+.status-bar-item.horme-status-bar-item {
+  color: var(--text-success);
+}
+
+input.horme-full-width,
+textarea.horme-full-width {
+  width: 100%;
+}
+
+textarea.horme-resize-vertical {
+  resize: vertical;
+}
+
+.horme-tone-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.horme-tone-grid .horme-tone-btn {
+  padding: 10px 16px;
+  cursor: pointer;
+}
+
+.horme-context-note-label.horme-context-notes-shown {
+  display: block;
+  opacity: 0.8;
+}
+
+.horme-context-notes-row {
+  display: flex;
+  gap: 4px;
+}
+
+.horme-context-notes-remove {
+  cursor: pointer;
+  opacity: 0.6;
+}
+
+.horme-diag-entry-msg.horme-diag-entry-quiet {
+  opacity: 0.4;
+}
+
+.horme-settings-warning {
+  color: var(--text-error);
+  padding: 10px;
+  border: 1px solid var(--background-modifier-border);
+}
+
+/* ── Settings: Obsidian 1.13 and later ── */
+
+/* Obsidian 1.13 draws the settings from definitions; the whole page is drawn
+   into the one row of a group of its own, which is a plain block here, so the
+   page looks as it does when drawn straight into the tab. */
+.setting-item.horme-settings-host {
+  display: block;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background-color: transparent;
+}
+
+/* Obsidian spaces a row's first child from the controls beside it; this row
+   has none. */
+.setting-item.horme-settings-host > :first-child {
+  margin-inline-end: 0;
+}
+
+/* ── Settings: support ── */
+
+/* The Ko-fi card sits at the top of the Support section. Everything reads
+   Obsidian's theme variables, so the card follows the theme, light or dark. */
+.horme-support {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--size-4-2);
+  margin: var(--size-4-4) var(--size-4-4) var(--size-4-2);
+  padding: var(--size-4-6) var(--size-4-4);
+  border: var(--border-width) solid var(--background-modifier-border);
+  border-radius: var(--radius-l);
+  background-color: var(--background-secondary);
+  text-align: center;
+}
+
+.horme-support-icon {
+  display: inline-flex;
+  color: var(--color-red);
+}
+
+.horme-support-icon svg {
+  width: var(--icon-xl);
+  height: var(--icon-xl);
+  fill: currentColor;
+}
+
+.horme-support-title {
+  font-size: var(--font-ui-large);
+  font-weight: var(--font-semibold);
+  color: var(--text-normal);
+}
+
+.horme-support p {
+  max-width: 34em;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  line-height: var(--line-height-normal);
+}
+
+.horme-support-nowrap {
+  white-space: nowrap;
+}
+
+.horme-support-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--size-4-2);
+  margin-top: var(--size-4-2);
+  padding: var(--size-4-2) var(--size-4-4);
+  border-radius: var(--radius-m);
+  background-color: var(--interactive-accent);
+  color: var(--text-on-accent);
+  font-weight: var(--font-semibold);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.horme-support-button:hover {
+  background-color: var(--interactive-accent-hover);
+  color: var(--text-on-accent);
+}
+
+.horme-support-button-icon {
+  display: inline-flex;
+}
+
+.horme-support-button-icon svg {
+  width: var(--icon-s);
+  height: var(--icon-s);
+}
+
+/* The issues link looks like Obsidian's own buttons in a settings row. */
+.horme-support-link {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--size-4-1) var(--size-4-3);
+  border-radius: var(--button-radius);
+  background-color: var(--interactive-normal);
+  box-shadow: var(--input-shadow);
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.horme-support-link:hover {
+  background-color: var(--interactive-hover);
+  color: var(--text-normal);
 }

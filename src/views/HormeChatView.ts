@@ -75,7 +75,7 @@ export class HormeChatView extends ItemView {
     const fileInput = activeDocument.createElement("input");
     fileInput.type = "file";
     fileInput.accept = "image/*";
-    fileInput.setCssProps({ display: "none" });
+    fileInput.hide();
     activeDocument.body.appendChild(fileInput);
 
     const cleanup = () => {
@@ -181,11 +181,11 @@ export class HormeChatView extends ItemView {
       const iconEl = item.createSpan({ cls: "horme-skills-menu-item-icon" });
       setIcon(iconEl, this.getSkillIcon(skill.id));
 
-      item.createEl("span", { cls: "horme-skills-menu-item-name", text: skill.name });
-      item.createEl("span", { cls: "horme-skills-menu-item-desc", text: skill.description });
+      item.createSpan({ cls: "horme-skills-menu-item-name", text: skill.name });
+      item.createSpan({ cls: "horme-skills-menu-item-desc", text: skill.description });
 
       // Visual badge: forced skills show "Direct" (bypasses model), template skills show "Template"
-      item.createEl("span", {
+      item.createSpan({
         cls: `horme-skills-menu-item-badge ${isForced ? "is-direct" : "is-template"}`,
         text: isForced ? "Direct" : "Template",
       });
@@ -388,7 +388,6 @@ export class HormeChatView extends ItemView {
       label.createSpan({ text: "Use current note as context" });
 
       const vbLabel = row2.createEl("label", { cls: "horme-context-toggle" });
-      vbLabel.setCssProps({ marginLeft: "12px" });
       this.vaultBrainToggle = vbLabel.createEl("input", { type: "checkbox" });
       this.vaultBrainToggle.checked = true;
       vbLabel.createSpan({ text: "Use Vault Brain" });
@@ -462,7 +461,7 @@ export class HormeChatView extends ItemView {
 
       /* Messages */
       this.loadingOverlay = this.containerEl.createDiv("horme-loading-overlay");
-      this.loadingOverlay.setCssProps({ display: "none" });
+      this.loadingOverlay.hide();
 
       this.loadingOverlay.createDiv("horme-spinner");
       this.messagesEl = content.createDiv("horme-messages");
@@ -571,10 +570,10 @@ export class HormeChatView extends ItemView {
   private updateContextNoteLabel() {
     if (!this.contextToggle.checked) {
       this.contextNoteLabel.empty();
-      this.contextNoteLabel.setCssProps({ display: "none" });
+      this.contextNoteLabel.hide();
       return;
     }
-    this.contextNoteLabel.setCssProps({ display: "" });
+    this.contextNoteLabel.show();
     const mdLeaf = this.plugin.lastActiveMarkdownLeaf;
     const mdView = mdLeaf?.view instanceof MarkdownView ? mdLeaf.view : null;
     if (mdView && mdView.file) {
@@ -597,61 +596,36 @@ export class HormeChatView extends ItemView {
   private updateContextNotesLabel() {
     this.contextNotesLabel.empty();
     if (this.selectedContextNotes.length === 0 && this.selectedContextFolders.length === 0) {
-      this.contextNotesLabel.setCssProps({ display: "none" });
+      this.contextNotesLabel.removeClass("horme-context-notes-shown");
       return;
     }
-    this.contextNotesLabel.setCssProps({ display: "block" });
-    this.contextNotesLabel.setCssProps({
-      fontSize: "11px",
-      lineHeight: "1.6",
-      opacity: "0.8",
-    });
+    this.contextNotesLabel.addClass("horme-context-notes-shown");
 
     for (const folder of this.selectedContextFolders) {
-      const row = this.contextNotesLabel.createDiv();
-      row.setCssProps({
-        display: "flex",
-        alignItems: "center",
-        gap: "4px",
-      });
+      const row = this.contextNotesLabel.createDiv("horme-context-notes-row");
 
-      const removeBtn = row.createEl("span", { text: "\u00d7" });
-      removeBtn.setCssProps({
-        cursor: "pointer",
-        opacity: "0.6",
-        fontWeight: "bold",
-      });
+      const removeBtn = row.createSpan({ text: "\u00d7", cls: "horme-context-notes-remove" });
       removeBtn.addEventListener("click", () => {
         this.selectedContextFolders = this.selectedContextFolders.filter((f) => f.path !== folder.path);
         this.folderContextTruncationNoticeShown = false;
         this.updateContextNotesLabel();
       });
 
-      row.createEl("span", {
+      row.createSpan({
         text: `Folder: ${folder.path} (${folder.noteCount} note${folder.noteCount === 1 ? "" : "s"})`,
       });
     }
 
     for (const file of this.selectedContextNotes) {
-      const row = this.contextNotesLabel.createDiv();
-      row.setCssProps({
-        display: "flex",
-        alignItems: "center",
-        gap: "4px",
-      });
+      const row = this.contextNotesLabel.createDiv("horme-context-notes-row");
 
-      const removeBtn = row.createEl("span", { text: "\u00d7" });
-      removeBtn.setCssProps({
-        cursor: "pointer",
-        opacity: "0.6",
-        fontWeight: "bold",
-      });
+      const removeBtn = row.createSpan({ text: "\u00d7", cls: "horme-context-notes-remove" });
       removeBtn.addEventListener("click", () => {
         this.selectedContextNotes = this.selectedContextNotes.filter((f) => f.path !== file.path);
         this.updateContextNotesLabel();
       });
 
-      row.createEl("span", { text: file.basename });
+      row.createSpan({ text: file.basename });
     }
   }
 
@@ -957,7 +931,7 @@ export class HormeChatView extends ItemView {
     const fileInput = activeDocument.createElement("input");
     fileInput.type = "file";
     fileInput.accept = ".txt,.md";
-    fileInput.setCssProps({ display: "none" });
+    fileInput.hide();
     activeDocument.body.appendChild(fileInput);
 
     const cleanup = () => {
@@ -2069,7 +2043,7 @@ export class HormeChatView extends ItemView {
     if (links.length === 0) return;
     const uniqueLinks = Array.from(new Set(links));
     const sourcesEl = bubbleEl.createDiv("horme-sources-container horme-skill-sources-container");
-    sourcesEl.createSpan({ text: "Skill Sources:", cls: "horme-sources-label" });
+    sourcesEl.createSpan({ text: "Skill sources:", cls: "horme-sources-label" });
 
     const listEl = sourcesEl.createDiv("horme-sources-list");
     for (const link of uniqueLinks) {
@@ -2099,7 +2073,7 @@ export class HormeChatView extends ItemView {
     const listEl = sourcesEl.createDiv("horme-sources-list");
     paths.forEach((path) => {
       const filename = path.split("/").pop() || path;
-      const pill = listEl.createEl("span", { text: filename, cls: "horme-source-pill" });
+      const pill = listEl.createSpan({ text: filename, cls: "horme-source-pill" });
       pill.title = path;
       pill.addEventListener("click", () => {
         void (async () => {
@@ -2180,9 +2154,9 @@ export class HormeChatView extends ItemView {
     };
 
     const dots = el.createSpan({ cls: "horme-dot-pulse" });
-    dots.createEl("span");
-    dots.createEl("span");
-    dots.createEl("span");
+    dots.createSpan();
+    dots.createSpan();
+    dots.createSpan();
     this.scrollToBottom();
     return el;
   }
@@ -2352,7 +2326,9 @@ export class HormeChatView extends ItemView {
     this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
   }
   private autoGrow() {
-    this.inputEl.setCssProps({ height: "auto" });
+    // Without a height of its own the box takes the height of its rows (no rule sets
+    // one), so its scrollHeight is the height its text needs.
+    this.inputEl.setCssProps({ height: "" });
     this.inputEl.setCssProps({ height: `${Math.min(this.inputEl.scrollHeight, 140)}px` });
   }
 

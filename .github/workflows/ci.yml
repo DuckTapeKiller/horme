@@ -25,8 +25,9 @@ jobs:
       - name: Check formatting
         run: npm run format:check
 
+      # Obsidian's official plugin lint (eslint-plugin-obsidianmd). Fails on any warning.
       - name: Lint
-        run: npm run lint
+        run: npx eslint . --max-warnings=0
 
       - name: Type check
         run: npx tsc --noEmit
