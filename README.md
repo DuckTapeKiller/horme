@@ -1,433 +1,280 @@
+<div align="center">
+
+# ▵ Horme
+
+**A private AI assistant for Obsidian that runs on your own computer.**<br>
+Chat with your notes, proofread and rewrite text, and search your vault by meaning.
+
 [![GitHub Repo stars](https://img.shields.io/github/stars/DuckTapeKiller/horme?style=flat&logo=obsidian&color=%2327ae60)](https://github.com/DuckTapeKiller/horme/stargazers)
-[![GitHub issues](https://img.shields.io/github/issues/DuckTapeKiller/horme?logo=obsidian&color=%2327ae60)](https://github.com/DuckTapeKiller/horme/issues)
-[![GitHub closed issues](https://img.shields.io/github/issues-closed/DuckTapeKiller/horme?logo=obsidian&color=%2327ae60)](https://github.com/DuckTapeKiller/horme/issues?q=is%3Aissue+is%3Aclosed)
 [![GitHub manifest version](https://img.shields.io/github/manifest-json/v/DuckTapeKiller/horme?logo=obsidian&color=%2327ae60)](https://github.com/DuckTapeKiller/horme/blob/main/manifest.json)
 [![Downloads](https://img.shields.io/github/downloads/DuckTapeKiller/horme/total?logo=obsidian&color=%2327ae60)](https://github.com/DuckTapeKiller/horme/releases)
-
-# <span style="color:#7c3aed">&#9653; Horme</span>
+[![GitHub issues](https://img.shields.io/github/issues/DuckTapeKiller/horme?logo=obsidian&color=%2327ae60)](https://github.com/DuckTapeKiller/horme/issues)
 
 <a href="https://community.obsidian.md/plugins/horme"><img alt="Get it on Obsidian" src="assets/get-it-on-obsidian.svg"></a>
 
-**AVAILABLE IN OBSIDIAN COMMUNITY PLUGINS**
+![Horme](images/illustration.jpeg)
 
-_In Greek mythology, Horme (/ˈhɔːrmiː/; Ancient Greek: Ὁρμή) is the Greek spirit personifying energetic activity, impulse or effort (to do a thing), eagerness, setting oneself in motion, and starting an action, and particularly onrush in battle._
+_In Greek mythology, Horme (Ancient Greek: Ὁρμή) is the spirit of impulse and effort: setting oneself in motion and starting an action._
 
-![Illustration](images/illustration.jpeg)
-
----
-
-> [!IMPORTANT]
->
-> # Quick start
->
-> ## TLDR — For Non-Technical Users
->
-> To use this plugin's full capabilities, you need two local models:
->
-> 1.  **An Indexing Model:** This model allows the plugin to interact with and index your notes.
-> 2.  **An Interaction Model:** This is the model you will actually chat or “speak” with.
->
-> ---
->
-> ### Prerequisites: Setting up LM Studio
->
-> We recommend using **LM Studio* to manage your local models. You can download it here: [Download LM Studio]([https://ollama.com/download](https://lmstudio.ai/download).
->
-> **1. Download the Indexing Model:**
-> This model is _only_ for indexing your vault in a compressed format; you cannot chat with it.
->
-> - **Recommended Model:**
->
-> - `nomic-embed-text:latest` (274 MB) **if** your vault contains text in one language;
-> - `nomic-embed-text-v2-moe` (957 MB) **if** you have a multilingual vault.
->
-> Open LM Studio, go to "Model search", type one of the models described above.
-> 
-> **2. Download the Interaction Model:**
->
-> This is the model you will use for asking questions.
->
-> - **Strong Recommendation:** `gemma-4-e4b` (9.6 GB)
->
-> In LM Studio, go to "Model search", type one of the models described above.
->
-> ### Manual Installation Steps
->
-> Once both models are downloaded, follow these steps to install Horme:
->
-> 1.  **Create Plugin Folder:**
->     - Navigate to your hidden Obsidian folder: `.obsidian/plugins`
->     - Create a new folder named `horme`.
-> 2.  **Download Plugin Files:**
->     - Go to the repository releases page: [Horme Releases](https://github.com/DuckTapeKiller/horme/releases).
->     - Download the three files from the most recent release:
->       - `main.js`
->       - `manifest.json`
->       - `styles.css`
-> 3.  **Activate in Obsidian:**
->     - Go to **Settings** in Obsidian.
->     - Scroll down and toggle on **“Enable Local Vault Memory”**.
->     - Select the indexing model you just downloaded: **`nomic-embed-text:latest`**.
->     - Wait for the count in the status bar to finish processing.
->
-> ### Ready to Use
->
-> Once the indexing is complete, go to the **Horme chat box** and ask any question about your notes.
->
-> **Example Query:**
->
-> > “I want to write an essay on modern art, help me find which of my notes can help me.”
->
-> When using local providers (Ollama/LM Studio), no data leaves your machine and no API keys are required. If you use a cloud provider, Horme stores API keys via Obsidian Secret Storage (not in `data.json`).
+</div>
 
 ---
 
-## <span style="color:#7c3aed">&#9776; Table of Contents</span>
+## ◈ What Horme does
 
-- [Installation](#-installation)
-- [Requirements](#-requirements)
-- [Features](#-features)
-  - [Vault Brain (Local RAG)](#-vault-brain-local-rag)
-    - [Search Relevance & Mathematics](#-search-relevance--mathematics)
-  - [Live Connections](#-live-connections)
-  - [Semantic Tagging](#-semantic-tagging)
-  - [Grammar Proofreading Engine](#-grammar-proofreading-engine)
-  - [Frontmatter Summary Generation](#-frontmatter-summary-generation)
-  - [AI Skills](#-ai-skills)
-  - [Privacy Firewall](#-privacy-firewall)
-  - [Chat Panel](#-chat-panel)
-  - [Multi-Note Context](#-multi-note-context)
-  - [Right-Click Context Menu](#-right-click-context-menu)
-  - [Inline Diff Confirmation](#-inline-diff-confirmation)
-  - [Status Bar Progress](#-status-bar-progress)
-  - [Token Awareness](#-token-awareness)
-  - [Note Context](#-note-context)
-  - [Document Upload](#-document-upload)
-  - [Chat History](#-chat-history)
-  - [Export Conversation](#-export-conversation)
-  - [System Prompt Presets](#-system-prompt-presets)
-  - [Per-Note Frontmatter Prompts](#-per-note-frontmatter-prompts)
-- [Providers](#-providers)
-- [Settings](#-settings)
-- [Release Files](#-release-files)
-- [Author](#-author)
-- [License](#-license)
+- **Chat with your vault.** Ask a question and Horme finds the passages in your notes that answer it, then replies with them in view.
+- **Fix and reshape text.** Select text, right-click, and proofread, rewrite, expand, summarise, translate or fact-check it. You approve every change before it replaces anything.
+- **Find related notes.** A side panel shows the notes closest in meaning to the one you are reading.
+- **Tag, summarise and file.** Horme suggests tags, writes a summary into a note's properties, and turns a term into a researched concept note.
+- **Use tools.** Horme can look things up on Wikipedia, Wiktionary, Britannica and DuckDuckGo, read a web page, calculate dates, consult your own grammar notes, and call any web API you set up.
+- **Stay private.** With a local model, nothing leaves your computer. Cloud providers are optional, and every kind of content needs your consent before it is sent to one.
 
 ---
 
-## <span style="color:#7c3aed">&#9662; Installation</span>
+## ◈ Quick start with llama.cpp
 
-1. Download `main.js`, `styles.css`, and `manifest.json`.
-2. Create a folder named `horme` inside your vault's `.obsidian/plugins/` directory.
-3. Place the three files inside that folder.
-4. Open Obsidian &#10132; Settings &#10132; Community Plugins &#10132; enable **Horme**.
+Horme works with several AI providers. The recommended set-up is **[llama.cpp](https://github.com/ggml-org/llama.cpp)**: free, fast, open source, and everything runs on your own computer.
 
----
+You need two models: a **chat model**, which writes the answers, and an **embedding model**, which turns your notes into numbers so Horme can search them by meaning.
 
-## <span style="color:#7c3aed">&#9670; Requirements</span>
+### 1 · Install llama.cpp
 
-| Dependency          | Details                                                                                 |
-| ------------------- | --------------------------------------------------------------------------------------- |
-| **Ollama**          | Must be running locally at `http://127.0.0.1:11434` (configurable).                     |
-| **Embedding Model** | Specialized model for RAG (e.g. `ollama pull nomic-embed-text` or `mxbai-embed-large`). |
-| **Chat Model**      | Pull a model with `ollama pull <model>` (e.g. `gemma3`, `llama3`).                      |
-| **Obsidian**        | v1.11.4 or later (required for Secret Storage API keys).                                |
+On a Mac with [Homebrew](https://brew.sh):
 
----
-
-## <span style="color:#7c3aed">&#9733; Features</span>
-
-### <span style="color:#6d28d9">&#9655; Vault Brain (Local RAG)</span>
-
-The Vault Brain gives the AI long-term memory of your entire knowledge base. It uses a high-performance, private Retrieval-Augmented Generation (RAG) engine.
-
-- **Lean Indexing:** Horme does not store your text in the index. It stores character offsets and mathematical "fingerprints" (embeddings), reducing index size by 90% and keeping startup instant.
-- **Auto-Pilot Indexing:** The system automatically detects when you create or modify a note and updates the index in the background (with a 2-second debounce to save resources).
-- **Heading-Aware Chunking:** Notes are split into semantically meaningful chunks that preserve heading context, so the model knows which section a passage belongs to.
-- **Model-Aware Prefixes:** The indexer automatically applies the correct asymmetric prefix convention for your embedding model (nomic-embed-text, mxbai-embed-large, or symmetric models), ensuring high-fidelity retrieval.
-- **Multi-Query Fusion:** Search runs dual-embedding (full query + keyword distillation) for improved recall across your vault.
-- **Model-Locked Integrity:** The index is versioned. If you change your embedding model in settings, the plugin detects the mismatch and prompts for a rebuild to prevent corrupted results.
-- **Session Toggle:** A "Use Vault Brain" checkbox in the chat header lets you disable vault search per-session for faster responses when you don't need it.
-
-#### <span style="color:#6d28d9">&#9655; Search Relevance & Mathematics</span>
-
-The search engine uses a hybrid relevance scoring formula combining semantic embeddings, structured metadata matching, and a content-aware "deep scan".
-
-The total score for any candidate chunk is:
-$$\text{Total Score} = \text{Vector Score} + \text{Metadata Bonus} + \text{Content Bonus}$$
-
-With a maximum possible score of **$1.45$**, the relevance weights are precisely allocated as follows:
-
-| Element                                       | Max Score Contribution | Precise Relative Weight |
-| :-------------------------------------------- | :--------------------: | :---------------------: |
-| **Semantic Vector Similarity (Embeddings)**   |         `1.00`         |      **$69.0\%$**       |
-| **Metadata Keyword Matching**                 |         `0.25`         |      **$17.2\%$**       |
-| **Content Body Keyword Matching (Deep Scan)** |         `0.20`         |      **$13.8\%$**       |
-| **Total**                                     |       **`1.45`**       |       **$100\%$**       |
-
-##### Precise Breakdown of the Scoring Components
-
-1. **Semantic Vector Score (Max Contribution: `1.00`, $69\%$ Weight):**
-   - Calculated using cosine similarity between the query embedding and the chunk embedding (which mathematically ranges from `-1.0` to `1.0`).
-2. **Metadata Keyword Bonus (Max Cap: `0.25`, $17.2\%$ Weight):**
-   - Rewards exact matches in the note's structured fields (File Path, Summary, Tags, Headings).
-   - **Quoted Terms Boost (e.g., `"exact search"`):** `+0.15` per term.
-   - **Regular Keyword Terms Boost:**
-     - File Path (Title): `+0.05` per matching word.
-     - YAML Summary (`resumen`): `+0.04` per matching word.
-     - Heading Hierarchy: `+0.04` per matching word.
-     - Tags: `+0.03` per matching word.
-3. **Content Body Keyword Bonus (Max Cap: `0.20`, $13.8\%$ Weight):**
-   - Done as a "Deep Scan" on the actual body text for the top 50 candidates:
-   - **Quoted Terms Boost inside body:** `+0.15` per term.
-   - **Regular Keyword Terms inside body:** `+0.05` per term.
-
-### <span style="color:#6d28d9">&#9655; Live Connections</span>
-
-Horme can magically surface notes semantically related to what you're currently reading or writing in real-time. This feature runs entirely locally on top of the Vault Brain.
-
-- **Real-time Discovery:** As you switch notes, a sidebar panel updates to show you related content across your vault.
-- **Granular Control:** Adjust the similarity threshold, limit the maximum number of results, and exclude specific folders (like Templates or Daily Notes) directly from settings.
-- **Privacy First:** Connections are generated locally using your indexed vector embeddings. No data is sent to the cloud.
-
----
-
-### <span style="color:#6d28d9">&#9655; Semantic Tagging</span>
-
-Manage large tag collections (3,000+ tags) with ease using the **Hybrid Tag Suggester**.
-
-- **Keyword + Semantic:** Combines traditional word-matching with mathematical topic-matching. It finds specific names (like "Hernán Cortés") AND broad themes (like "Spanish History") simultaneously.
-- **Intelligent Candidates:** From a collection of thousands, it selects the most relevant candidates and lets your local LLM make the final, precise selection.
-- **Shadow Tagging (Bilingual):** Translate your tags automatically during indexing. Keep your vault in one language (e.g. Spanish `#pájaros`) but retrieve them using another (e.g. English "birds"). This is fully decoupled from the chat model, allowing you to use a dedicated local model just for translations. This does not affect your real tags in any way. It is just for the index.
-- **Tag Index:** Dedicated tag brain that maps your entire hierarchy for instant retrieval. Use `Rebuild Tag Index` in settings to refresh.
-- **Tag Button:** Quick access via the "Tags" button in the chat header.
-
----
-
-### <span style="color:#6d28d9">&#9655; Grammar Proofreading Engine</span>
-
-Feed the AI your own grammar manuals and style guides. Horme indexes them locally and consults them during proofreading.
-
-- **Local Grammar Index:** Point the plugin to a folder containing your grammar reference notes. Horme chunks and indexes them for semantic retrieval.
-- **Language-Aware Activation:** Set your grammar language in settings (e.g. "Español"). The grammar skill is only triggered when proofreading text in that language — English text won't invoke Spanish grammar rules.
-- **Academic Precision:** When proofreading, the AI is explicitly instructed to consult your grammar manuals for non-obvious errors like false cognates, prepositional regimes, and orthotypography.
-
----
-
-### <span style="color:#6d28d9">&#9655; Frontmatter Summary Generation</span>
-
-Automatically generate concise summaries and write them directly into your notes' YAML frontmatter.
-
-- **Configurable Field:** Choose the frontmatter key (e.g. `summary`, `resumen`, `abstract`) in settings.
-- **Configurable Language:** Summaries are generated in your chosen language.
-- **Two Access Points:** Use the "Summary" button in the chat header or the command palette (`Horme: Generate frontmatter summary`).
-- **Overwrite Protection:** If a summary already exists, a confirmation dialog shows old vs. new before replacing.
-
----
-
-### <span style="color:#6d28d9">&#9655; AI Skills</span>
-
-Horme extends the LLM with modular skills that it can invoke autonomously during conversations and actions. Skills are tool calls the model emits when it needs external information.
-
-| Skill                         | Type            | Description                                                                                                                                                          |
-| ----------------------------- | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Wikipedia Search**          | &#127760; Web   | Searches Wikipedia for factual verification. Supports multiple languages (`en`, `es`, `fr`, etc.). Returns summaries and relevant article sections with source URLs. |
-| **Wiktionary Lookup**         | &#127760; Web   | Looks up word definitions, etymology, and usage notes. Useful for distinguishing false friends and verifying word existence. Multi-language.                         |
-| **DuckDuckGo Instant Answer** | &#127760; Web   | Quick facts and topic summaries for recent events, technical specs, and niche topics not covered by Wikipedia. No API key required.                                  |
-| **Date Calculator**           | &#128187; Local | Computes time differences between dates, verifies day-of-week for historical dates, and checks chronological consistency. Pure computation, zero latency.            |
-| **Vault Linker**              | &#128218; Index | Finds semantically related notes within your vault. Privacy-guarded — only available to local providers (or with explicit cloud opt-in).                             |
-| **Taxonomy Scholar**          | &#128218; Index | Retrieves the full list of existing tags to ensure consistent tagging.                                                                                               |
-| **Grammar Scholar**           | &#128218; Index | Consults your local grammar and orthography manuals for precision checks on syntax, false friends, and orthotypography.                                              |
-
-#### Custom HTTP Skills
-
-Beyond the built-in skills, you can create your own HTTP-based skills to connect Horme to any REST API (local or public). You just configure the URL, method, headers, and a response path.
-
-**Example: Open Library Book Search**
-
-- **Method:** `GET`
-- **URL:** `https://openlibrary.org/search.json?q={{query}}&limit=3`
-- **Response Path:** `docs`
-
-When armed, typing a query (e.g., "Don Quixote") replaces the `{{query}}` placeholder, makes the request, extracts the `docs` array, and injects it directly into the AI's context so it can answer your question using real-time data.
-
----
-
-### <span style="color:#6d28d9">&#9655; Privacy Firewall</span>
-
-Horme is built with a "Privacy-First" architecture with four layers of protection on vault data.
-
-- **Cloud Lock:** If you switch to a cloud provider (Claude, Gemini, etc.), the Vault Brain, background indexer, and Vault Linker skill are immediately disabled. No private note content is processed by external servers.
-- **Skill Suppression:** When vault search is locked, the Vault Linker skill is hidden from the model's instructions entirely — the model never even knows it exists.
-- **Defence in Depth:** Even if a prompt-injected model somehow attempts to call the vault skill, the skill itself refuses to execute when access is locked.
-- **Context Warning:** A one-time confirmation dialog is required before sending the current note context to a cloud provider.
-- **Explicit Opt-In:** An "Allow Cloud Provider Access" toggle (with a confirmation prompt) is required before any vault content can be sent to cloud providers.
-- **Tag & Grammar indexes** are available to all providers — they contain only tag names and grammar manual excerpts, not private vault content.
-
----
-
-### <span style="color:#6d28d9">&#9655; Chat Panel</span>
-
-Open the chat panel from the ribbon icon (&#9653;) or the command palette (`Horme: Open chat panel`).
-
-- **Streaming UI:** Responses rendered as live Markdown with code blocks, lists, and full text selection.
-- **Connection Indicator:** Live coloured dot showing LM Studio status.
-- **Model Selector:** Switch between available models directly from the chat header.
-- **Micro-Batching:** Optimized for Apple Silicon; handles large context windows by processing embeddings in small, stable groups.
-
----
-
-### <span style="color:#6d28d9">&#9655; Multi-Note Context</span>
-
-Send multiple notes as context to the AI in a single conversation.
-
-- **Note Picker:** Click "+ Add notes" in the chat header to open a fuzzy search modal. Select up to 5 notes.
-- **Folder Picker:** Click "+ Add folders" to include all notes inside a folder (and its subfolders) as context. If the folder is too large, Horme truncates it to the configured character budget.
-- **Selected Notes Label:** A compact label shows which notes are currently included as context.
-- **Clear All:** One-click button to remove all selected notes.
-- **Per-Session:** Selections persist across messages within the same chat session and are cleared on new conversations.
-
----
-
-### <span style="color:#6d28d9">&#9655; Right-Click Context Menu</span>
-
-Select text in any note to access professional editing tools via right-click &#10132; **Horme**:
-
-| Action              | Description                                                                                          |
-| ------------------- | ---------------------------------------------------------------------------------------------------- |
-| **Proofread**       | Fixes grammar, spelling, and punctuation. Consults your grammar manuals for the configured language. |
-| **Rewrite**         | Opens a tone picker: Formal, Friendly, Academic, Sarcastic, Aggressive, or Humanise.                 |
-| **Expand**          | Adds detail while preserving meaning.                                                                |
-| **Summarize**       | Condenses text to key points.                                                                        |
-| **Beautify Format** | Fixes heading hierarchy, normalizes lists and spacing.                                               |
-| **Fact Check**      | Verifies each claim against Wikipedia. Returns structured verdicts with source citations.            |
-| **Translate**       | Opens a language input modal. Translates to any language.                                            |
-
----
-
-### <span style="color:#6d28d9">&#9655; Inline Diff Confirmation</span>
-
-Before any text is changed, Horme shows a side-by-side **Original vs. Replacement** modal. You review the changes and explicitly click **Accept** or **Cancel**. All changes are fully undoable with `Ctrl+Z`.
-
----
-
-### <span style="color:#6d28d9">&#9655; Status Bar Progress</span>
-
-A professional progress indicator appears in the Obsidian status bar during background tasks:
-
-- **&#9679; Indexing 47 / 3210**
-
-The indicator is color-coded and disappears automatically when the task is finished.
-
----
-
-### <span style="color:#6d28d9">&#9655; Token Awareness</span>
-
-Horme estimates the total token count of the conversation before sending. If the context (system prompt + note context + documents + history) exceeds **~6,000 tokens**, a warning notice is displayed to prevent silent truncation.
-
----
-
-### <span style="color:#6d28d9">&#9655; Note Context</span>
-
-Toggle **"Use current note as context"** to inject the active note's content. The plugin tracks the last focused markdown editor live, so switching tabs updates the context automatically.
-
----
-
-### <span style="color:#6d28d9">&#9655; Document Upload</span>
-
-Upload `.txt` and `.md` files directly into the chat. Horme injects the file content as context for the model.
-
----
-
-### <span style="color:#6d28d9">&#9655; Chat History</span>
-
-Manage your past conversations via the History panel (&#128337;):
-
-- **Debounced Saving:** History is saved every 2 seconds during active chat to minimize disk I/O.
-- **Capped Storage:** Retains up to 200 conversations; oldest entries are automatically trimmed.
-- **Flush on Close:** In-progress conversations are guaranteed to save when the chat panel is closed.
-
----
-
-### <span style="color:#6d28d9">&#9655; Export Conversation</span>
-
-Export any conversation as a formatted Markdown note (&#11015;). The file is saved to the configured export folder with a timestamped filename, preserving the distinction between User and Assistant messages.
-
----
-
-### <span style="color:#6d28d9">&#9655; System Prompt Presets</span>
-
-Create reusable system prompts (e.g. "Constitutional Law Professor", "Code Auditor", "Spanish Tutor") in settings. Switch between them from the preset dropdown in the chat header — no need to retype.
-
----
-
-### <span style="color:#6d28d9">&#9655; Per-Note Frontmatter Prompts</span>
-
-Override the global system prompt for specific notes by adding a `horme-prompt` key to the YAML frontmatter. This allows for note-specific personas that activate automatically when the note is in context.
-
-```yaml
----
-horme-prompt: "You are an expert in constitutional law. Always cite legal precedent."
----
+```bash
+brew install llama.cpp
 ```
 
+On Windows or Linux, download a ready-made build from the [llama.cpp releases page](https://github.com/ggml-org/llama.cpp/releases).
+
+### 2 · Download the two models
+
+Models come as single `.gguf` files. Search for these names on [Hugging Face](https://huggingface.co/models) and download the `Q8_0` file of each into one folder, for example `~/models`.
+
+| Role      | Model                     | File size | Notes                                                                    |
+| --------- | ------------------------- | --------: | ------------------------------------------------------------------------ |
+| Chat      | `gemma-4-E4B-it`          |    8.0 GB | The recommended chat model. Good in many languages, and uses tools well. |
+| Chat      | `gemma-4-E2B-it`          |    5.0 GB | A lighter choice for computers with less memory.                         |
+| Embedding | `nomic-embed-text-v2-moe` |    512 MB | Reads notes in many languages. Needed for Vault Brain.                   |
+
+### 3 · Start the two servers
+
+Open a terminal and start the chat server:
+
+```bash
+llama-server -m ~/models/gemma-4-E4B-it-Q8_0.gguf --port 8130
+```
+
+In a second terminal window, start the embedding server:
+
+```bash
+llama-server -m ~/models/nomic-embed-text-v2-moe.Q8_0.gguf --embeddings --port 8131
+```
+
+Ports `8130` and `8131` are the addresses Horme expects, so nothing needs changing in its settings. Leave both windows open while you use Horme.
+
+> [!TIP]
+> To switch chat models from inside Horme, start the chat server in router mode instead. It offers every model in the folder and loads the one you pick:
+>
+> ```bash
+> llama-server --models-dir ~/models --port 8130
+> ```
+
+### 4 · Install Horme
+
+In Obsidian, open **Settings → Community plugins → Browse**, search for **Horme**, then choose **Install** and **Enable**.
+
+<details>
+<summary>Installing by hand instead</summary>
+
+1. Download `main.js`, `manifest.json` and `styles.css` from the latest [release](https://github.com/DuckTapeKiller/horme/releases).
+2. Create the folder `.obsidian/plugins/horme` inside your vault and put the three files in it.
+3. In **Settings → Community plugins**, enable **Horme**.
+
+</details>
+
+### 5 · Connect Horme
+
+1. Open **Settings → Horme → Models**. **Provider** is already **llama.cpp (local)**, and the **Connection** line turns green once both servers are running.
+2. Open **Vault Brain**, turn on **Use Vault Brain**, and press **Rebuild**. Horme reads your notes once; the progress shows in the status bar. After that it keeps the index up to date as you write.
+
+### 6 · Ask
+
+Click the **▵** icon in the left ribbon, or run **Horme: Open chat panel** from the command palette, and ask something about your notes:
+
+> _I want to write an essay on modern art. Which of my notes can help me?_
+
 ---
 
-## <span style="color:#7c3aed">&#9741; Providers</span>
+## ◈ Features
 
-Horme supports multiple AI providers. Local providers are recommended for privacy.
+### Chat
 
-| Provider       | Type            | Notes                                               |
-| -------------- | --------------- | --------------------------------------------------- |
-| **Ollama**     | &#127968; Local | Default. Full feature access including Vault Brain. |
-| **LM Studio**  | &#127968; Local | Full feature access including Vault Brain.          |
-| **Claude**     | &#9729; Cloud   | Vault Brain requires explicit opt-in.               |
-| **Gemini**     | &#9729; Cloud   | Vault Brain requires explicit opt-in.               |
-| **OpenAI**     | &#9729; Cloud   | Vault Brain requires explicit opt-in.               |
-| **Groq**       | &#9729; Cloud   | Vault Brain requires explicit opt-in.               |
-| **OpenRouter** | &#9729; Cloud   | Vault Brain requires explicit opt-in.               |
+| Feature                | What it does                                                                                                        |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| **Streaming replies**  | Answers appear as they are written, rendered as Markdown. Stop a reply at any time; what arrived is kept.           |
+| **Model menu**         | Switch models from the chat header.                                                                                 |
+| **Vault Brain toggle** | Turn note search on or off for the conversation.                                                                    |
+| **Current note**       | Send the note you are reading along with your question.                                                             |
+| **+ Add notes**        | Pick up to five notes as context.                                                                                   |
+| **+ Add folders**      | Send the notes in whole folders, up to a limit you set.                                                             |
+| **Documents**          | Upload a `.txt` or `.md` file for one conversation.                                                                 |
+| **Prompt presets**     | Keep reusable instructions as notes, such as "Constitutional law professor", and switch between them in the header. |
+| **Skills menu**        | Run one skill directly with your message, such as a Wikipedia search.                                               |
+| **History**            | Up to 200 conversations, most recent first. Reopen, export to a note, or delete them.                               |
+| **Regenerate**         | Ask again for the latest reply.                                                                                     |
+
+### Text actions
+
+Select text, right-click, and open **Horme**. Every change is shown as **original and replacement** before anything is replaced, and it can be undone. If the text changes while the model works, nothing is replaced and the new version goes to the clipboard.
+
+| Action              | What it does                                                                                                |
+| ------------------- | ----------------------------------------------------------------------------------------------------------- |
+| **Proofread**       | Corrects grammar, spelling and punctuation, and consults your grammar notes for text in their language.     |
+| **Rewrite**         | Rewrites in a tone you pick: formal, friendly, academic, sarcastic, aggressive, or humanised.               |
+| **Expand**          | Adds detail and keeps the meaning.                                                                          |
+| **Summarize**       | Condenses the text to its key points.                                                                       |
+| **Beautify format** | Fixes headings, lists and spacing without changing the words.                                               |
+| **Fact check**      | Checks each claim against Wikipedia and gives a verdict with the source.                                    |
+| **Translate**       | Translates into any language you name.                                                                      |
+
+### Vault Brain
+
+Vault Brain is Horme's index of your notes. It is built and searched on your computer.
+
+- **Up to date as you write.** A note you change is indexed again a few seconds later, in the background.
+- **Searches by meaning and by words.** Results from the embedding model and from keyword matches in titles, headings, tags, summaries and text are blended (reciprocal rank fusion).
+- **Your highlights count.** Optionally, text you marked with `==highlights==` gets its own entry, so it is found first.
+- **You choose what is indexed.** Include or leave out folders with patterns such as `Templates/**`. PDFs can be indexed through the [Text Extractor](https://github.com/scambier/obsidian-text-extractor) plugin.
+- **Never mixes models.** The index records which embedding set-up built it. If the set-up changes, the index is kept but not searched until you switch back or rebuild it.
+
+### Live connections
+
+A side panel lists the notes closest in meaning to the one you are reading. You set how close a note must be, how many to show, and which folders to leave out. Open it with the **cable** ribbon icon or **Horme: Open connections panel**.
+
+### Tags
+
+- **Tag suggestions.** Horme reads the open note and proposes tags, choosing from your existing tags first. You edit the list before anything is written.
+- **Bilingual tag shadowing.** While Vault Brain indexes, each tag can also be stored in a second language, so a search in either language finds the note. Your notes and tags are never changed. A **Test translation** button checks the output first.
+
+### Writing tools
+
+- **Grammar notes.** Point Horme at a folder of grammar and style notes. Proofreading consults them for text in their language.
+- **Frontmatter summaries.** **Horme: Generate frontmatter summary** writes a one- or two-sentence summary into a property you name, in the language you choose, and asks before replacing an existing one.
+- **Concept notes.** Ask in the chat for a concept note on a term; Horme researches it and creates the note from your template.
+- **DOCX export.** **Horme: Convert active note to DOCX**, or the file menu, saves a Word copy of a note.
+
+### Skills
+
+Skills are tools the model can use while it answers. In **agent mode** it plans first and may chain several skills, shown as steps in the chat.
+
+| Skill                    | Kind     | What it does                                                                         |
+| ------------------------ | -------- | ------------------------------------------------------------------------------------ |
+| Wikipedia Search         | Web      | Summaries and relevant sections, in many languages.                                  |
+| Wiktionary Lookup        | Web      | Definitions, etymology and usage notes.                                              |
+| Britannica Search        | Web      | The opening paragraphs of an encyclopaedia article.                                  |
+| DuckDuckGo Instant Answer | Web     | Quick facts and topic summaries.                                                     |
+| Fetch and Summarise      | Web      | Reads a web page you share and summarises it.                                        |
+| Deep Research            | Web      | Searches several sources on a question and gathers the findings.                     |
+| Date & Time Calculator   | Local    | Durations between dates, days of the week, adding time, and the time in any city.    |
+| Vault Linker             | Your vault | Finds notes related to the conversation.                                           |
+| Grammar Scholar          | Your vault | Consults your grammar notes.                                                       |
+| Create Concept Note      | Web and vault | Researches a term and writes a concept note.                                   |
+
+**Custom skills** connect Horme to any web API. Give a URL with a `{{query}}` placeholder, such as `https://openlibrary.org/search.json?q={{query}}&limit=3`, and the part of the answer to keep, such as `docs`. API keys can be read from Obsidian's keychain with `{{secret:your-secret-id}}`, so they never sit in the settings file.
 
 ---
 
-## <span style="color:#7c3aed">&#9881; Settings</span>
+## ◈ Privacy
 
-| Setting                   | Default                  | Description                                                                                |
-| ------------------------- | ------------------------ | ------------------------------------------------------------------------------------------ |
-| **Ollama Base URL**       | `http://127.0.0.1:11434` | Endpoint for the Ollama API.                                                               |
-| **Embedding Model**       | `nomic-embed-text`       | Model used for indexing (e.g. `nomic-embed-text`, `mxbai-embed-large`).                    |
-| **Vault Brain**           | `Off`                    | Toggle for the semantic RAG engine and background indexer.                                 |
-| **Allow Cloud RAG**       | `Off`                    | Explicitly allow vault content to be sent to cloud providers.                              |
-| **Cloud API Keys**        | —                        | Stored in Obsidian Secret Storage (not in `data.json`).                                    |
-| **Grammar Manual Folder** | `Gramática`              | Folder containing your grammar reference notes.                                            |
-| **Grammar Language**      | `Español`                | Language your grammar manuals cover. Proofreading only consults manuals for this language. |
-| **Summary Field**         | `summary`                | Frontmatter key where generated summaries are stored.                                      |
-| **Summary Language**      | `Español`                | Language summaries are written in.                                                         |
-| **Max Tag Candidates**    | `250`                    | Number of existing tags considered for semantic suggestions.                               |
-| **Debug logging**         | `Off`                    | Enables extra developer-console logs (may include file paths).                             |
-| **Export Folder**         | `HORME`                  | Vault-relative path for saved notes and exports.                                           |
+> [!IMPORTANT]
+> With a local provider (llama.cpp, Ollama or LM Studio), your notes, questions and answers never leave your computer.
+
+When you choose a cloud provider:
+
+- **Vault Brain pauses.** Passages from your notes are sent only if you turn on **Let cloud providers read notes**, which asks you to confirm.
+- **You confirm each kind of content.** The current note, picked notes, folders and uploaded documents each ask once before they are sent. Switching to another cloud provider asks again.
+- **Embeddings stay local.** The index is always built by a local server.
+- **API keys stay out of the settings file.** They are kept in Obsidian's keychain.
+- **Web skills only visit public addresses.** They refuse local and private network addresses typed directly, such as `localhost` or `192.168.x.x`.
 
 ---
 
-The last section of the settings, **◈ Support**, has a link to support Horme on [Ko-fi](https://ko-fi.com/ducktapekiller), a link to report a bug or suggest an idea in the [issues](https://github.com/DuckTapeKiller/horme/issues), and the installed version.
+## ◈ Providers
 
-## <span style="color:#7c3aed">&#9744; Release Files</span>
+| Provider       | Where it runs | Notes                                                                    |
+| -------------- | ------------- | ------------------------------------------------------------------------ |
+| **llama.cpp**  | Your computer | Recommended, and selected on a new install. Leave the model empty to use the one the server has loaded. |
+| **Ollama**     | Your computer | Picks an installed chat model if none is set.                            |
+| **LM Studio**  | Your computer | Uses LM Studio's local server.                                           |
+| **Claude**     | Cloud         | Needs an API key from Anthropic.                                         |
+| **Gemini**     | Cloud         | Needs an API key from Google.                                            |
+| **OpenAI**     | Cloud         | Needs an API key from OpenAI.                                            |
+| **Groq**       | Cloud         | Needs an API key from Groq.                                              |
+| **OpenRouter** | Cloud         | Needs an API key from OpenRouter.                                        |
+| **Mistral**    | Cloud         | Needs an API key from Mistral.                                           |
 
-To install Horme, you need exactly three files:
-
-| File            | Purpose                       |
-| --------------- | ----------------------------- |
-| `main.js`       | Bundled plugin logic.         |
-| `styles.css`    | Chat panel and modal styling. |
-| `manifest.json` | Plugin metadata for Obsidian. |
-
----
-
-## <span style="color:#7c3aed">&#9998; Author</span>
-
-**DuckTapeKiller**
+With an API key set, the model field lists the provider's own models.
 
 ---
 
-## <span style="color:#7c3aed">&#9878; License</span>
+## ◈ Settings
 
-MIT
+The settings open on a status card: the active provider with a live connection dot, the size of the Vault Brain index, and whether anything leaves your computer. Each area has its own page, and each page shows its current value, so the whole set-up is visible at a glance. Every setting can also be found with Obsidian's settings search.
+
+| Page                 | What it holds                                                                                                                       |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| **Models**           | The active provider and its set-up (server address, model, API key), a connection check, and every other provider on its own page. |
+| **Chat**             | Temperature, longest reply, the system prompt note, prompt presets, the folder context limit and the export folder.                |
+| **Vault Brain**      | Turn it on, rebuild or delete the index, cloud access to notes, the embedding model, what to index, highlights, search tuning.     |
+| **Live connections** | How close a note must be, how many to show, folders to leave out, style.                                                           |
+| **Tags**             | Tag suggestions (tag list note, provider, model, tag index) and bilingual tag shadowing.                                           |
+| **Writing tools**    | Grammar notes, frontmatter summaries and concept notes.                                                                            |
+| **Skills and agent** | Native tool calling, agent mode and its skill budget, and your custom skills.                                                      |
+| **On mobile**        | A different provider and model for phones and tablets.                                                                             |
+| **Diagnostics**      | Index health, the activity log, and debug logging.                                                                                 |
+
+Model fields offer the models your provider reports and accept any name you type. The list is fetched only when you click into the field.
+
+---
+
+## ◈ Commands
+
+| Command                                 | What it does                                          |
+| --------------------------------------- | ----------------------------------------------------- |
+| Horme: Open chat panel                  | Opens the chat in the right sidebar.                  |
+| Horme: Open connections panel           | Opens Live connections.                               |
+| Horme: Proofread, Expand, Summarize, Beautify Format, Fact check, Rewrite | Text actions on the selection. |
+| Horme: Generate frontmatter summary     | Summarises the open note into a property.             |
+| Horme: Suggest frontmatter tags         | Proposes tags for the open note.                      |
+| Horme: Convert active note to DOCX      | Saves a Word copy in the export folder.               |
+
+---
+
+## ◈ Requirements
+
+- **Obsidian 1.11.4 or later.** The settings are drawn as Obsidian's own pages from version 1.13; earlier versions show the same settings as sections you open and close.
+- **A provider.** llama.cpp is recommended; see the quick start above.
+- **Desktop and mobile.** On a phone or tablet, use a cloud provider or a server on your network: a phone cannot reach `127.0.0.1` on your computer. **Settings → Horme → On mobile** sets a separate provider for mobile devices.
+
+---
+
+## ◈ Troubleshooting
+
+| What you see                                    | What to do                                                                                                                                      |
+| ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| The **Connection** dot is red                   | Check that `llama-server` is running and that the address in **Models** matches its port.                                                       |
+| Vault Brain finds nothing                       | Check that the embedding server is running, then press **Rebuild** in **Vault Brain**.                                                          |
+| "Built with another embedding set-up"           | The embedding model or server changed. Switch back, or press **Rebuild** to index your notes with the new one.                                  |
+| Tags are not translated                         | Set a translation model in **Tags**, or use llama.cpp, which needs none.                                                                        |
+| Anything else                                   | Open **Diagnostics**, then copy the diagnostic report with the copy button and attach it to an [issue](https://github.com/DuckTapeKiller/horme/issues). |
+
+---
+
+## ◈ Support
+
+Horme is free and open source. If it is useful to you, you can support its development on [Ko-fi](https://ko-fi.com/ducktapekiller). Bugs and ideas are welcome in the [issues](https://github.com/DuckTapeKiller/horme/issues).
+
+## ◈ Author and licence
+
+Made by **DuckTapeKiller**. Released under the [MIT licence](LICENSE).

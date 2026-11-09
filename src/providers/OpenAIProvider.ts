@@ -2,6 +2,7 @@ import { requestUrl } from "obsidian";
 import { AiProvider } from "./AiProvider";
 import { asArray, getRecordProp, getStringProp } from "../utils/TypeGuards";
 import { fetchError, requestUrlError } from "../utils/apiError";
+import { isOpenAiReasoningModel } from "../utils/messageRoles";
 
 export class OpenAIProvider implements AiProvider {
   private apiKey: string;
@@ -12,6 +13,15 @@ export class OpenAIProvider implements AiProvider {
     this.apiKey = apiKey;
     this.temperature = temperature;
     this.maxTokens = maxTokens;
+  }
+
+  /**
+   * Reasoning models (o1, o3, gpt-5…) reject max_tokens and any temperature but
+   * the default; they take max_completion_tokens instead.
+   */
+  private limits(model: string): Record<string, number> {
+    if (isOpenAiReasoningModel(model)) return { max_completion_tokens: this.maxTokens };
+    return { temperature: this.temperature, max_tokens: this.maxTokens };
   }
 
   private extractContent(json: unknown): string {
@@ -36,8 +46,7 @@ export class OpenAIProvider implements AiProvider {
           { role: "system", content: system },
           { role: "user", content: prompt },
         ],
-        temperature: this.temperature,
-        max_tokens: this.maxTokens,
+        ...this.limits(model),
       }),
       throw: false,
     });
@@ -57,8 +66,7 @@ export class OpenAIProvider implements AiProvider {
       body: JSON.stringify({
         model,
         messages: msgs,
-        temperature: this.temperature,
-        max_tokens: this.maxTokens,
+        ...this.limits(model),
       }),
       throw: false,
     });
@@ -80,8 +88,7 @@ export class OpenAIProvider implements AiProvider {
       body: JSON.stringify({
         model,
         messages: msgs,
-        temperature: this.temperature,
-        max_tokens: this.maxTokens,
+        ...this.limits(model),
         stream: true,
       }),
       signal,

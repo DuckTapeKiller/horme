@@ -69,6 +69,8 @@ export interface HormeSettings {
   mobileModel: string;
   contextCloudWarningShown: boolean;
   contextNotesCloudWarningShown: boolean;
+  /** Consent to send folder context ("+ Add folders") to a cloud provider. */
+  contextFoldersCloudWarningShown: boolean;
   documentCloudWarningShown: boolean;
   /**
    * Hard cap (in characters) for folder-based context injection from "+ Add folders".

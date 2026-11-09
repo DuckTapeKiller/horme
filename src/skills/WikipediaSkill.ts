@@ -83,7 +83,7 @@ export class WikipediaSkill implements Skill {
 
           if (topSections.length > 0) {
             // Fetch plain text extract of the page with section info
-            const extractUrl = `${wikiBase}/w/api.php?action=query&titles=${encodeURIComponent(pageTitle)}&prop=extracts&exintro=0&explaintext=1&exsectionformat=plain&exchars=3000&format=json&origin=*`;
+            const extractUrl = `${wikiBase}/w/api.php?action=query&titles=${encodeURIComponent(pageTitle)}&prop=extracts&explaintext=1&exsectionformat=plain&exchars=3000&format=json&origin=*`;
             const extractRes = await requestUrlWithTimeout({ url: extractUrl, throw: false });
             const extractJson: unknown = extractRes.json;
             const pages = getRecordProp(getRecordProp(extractJson, "query"), "pages");

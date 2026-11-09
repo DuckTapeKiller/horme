@@ -1,5 +1,6 @@
 import { requestUrl } from "obsidian";
 import { AiProvider } from "./AiProvider";
+import { mergeConsecutiveTurns, splitSystemMessages } from "../utils/messageRoles";
 import { fetchError, requestUrlError } from "../utils/apiError";
 import { asArray, getRecordProp, getStringProp } from "../utils/TypeGuards";
 
@@ -41,13 +42,12 @@ export class GeminiProvider implements AiProvider {
 
   async generateChat(msgs: Array<{ role: string; content: string }>, model: string): Promise<string> {
     if (!this.apiKey) throw new Error("No Gemini API Key");
-    const system = msgs.find((m) => m.role === "system")?.content;
-    const history = msgs
-      .filter((m) => m.role !== "system")
-      .map((m) => ({
-        role: m.role === "assistant" ? "model" : "user",
-        parts: [{ text: m.content }],
-      }));
+    const split = splitSystemMessages(msgs);
+    const system = split.system || undefined;
+    const history = mergeConsecutiveTurns(split.turns).map((m) => ({
+      role: m.role === "assistant" ? "model" : "user",
+      parts: [{ text: m.content }],
+    }));
     const res = await requestUrl({
       url: `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
       method: "POST",
@@ -68,13 +68,12 @@ export class GeminiProvider implements AiProvider {
     signal?: AbortSignal,
   ): Promise<ReadableStreamDefaultReader<Uint8Array>> {
     if (!this.apiKey) throw new Error("No Gemini API Key");
-    const system = msgs.find((m) => m.role === "system")?.content;
-    const history = msgs
-      .filter((m) => m.role !== "system")
-      .map((m) => ({
-        role: m.role === "assistant" ? "model" : "user",
-        parts: [{ text: m.content }],
-      }));
+    const split = splitSystemMessages(msgs);
+    const system = split.system || undefined;
+    const history = mergeConsecutiveTurns(split.turns).map((m) => ({
+      role: m.role === "assistant" ? "model" : "user",
+      parts: [{ text: m.content }],
+    }));
     const res = await window.fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse`,
       {

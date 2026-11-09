@@ -10,6 +10,7 @@ import {
   Menu,
 } from "obsidian";
 import HormePlugin from "../../main";
+import { providerInfo, providerModel } from "./settings/providers";
 import { VIEW_TYPE } from "../constants";
 import { ChatMessage, SavedConversation } from "../types";
 import { SkillCall } from "../skills/types";
@@ -52,6 +53,10 @@ export class HormeChatView extends ItemView {
   private activeAbortController: AbortController | null = null;
   private lastMsgs: ChatMessage[] | null = null;
   private lastModel: string | null = null;
+  /** The provider the last request went to; Regenerate is refused after a switch. */
+  private lastProvider: string | null = null;
+  /** True while a message is being prepared (context, consent, RAG) before streaming starts. */
+  private sendInFlight = false;
   private conversationId: string = this.generateId();
   private uploadedDocContent: string | null = null;
   private uploadedDocName: string | null = null;
@@ -477,7 +482,9 @@ export class HormeChatView extends ItemView {
       });
       this.inputEl.addEventListener("input", () => this.autoGrow());
       this.inputEl.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" && !e.shiftKey) {
+        // isComposing: the Enter that confirms a Japanese, Chinese or Korean
+        // candidate must not send a half-typed message.
+        if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
           e.preventDefault();
           void this.sendMessage().catch((err) => this.plugin.handleError(err, "Chat"));
         }
@@ -760,29 +767,15 @@ export class HormeChatView extends ItemView {
     return { text: parts.join(""), truncated, included, total };
   }
 
+  // The model field of the active provider. llama.cpp was missing here, so the
+  // chat read and wrote Ollama's model while llama.cpp was the provider.
   private getCurrentProviderModel(): string {
-    const p = this.plugin.settings.aiProvider;
-    if (p === "claude") return this.plugin.settings.claudeModel;
-    if (p === "gemini") return this.plugin.settings.geminiModel;
-    if (p === "openai") return this.plugin.settings.openaiModel;
-    if (p === "groq") return this.plugin.settings.groqModel;
-    if (p === "openrouter") return this.plugin.settings.openRouterModel;
-    if (p === "mistral") return this.plugin.settings.mistralModel;
-    if (p === "lmstudio") return this.plugin.settings.lmStudioModel;
-    return this.plugin.settings.defaultModel;
+    return providerModel(this.plugin.settings, this.plugin.settings.aiProvider);
   }
 
   private async setCurrentProviderModel(model: string): Promise<void> {
-    const v = model.trim();
-    const p = this.plugin.settings.aiProvider;
-    if (p === "claude") this.plugin.settings.claudeModel = v;
-    else if (p === "gemini") this.plugin.settings.geminiModel = v;
-    else if (p === "openai") this.plugin.settings.openaiModel = v;
-    else if (p === "groq") this.plugin.settings.groqModel = v;
-    else if (p === "openrouter") this.plugin.settings.openRouterModel = v;
-    else if (p === "mistral") this.plugin.settings.mistralModel = v;
-    else if (p === "lmstudio") this.plugin.settings.lmStudioModel = v;
-    else this.plugin.settings.defaultModel = v;
+    const key = providerInfo(this.plugin.settings.aiProvider).modelKey;
+    (this.plugin.settings as unknown as Record<string, string>)[key] = model.trim();
     await this.plugin.saveSettings();
   }
 
@@ -873,7 +866,7 @@ export class HormeChatView extends ItemView {
       return;
     }
 
-    const label = savedModel || models[0];
+    const label = savedModel || (this.plugin.settings.aiProvider === "llamacpp" ? "Automatic" : models[0]);
     this.modelButton.textContent = `${label} ▾`;
     this.modelButton.title = label;
     this.modelButton.disabled = false;
@@ -983,8 +976,27 @@ export class HormeChatView extends ItemView {
     });
   }
 
+  /**
+   * Sends the message in the input (or regenerates the last reply). A second
+   * call while one is being prepared is ignored, so a double Enter cannot send
+   * twice before streaming starts.
+   */
   private async sendMessage(regenerate = false) {
+    if (this.isGenerating || this.sendInFlight) return;
+    this.sendInFlight = true;
+    try {
+      await this.sendMessageInner(regenerate);
+    } finally {
+      this.sendInFlight = false;
+    }
+  }
+
+  private async sendMessageInner(regenerate: boolean) {
     if (this.isGenerating) return;
+    // Stop, Clear or opening another chat bump the epoch; preparation that was
+    // overtaken must not start a stream.
+    const startEpoch = this.generationEpoch;
+    const startConversation = this.conversationId;
 
     // ── Forced skill execution ──────────────────────────────────────────────
     // When a skill is armed from the dropdown, we bypass both the normal
@@ -1078,6 +1090,8 @@ export class HormeChatView extends ItemView {
         this.addAssistantActions(resultBubble, result);
         this.renderSkillSourceLinks(resultBubble, forcedSkillLinks);
         this.history.push({ role: "assistant", content: result });
+        // Regenerate would replay an older turn's request; a skill run is repeated by running it again.
+        this.lastMsgs = null;
         await this.plugin.historyManager.append({
           id: this.conversationId,
           title: this.history.find((m) => m.role === "user")?.content.slice(0, 60) || "Untitled chat",
@@ -1114,7 +1128,11 @@ export class HormeChatView extends ItemView {
     const initialSourcePath = (mdLeaf?.view instanceof MarkdownView ? mdLeaf.view.file?.path : null) ?? null;
     let currentSources: string[] = [];
 
-    if (regenerate && this.lastMsgs && this.lastModel) {
+    if (regenerate && !this.canRegenerate()) {
+      new Notice("Horme: Only the latest reply can be regenerated, with the provider it came from.");
+      return;
+    }
+    if (regenerate && this.lastMsgs && this.lastModel !== null) {
       if (this.history.length && this.history[this.history.length - 1].role === "assistant") {
         this.history.pop();
       }
@@ -1126,7 +1144,8 @@ export class HormeChatView extends ItemView {
       if (!text) return;
 
       model = this.getCurrentProviderModel().trim();
-      if (!model) {
+      // llama.cpp resolves an empty model to the one the server has loaded.
+      if (!model && this.plugin.settings.aiProvider !== "llamacpp") {
         new Notice("Horme: No model selected.");
         return;
       }
@@ -1213,12 +1232,14 @@ export class HormeChatView extends ItemView {
       if (this.selectedContextFolders.length > 0) {
         let includeFolderContext = true;
 
-        if (!providerIsLocal && !this.plugin.settings.contextNotesCloudWarningShown) {
+        // Its own consent: agreeing to send up to five picked notes is not
+        // agreeing to send whole folders.
+        if (!providerIsLocal && !this.plugin.settings.contextFoldersCloudWarningShown) {
           const ok = await this.confirmCloudSend(
             `Privacy notice: Notes from your selected folders will be sent to ${providerLabel}, a cloud provider. The content will leave your device. Do you want to continue?`,
           );
           if (ok) {
-            this.plugin.settings.contextNotesCloudWarningShown = true;
+            this.plugin.settings.contextFoldersCloudWarningShown = true;
             await this.plugin.saveSettings();
           } else {
             includeFolderContext = false;
@@ -1418,8 +1439,10 @@ export class HormeChatView extends ItemView {
       }
     }
 
+    if (this.generationEpoch !== startEpoch || this.conversationId !== startConversation) return;
     this.lastMsgs = msgs;
     this.lastModel = model;
+    this.lastProvider = this.plugin.settings.aiProvider;
     const epoch = ++this.generationEpoch;
     const loadingEl = this.showLoading();
     await this.handleStreamingResponse(
@@ -1464,6 +1487,30 @@ export class HormeChatView extends ItemView {
     this.isGenerating = true;
     this.sendBtn.addClass("horme-stop-btn");
     setIcon(this.sendBtn, "horme-shell");
+    // The chat this reply belongs to: after Stop the partial reply is kept here;
+    // after Clear or opening another chat it is dropped, never added to that chat.
+    const convoAtStart = this.conversationId;
+    const historyAtStart = this.history;
+    let partialKept = false;
+    /** After Stop: the text received so far stays in this chat's history, once. */
+    const keepPartialReply = async () => {
+      if (partialKept || !(fullContent || fullReasoning)) return;
+      if (this.conversationId !== convoAtStart || this.history !== historyAtStart) return;
+      partialKept = true;
+      this.history.push({
+        role: "assistant",
+        content: fullContent,
+        reasoning: fullReasoning || undefined,
+        context: passages || undefined,
+        sources: sources.length ? sources : undefined,
+      });
+      await this.plugin.historyManager.append({
+        id: this.conversationId,
+        title: this.history.find((m) => m.role === "user")?.content.slice(0, 60) || "Untitled chat",
+        timestamp: Date.now(),
+        messages: this.history,
+      });
+    };
 
     let bubbleEl: HTMLElement | null = null;
     let fullContent = "";
@@ -1643,6 +1690,12 @@ export class HormeChatView extends ItemView {
 
       this.activeReader = null;
 
+      if (this.generationEpoch !== epoch) {
+        // Stopped, or overtaken by Clear or another chat: run no skills.
+        await keepPartialReply();
+        return;
+      }
+
       if (bubbleEl) {
         const el = bubbleEl as HTMLElement;
         // Re-render the final content with Markdown
@@ -1758,6 +1811,12 @@ export class HormeChatView extends ItemView {
             const callKey = `${skillName}:${JSON.stringify(call.parameters ?? {})
               .replace(/\s+/g, "")
               .toLowerCase()}`;
+            // Stop pressed (or another chat opened) while earlier skills ran:
+            // run no more of them and record nothing.
+            if (this.generationEpoch !== epoch) {
+              skillLoading.remove();
+              return;
+            }
             let result: string;
             if (seenSkillCalls.has(callKey)) {
               result = `You already ran ${skillName} with these exact arguments and have the results above. Do not repeat this call. Answer the user's question now using what you already found.`;
@@ -1768,6 +1827,7 @@ export class HormeChatView extends ItemView {
             this.completeTimelineStep(stepRow, /^Error:/i.test(result));
             if (!this.contentEl.isConnected) return;
             skillLoading.remove();
+            if (this.generationEpoch !== epoch) return;
             const skillLinks = this.extractSourceLinks(result);
             for (const link of skillLinks) {
               if (!aggregatedSkillLinks.includes(link)) aggregatedSkillLinks.push(link);
@@ -1786,8 +1846,12 @@ export class HormeChatView extends ItemView {
           // questions.  The `terminal` flag only matters for the forced
           // skill dropdown path (handled in sendMessage), never here.
           let nextMsgs: ChatMessage[] = [];
+          // The first round's system message carries the context the user chose
+          // (current note, picked notes, folders, Vault Brain passages, document);
+          // rebuilding it from the bare prompt dropped all of that after a skill call.
+          const turnSystem = msgs[0]?.role === "system" ? msgs[0].content : undefined;
           const effectivePrompt =
-            this.sessionSystemPromptOverride ?? (await this.plugin.getEffectiveSystemPrompt());
+            turnSystem ?? this.sessionSystemPromptOverride ?? (await this.plugin.getEffectiveSystemPrompt());
           if (effectivePrompt) nextMsgs.push({ role: "system", content: effectivePrompt });
 
           const filteredHistory: ChatMessage[] = [];
@@ -1881,19 +1945,38 @@ export class HormeChatView extends ItemView {
         });
       }
     } catch (e: unknown) {
-      if (e instanceof DOMException && e.name === "AbortError") {
+      // Stop aborts the request, which usually surfaces here rather than as the
+      // end of the stream; whatever arrived before it is kept.
+      if (this.generationEpoch !== epoch) {
+        await keepPartialReply().catch(() => undefined);
+        new Notice("Generation stopped.");
+      } else if (e instanceof DOMException && e.name === "AbortError") {
         new Notice("Generation stopped.");
       } else {
         this.plugin.handleError(e);
       }
     } finally {
       if (loadingEl) loadingEl.remove();
-      this.isGenerating = false;
-      setIcon(this.sendBtn, "send");
-      this.sendBtn.classList.remove("horme-stop-btn");
-      this.activeAbortController = null;
-      this.activeReader = null;
+      // After Stop, a new request may already be running; its state is not ours to reset.
+      if (this.generationEpoch === epoch) {
+        this.isGenerating = false;
+        setIcon(this.sendBtn, "send");
+        this.sendBtn.classList.remove("horme-stop-btn");
+        this.activeAbortController = null;
+        this.activeReader = null;
+      }
     }
+  }
+
+  /** Regenerate needs the request that produced the latest reply, sent to the same provider. */
+  private canRegenerate(): boolean {
+    const last = this.history[this.history.length - 1];
+    return (
+      Boolean(this.lastMsgs) &&
+      this.lastModel !== null &&
+      this.lastProvider === this.plugin.settings.aiProvider &&
+      last?.role === "assistant"
+    );
   }
 
   private addAssistantActions(bubbleEl: HTMLElement, content: string) {
@@ -1910,6 +1993,14 @@ export class HormeChatView extends ItemView {
     const regenBtn = wrapper.createEl("button", { cls: "horme-save-btn", text: "Regenerate" });
     setIcon(regenBtn, "refresh-cw");
     regenBtn.addEventListener("click", () => {
+      if (this.isGenerating || this.sendInFlight) return;
+      // Only the latest reply: an older one would be removed from view while
+      // the newest was replaced in the history.
+      const last = this.history[this.history.length - 1];
+      if (!this.canRegenerate() || last.content !== content) {
+        new Notice("Horme: Only the latest reply can be regenerated, with the provider it came from.");
+        return;
+      }
       bubbleEl.remove();
       wrapper.remove();
       void this.sendMessage(true).catch((e) => this.plugin.handleError(e, "Chat"));
@@ -2173,19 +2264,29 @@ export class HormeChatView extends ItemView {
     empty.createDiv({ cls: "horme-empty-text", text: "Start a conversation with Horme." });
   }
 
-  private async clearChat() {
-    this.history = [];
-    this.conversationId = this.generateId();
+  /** Per-chat state that must not carry over to another chat. */
+  private resetChatState() {
     this.uploadedDocContent = null;
     this.uploadedDocName = null;
+    this.uploadedImages = [];
+    this.uploadedAudio = null;
     this.lastMsgs = null;
     this.lastModel = null;
+    this.lastProvider = null;
     this.rollingRAGContext = [];
     this.lastInjectedPassages = "";
     this.selectedContextNotes = [];
     this.selectedContextFolders = [];
     this.folderContextTruncationNoticeShown = false;
     this.updateContextNotesLabel();
+  }
+
+  private async clearChat() {
+    // A reply still streaming belongs to the chat being left.
+    if (this.isGenerating || this.sendInFlight) await this.stopGeneration();
+    this.resetChatState();
+    this.history = [];
+    this.conversationId = this.generateId();
     this.showingHistory = false;
     await this.renderChatView();
   }
@@ -2306,6 +2407,8 @@ export class HormeChatView extends ItemView {
   }
 
   private async loadConversation(convo: SavedConversation) {
+    if (this.isGenerating || this.sendInFlight) await this.stopGeneration();
+    this.resetChatState();
     this.showingHistory = false;
     this.conversationId = convo.id;
     this.history = convo.messages.map((m) => ({

@@ -1,5 +1,6 @@
 import { Notice, normalizePath } from "obsidian";
 import HormePlugin from "../../main";
+import { EmbeddingService } from "./EmbeddingService";
 import {
   compressEmbedding,
   cosineSimilarityFloatInt8,
@@ -43,8 +44,9 @@ export class TagIndexer {
 
         // Check model compatibility
         this.indexedModel = getStringProp(parsed, "model") ?? "";
-        const currentModel = this.plugin.settings.ragEmbeddingModel;
-        if (this.indexedModel && this.indexedModel !== currentModel) {
+        this.indexedModel = this.plugin.embeddingService.upgradeLegacyLabel(this.indexedModel);
+        const currentModel = this.plugin.embeddingService.embeddingFingerprint();
+        if (!EmbeddingService.sameSpace(this.indexedModel, currentModel)) {
           this.plugin.debugLog(
             `Horme Tags: Model changed (${this.indexedModel} → ${currentModel}). Index cleared.`,
           );
@@ -91,7 +93,7 @@ export class TagIndexer {
         embedding: typeof e.embedding === "string" ? e.embedding : compressEmbedding(e.embedding),
       }));
       const data = JSON.stringify({
-        model: this.plugin.settings.ragEmbeddingModel,
+        model: this.indexedModel || this.plugin.embeddingService.embeddingFingerprint(),
         entries: serializedEntries,
       });
       await adapter.write(this.indexPath, data);
@@ -177,6 +179,7 @@ export class TagIndexer {
       this.plugin.debugLog(`Horme: Indexing ${tagList.length} unique tags...`);
 
       const newIndex: TagEntry[] = [];
+      let failedBatches = 0;
 
       // Process in batches for speed
       const BATCH_SIZE = 50;
@@ -194,6 +197,7 @@ export class TagIndexer {
             }
           }
         } catch (e: unknown) {
+          failedBatches++;
           this.plugin.diagnosticService.report(
             "Tags",
             `Tag batch indexing failed: ${errorToMessage(e)}`,
@@ -202,14 +206,22 @@ export class TagIndexer {
         }
       }
 
+      // A rebuild that could not embed some tags would replace a complete index
+      // with a partial (or empty) one, so the previous index is kept instead.
+      if (failedBatches > 0) {
+        new Notice(
+          `Horme: The tag index was not rebuilt: ${failedBatches} batch${failedBatches === 1 ? "" : "es"} failed. The previous index is kept. See Diagnostics.`,
+        );
+        return;
+      }
       this.index = newIndex;
-      this.indexedModel = this.plugin.settings.ragEmbeddingModel;
+      this.indexedModel = this.plugin.embeddingService.embeddingFingerprint();
       await this.saveIndex();
-      this.plugin.setIndexingStatus(null);
-      new Notice(`✅ Tag Index Ready (${this.index.length} tags)`);
+      new Notice(`Horme: Tag index ready (${this.index.length} tags).`);
       this.plugin.debugLog("Horme: Tag index rebuilt successfully.");
     } finally {
       this.isIndexing = false;
+      this.plugin.setIndexingStatus(null);
     }
   }
 
@@ -218,6 +230,10 @@ export class TagIndexer {
    */
   async getSemanticCandidates(text: string, topN = 50): Promise<string[]> {
     if (this.index.length === 0) return [];
+    // Vectors from another embedding set-up would give meaningless scores.
+    if (!EmbeddingService.sameSpace(this.indexedModel, this.plugin.embeddingService.embeddingFingerprint())) {
+      return [];
+    }
 
     try {
       // Note: No isLocalProviderActive() guard here because EmbeddingService

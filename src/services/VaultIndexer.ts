@@ -2,6 +2,7 @@ import { TFile, Notice, normalizePath } from "obsidian";
 import { minimatch } from "minimatch";
 import HormePlugin from "../../main";
 import { HormeErrorModal } from "../modals/HormeErrorModal";
+import { EmbeddingService } from "./EmbeddingService";
 import {
   compressEmbedding,
   cosineSimilarityFloatInt8,
@@ -258,27 +259,51 @@ export class VaultIndexer {
     this.plugin.debugLog(`Horme Brain: Initializing index at ${this.indexPath}`);
     void this.loadIndex();
 
-    // Wipe index if embedding model changes while plugin is running
-    this.plugin.onSettingsChange(() => {
-      const current = this.plugin.settings.ragEmbeddingModel;
-      if (this.indexedModel && this.indexedModel !== current) {
-        this.plugin.debugLog(
-          `Horme Brain: Model changed to ${current}. Clearing in-memory index and shard files.`,
-        );
-        this.clearIndex();
-        this.indexedModel = current;
-        this.deleteAllShards().catch((e: unknown) => {
-          this.plugin.diagnosticService.report(
-            "Vault Brain",
-            `Failed to delete stale shard files: ${errorToMessage(e)}`,
-          );
-        });
-        new Notice("Vault Brain: Embedding model changed. Index cleared — please rebuild.");
-      }
-    });
+    // When the embedding set-up changes (another model, or another local
+    // server), the stored vectors no longer match new ones. The index is kept,
+    // so switching back restores it, but it is neither searched nor extended
+    // until it matches again or is rebuilt.
+    this.plugin.onSettingsChange(() => this.checkEmbeddingSpace(true));
   }
 
   private readonly SHARD_SIZE = 5000;
+
+  private embeddingServerLabel(): string {
+    const s = this.plugin.settings;
+    const p = this.plugin.embeddingService.embeddingProvider();
+    if (p === "llamacpp") return `the llama.cpp embedding server at ${s.llamaCppEmbeddingUrl}`;
+    if (p === "lmstudio") return `LM Studio at ${s.lmStudioUrl}`;
+    return `Ollama at ${s.ollamaBaseUrl} with "${s.ragEmbeddingModel || "nomic-embed-text"}"`;
+  }
+  private spaceMismatchNotified = false;
+
+  /** True when the stored vectors were made by the current embedding set-up. */
+  isSpaceCompatible(): boolean {
+    if (this.index.length === 0) return true;
+    return EmbeddingService.sameSpace(this.indexedModel, this.plugin.embeddingService.embeddingFingerprint());
+  }
+
+  private checkEmbeddingSpace(notify: boolean): void {
+    if (this.isSpaceCompatible()) {
+      this.spaceMismatchNotified = false;
+      return;
+    }
+    // Only worth saying while Vault Brain can be used: switching the chat to a
+    // cloud provider for a moment (which pauses Vault Brain) is not news.
+    const usable =
+      this.plugin.settings.vaultBrainEnabled &&
+      (this.plugin.isLocalProviderActive() || this.plugin.settings.allowCloudRAG);
+    if (!usable || this.spaceMismatchNotified) return;
+    this.spaceMismatchNotified = true;
+    const message = `The embedding set-up changed (${this.indexedModel} → ${this.plugin.embeddingService.embeddingFingerprint()}). The vault index is kept but not searched until you switch back or rebuild it.`;
+    this.plugin.diagnosticService.report("Vault Brain", message, "warning");
+    if (notify) new Notice(`Vault Brain: ${message}`, 10000);
+  }
+
+  /** The label written with the index: the current set-up, unless the index still holds another one's vectors. */
+  private spaceLabel(): string {
+    return this.isSpaceCompatible() ? this.plugin.embeddingService.embeddingFingerprint() : this.indexedModel;
+  }
 
   private getShardPath(shardIndex: number): string {
     const configDir = this.plugin.app.vault.configDir;
@@ -311,11 +336,7 @@ export class VaultIndexer {
           this.indexedModel = getStringProp(parsed, "model") ?? "";
           this.index = this.parseEntries(getRecordProp(parsed, "entries"));
           this.rebuildPathIndex();
-          const currentModel = this.plugin.settings.ragEmbeddingModel;
-          if (this.indexedModel !== currentModel) {
-            this.clearIndex();
-            this.indexedModel = currentModel;
-          }
+          this.indexedModel = this.plugin.embeddingService.upgradeLegacyLabel(this.indexedModel);
         }
 
         // Save in new sharded format and remove the old monolithic file
@@ -394,8 +415,6 @@ export class VaultIndexer {
   private async loadShardedIndex(): Promise<void> {
     this.clearIndex();
     const adapter = this.plugin.app.vault.adapter;
-    const currentModel = this.plugin.settings.ragEmbeddingModel;
-
     // Best-effort recovery from a previously interrupted save.
     // Ensures we don't silently stop at the first missing shard and accidentally run on a truncated index.
     const folderPath = this.getVaultIndexFolderPath();
@@ -420,15 +439,6 @@ export class VaultIndexer {
       const parsed: unknown = JSON.parse(data);
 
       this.indexedModel = getStringProp(parsed, "model") ?? "";
-      if (this.indexedModel !== currentModel) {
-        this.plugin.debugLog(
-          `Horme Brain: Embedding model changed (${this.indexedModel} → ${currentModel}). Wiping all shards.`,
-        );
-        this.clearIndex();
-        this.indexedModel = currentModel;
-        await this.deleteAllShards();
-        return;
-      }
 
       const shardProp = getNumberProp(parsed, "shard");
       const totalProp = getNumberProp(parsed, "totalShards");
@@ -468,7 +478,11 @@ export class VaultIndexer {
           const shardProp = getNumberProp(parsed, "shard");
           const totalProp = getNumberProp(parsed, "totalShards");
 
-          if (modelProp !== currentModel || shardProp !== shardIndex || totalProp !== expectedTotalShards) {
+          if (
+            modelProp !== this.indexedModel ||
+            shardProp !== shardIndex ||
+            totalProp !== expectedTotalShards
+          ) {
             failLoad(
               shardIndex,
               path,
@@ -505,6 +519,9 @@ export class VaultIndexer {
 
     this.loadWasPartial = false;
     this.rebuildPathIndex();
+    // Older indexes were labelled with the Ollama model setting only.
+    this.indexedModel = this.plugin.embeddingService.upgradeLegacyLabel(this.indexedModel);
+    this.checkEmbeddingSpace(false);
     this.plugin.debugLog(
       `Horme Brain: Loaded ${this.index.length} entries from ${loadedShards} shards (model: ${this.indexedModel}).`,
     );
@@ -536,8 +553,11 @@ export class VaultIndexer {
         // Best-effort recovery/cleanup if a previous save was interrupted.
         await this.reconcileShardArtifacts(folderPath);
 
-        const currentModel = this.plugin.settings.ragEmbeddingModel;
-        const totalShards = Math.max(1, Math.ceil(this.index.length / this.SHARD_SIZE));
+        const currentModel = this.spaceLabel();
+        // Snapshot: a delete or rename during the awaits below must not shift
+        // entries between shards.
+        const snapshot = this.index.slice();
+        const totalShards = Math.max(1, Math.ceil(snapshot.length / this.SHARD_SIZE));
 
         // ── Phase 1: Write all shards to temporary files ──
         // If the process crashes here, only .tmp files are affected;
@@ -546,7 +566,7 @@ export class VaultIndexer {
         const finalPaths: string[] = [];
 
         for (let i = 0; i < totalShards; i++) {
-          const shardEntries = this.index.slice(i * this.SHARD_SIZE, (i + 1) * this.SHARD_SIZE).map((e) => ({
+          const shardEntries = snapshot.slice(i * this.SHARD_SIZE, (i + 1) * this.SHARD_SIZE).map((e) => ({
             path: e.path,
             chunkStart: e.chunkStart,
             chunkEnd: e.chunkEnd,
@@ -965,7 +985,7 @@ export class VaultIndexer {
     if (!this.plugin.settings.indexHighlightsEnabled) return null;
 
     // Ignore frontmatter and code to avoid indexing accidental highlight markers.
-    let text = content.replace(/^---[\s\S]*?---\s*/m, "");
+    let text = content.replace(/^---\r?\n[\s\S]*?\r?\n---[^\S\r\n]*(?:\r?\n|$)/, "");
     text = text.replace(/```[\s\S]*?```/g, "\n").replace(/~~~[\s\S]*?~~~/g, "\n");
     text = text.replace(/`[^`\n]*`/g, " ");
 
@@ -1499,7 +1519,8 @@ t1 -> Translation`;
 
     for (const id of unique) {
       const model = this.getTagTranslationModelFor(id);
-      if (!model) continue;
+      // llama.cpp answers with its loaded model when none is named.
+      if (!model && id !== "llamacpp") continue;
       out.push({ id, provider: this.createProvider(id, maxTokens), model });
     }
 
@@ -1549,7 +1570,7 @@ t1 -> Translation`;
     }
 
     return {
-      fullText: `${getModelPrefixes(this.plugin.settings.ragEmbeddingModel).doc}${parts.join("\n")}`,
+      fullText: `${getModelPrefixes(this.plugin.embeddingService.embeddingModelName()).doc}${parts.join("\n")}`,
       summaryOnly,
       tagsOnly,
     };
@@ -1608,7 +1629,10 @@ t1 -> Translation`;
       // Decoupled Privacy Guard: Indexing is allowed if the embedding model is local (Ollama).
       // Summaries are extracted via regex (local).
       // Tag translation will be handled locally or reported as a warning if it fails.
-      if (!this.plugin.settings.ragEmbeddingModel) {
+      if (
+        this.plugin.embeddingService.embeddingProvider() === "ollama" &&
+        !this.plugin.settings.ragEmbeddingModel
+      ) {
         new Notice("Vault Brain: No embedding model selected.");
         return;
       }
@@ -1616,6 +1640,19 @@ t1 -> Translation`;
         new Notice("Vault Brain: Vault Brain is disabled in settings.");
         return;
       }
+
+      // The index loads in the background at start-up; a rebuild that began
+      // before it finished would be overwritten by the load.
+      const loadDeadline = Date.now() + 60_000;
+      while (!this.isLoaded && Date.now() < loadDeadline) {
+        await new Promise<void>((r) => window.setTimeout(r, 200));
+      }
+
+      // Vectors from another embedding set-up cannot be reused or kept.
+      if (!this.isSpaceCompatible()) this.clearIndex();
+      this.indexedModel = this.plugin.embeddingService.embeddingFingerprint();
+      this.spaceMismatchNotified = false;
+      await this.plugin.embeddingService.resolveEmbeddingModelName();
 
       const textExtractor = this.getTextExtractorApi();
       const pdfIndexRequested = Boolean(this.plugin.settings.vaultIndexIndexPdf);
@@ -1683,6 +1720,9 @@ t1 -> Translation`;
           existingEmbeddingByHash.set(e.chunkHash, emb);
         }
 
+        // The version being read: an edit made while this file is embedded
+        // leaves the entries older than the file, so the edit is indexed next.
+        const mtimeAtRead = file.stat.mtime;
         try {
           const isPdf = file.extension.toLowerCase() === "pdf";
           let content = "";
@@ -1719,7 +1759,7 @@ t1 -> Translation`;
             // Build embedding texts with search_document prefix and heading context
             const embeddingTexts = validChunks.map((c) => {
               const hp = this.getHeadingPathAtOffset(headings, c.start);
-              const docPrefix = getModelPrefixes(this.plugin.settings.ragEmbeddingModel).doc;
+              const docPrefix = getModelPrefixes(this.plugin.embeddingService.embeddingModelName()).doc;
               // Prepend bilingual tags to every chunk so the vector captures both languages.
               // Tags are brief (30–80 chars) and won't dilute the body content meaningfully.
               const tagLine = bilingualTags ? `Tags: ${bilingualTags}\n` : "";
@@ -1728,7 +1768,7 @@ t1 -> Translation`;
 
             // Add a dedicated highlights-only embedding per note (note-level entry).
             if (hasHighlights) {
-              const docPrefix = getModelPrefixes(this.plugin.settings.ragEmbeddingModel).doc;
+              const docPrefix = getModelPrefixes(this.plugin.embeddingService.embeddingModelName()).doc;
               embeddingTexts.unshift(`${docPrefix}${file.basename}\nHighlights:\n${highlightsOnly}`);
             }
 
@@ -1783,7 +1823,7 @@ t1 -> Translation`;
                   chunkEnd: 0,
                   entryType: "summary",
                   embedding: emb,
-                  mtime: file.stat.mtime,
+                  mtime: mtimeAtRead,
                   chunkHash: chunkHashes[cursor],
                   summaryText: fmData.summaryOnly,
                   tagsText: fmData.tagsOnly,
@@ -1801,7 +1841,7 @@ t1 -> Translation`;
                   chunkEnd: 0,
                   entryType: "highlights",
                   embedding: emb,
-                  mtime: file.stat.mtime,
+                  mtime: mtimeAtRead,
                   chunkHash: chunkHashes[cursor],
                   highlightsText: highlightsOnly ?? undefined,
                 });
@@ -1820,7 +1860,7 @@ t1 -> Translation`;
                   chunkEnd: validChunks[j].end,
                   entryType: "content",
                   embedding: emb,
-                  mtime: file.stat.mtime,
+                  mtime: mtimeAtRead,
                   chunkHash: chunkHashes[j + cursor],
                   ...(hp ? { headingPath: hp } : {}),
                   ...(bilingualTags ? { tagsText: bilingualTags } : {}),
@@ -1853,7 +1893,7 @@ t1 -> Translation`;
             new HormeErrorModal(
               this.plugin.app,
               "Vault Brain: Indexing paused",
-              `Indexing stopped after ${consecutiveErrors} consecutive failures. This usually means Ollama is unreachable or the embedding model is not loaded. Check that Ollama is running and that the model "${this.plugin.settings.ragEmbeddingModel}" is available.`,
+              `Indexing stopped after ${consecutiveErrors} consecutive failures. This usually means the embedding server is unreachable or its model is not loaded. Check that ${this.embeddingServerLabel()} is running and serves an embedding model.`,
               `Last error: check the developer console (Ctrl+Shift+I) for details.`,
             ).open();
             this.plugin.settings.indexStatus = "Failed (too many consecutive errors)";
@@ -1956,8 +1996,9 @@ t1 -> Translation`;
     if (!canIndex || !this.plugin.settings.vaultBrainEnabled) {
       return;
     }
-    // Incremental indexing is only allowed after at least one successful full build.
-    if (!(await this.hasBuiltIndex())) {
+    // Incremental indexing is only allowed after at least one successful full build,
+    // and never mixes vectors from another embedding set-up into the index.
+    if (!(await this.hasBuiltIndex()) || !this.isSpaceCompatible()) {
       return;
     }
 
@@ -2090,6 +2131,9 @@ t1 -> Translation`;
         existingEmbeddingByHash.set(e.chunkHash, emb);
       }
 
+      // See rebuildIndex: entries carry the mtime of the version that was read.
+      const mtimeAtRead = file.stat.mtime;
+      await this.plugin.embeddingService.resolveEmbeddingModelName();
       const isPdf = file.extension.toLowerCase() === "pdf";
       let content = "";
       if (isPdf) {
@@ -2124,7 +2168,7 @@ t1 -> Translation`;
 
         const embeddingTexts = validChunks.map((c) => {
           const hp = this.getHeadingPathAtOffset(headings, c.start);
-          const docPrefix = getModelPrefixes(this.plugin.settings.ragEmbeddingModel).doc;
+          const docPrefix = getModelPrefixes(this.plugin.embeddingService.embeddingModelName()).doc;
           // Prepend bilingual tags to every chunk so the vector captures both languages.
           // Tags are brief (30–80 chars) and won't dilute the body content meaningfully.
           const tagLine = bilingualTags ? `Tags: ${bilingualTags}\n` : "";
@@ -2132,7 +2176,7 @@ t1 -> Translation`;
         });
 
         if (hasHighlights) {
-          const docPrefix = getModelPrefixes(this.plugin.settings.ragEmbeddingModel).doc;
+          const docPrefix = getModelPrefixes(this.plugin.embeddingService.embeddingModelName()).doc;
           embeddingTexts.unshift(`${docPrefix}${file.basename}\nHighlights:\n${highlightsOnly}`);
         }
 
@@ -2184,7 +2228,7 @@ t1 -> Translation`;
               chunkEnd: 0,
               entryType: "summary",
               embedding: emb,
-              mtime: file.stat.mtime,
+              mtime: mtimeAtRead,
               chunkHash: chunkHashes[cursor],
               summaryText: fmData.summaryOnly,
               tagsText: fmData.tagsOnly,
@@ -2202,7 +2246,7 @@ t1 -> Translation`;
               chunkEnd: 0,
               entryType: "highlights",
               embedding: emb,
-              mtime: file.stat.mtime,
+              mtime: mtimeAtRead,
               chunkHash: chunkHashes[cursor],
               highlightsText: highlightsOnly ?? undefined,
             });
@@ -2220,7 +2264,7 @@ t1 -> Translation`;
               chunkEnd: validChunks[j].end,
               entryType: "content",
               embedding: emb,
-              mtime: file.stat.mtime,
+              mtime: mtimeAtRead,
               chunkHash: chunkHashes[j + cursor],
               ...(hp ? { headingPath: hp } : {}),
               ...(bilingualTags ? { tagsText: bilingualTags } : {}),
@@ -2391,6 +2435,11 @@ t1 -> Translation`;
       }
     }
 
+    if (!this.isSpaceCompatible()) {
+      this.checkEmbeddingSpace(false);
+      return [];
+    }
+
     try {
       // 1. Refine query: remove conversational junk (Bilingual)
       const refinedQuery = query
@@ -2425,7 +2474,9 @@ t1 -> Translation`;
       // 3. Multi-query: full (truncated) query + keyword-distilled variant.
       // If Ollama rejects or times out (any error, not just "context length"),
       // fall back to keyword-only scoring instead of returning zero results.
-      const { query: qPrefix } = getModelPrefixes(this.plugin.settings.ragEmbeddingModel);
+      const { query: qPrefix } = getModelPrefixes(
+        await this.plugin.embeddingService.resolveEmbeddingModelName(),
+      );
       let primaryEmbedding: number[] = [];
       let secondaryEmbedding: number[] | null = null;
 
@@ -2504,8 +2555,8 @@ t1 -> Translation`;
             if (content === undefined) {
               const abstractFile = this.plugin.app.vault.getAbstractFileByPath(item.entry.path);
               if (abstractFile instanceof TFile) {
-                content = await this.plugin.app.vault.cachedRead(abstractFile);
-                fileCache.set(item.entry.path, content);
+                // readIndexableText returns the extracted text for PDFs, not their bytes.
+                content = await this.readIndexableText(abstractFile, fileCache);
               }
             }
 
@@ -2866,7 +2917,7 @@ t1 -> Translation`;
             if (entry.tagsText) parts.push("Topics: " + entry.tagsText);
             if (parts.length === 0) {
               chunk = content
-                .replace(/^---[\s\S]*?---\s*/m, "")
+                .replace(/^---\r?\n[\s\S]*?\r?\n---[^\S\r\n]*(?:\r?\n|$)/, "")
                 .slice(0, 600)
                 .trim();
             } else {
@@ -2918,16 +2969,25 @@ t1 -> Translation`;
   async getConnections(
     activeFilePath: string,
   ): Promise<{ path: string; score: number }[] | null | undefined> {
-    if (!this.plugin.settings.vaultBrainEnabled || !this.isLoaded) return null;
+    if (!this.plugin.settings.vaultBrainEnabled || !this.isLoaded || !this.isSpaceCompatible()) return null;
 
     const sourceEntries = this.getEntriesForPath(activeFilePath);
     if (!sourceEntries || sourceEntries.length === 0) return undefined;
 
-    // Parse excluded folders
-    const excludedPrefixes = this.plugin.settings.connectionsExcludedFolders
+    // Excluded folders: whole folders, in any letter case. "Temp" leaves out
+    // "Temp/…" but not "Templates/…" or "Temperature.md".
+    const excludedFolders = this.plugin.settings.connectionsExcludedFolders
       .split(",")
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
+      .map((s) =>
+        normalizePath(s.trim())
+          .replace(/^\/+|\/+$/g, "")
+          .toLowerCase(),
+      )
+      .filter((s) => s.length > 0 && s !== "/");
+    const isInExcludedFolder = (path: string): boolean => {
+      const lower = path.toLowerCase();
+      return excludedFolders.some((folder) => lower.startsWith(folder + "/"));
+    };
 
     // Find the most representative embedding for the file.
     // Prefer the summary entry (chunkStart: 0) or fallback to the first content chunk.
@@ -2948,7 +3008,7 @@ t1 -> Translation`;
       if (entry.path === activeFilePath) continue; // Skip source file
 
       // Check exclusions
-      if (excludedPrefixes.some((prefix) => entry.path.startsWith(prefix))) {
+      if (isInExcludedFolder(entry.path)) {
         continue;
       }
 

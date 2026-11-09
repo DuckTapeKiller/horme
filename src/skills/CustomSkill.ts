@@ -66,12 +66,13 @@ export class CustomSkill implements Skill {
     const query = getStringProp(params, "input");
     if (!query) return `Invalid parameters for ${this.name}: expected {"input": string}.`;
 
-    // Substitute {{query}} in URL (URL-encoded) and body (raw)
+    // Secrets are resolved in the templates before the query goes in, so text
+    // in the query (which a model writes, perhaps on a web page's prompting)
+    // can never name a secret and have it sent. Function replacers keep "$&"
+    // and similar in the query literal.
     const missingSecrets = new Set<string>();
-    const finalUrl = this.resolveSecrets(
-      this.url.replace(/\{\{query\}\}/g, encodeURIComponent(query)),
-      missingSecrets,
-    );
+    const urlTemplate = this.resolveSecrets(this.url, missingSecrets);
+    const finalUrl = urlTemplate.replace(/\{\{query\}\}/g, () => encodeURIComponent(query));
 
     const headers: Record<string, string> = {};
     for (const [k, v] of Object.entries(this.headers || {})) {
@@ -85,22 +86,20 @@ export class CustomSkill implements Skill {
     };
 
     if (this.method === "POST" && this.body) {
-      const isJson = !headers["Content-Type"] || headers["Content-Type"].includes("json");
+      const contentTypeKey = Object.keys(headers).find((k) => k.toLowerCase() === "content-type");
+      const contentType = contentTypeKey ? headers[contentTypeKey].toLowerCase() : "";
+      const bodyTemplate = this.resolveSecrets(this.body, missingSecrets);
 
-      if (isJson) {
-        // Safely escape the query before injecting it to prevent breaking the JSON structure.
-        // JSON.stringify("test") returns '"test"'. We slice off the outer quotes to get the escaped inner string.
+      if (!contentType || contentType.includes("json")) {
+        // Escape the query as a JSON string body (without its outer quotes).
         const escapedQuery = JSON.stringify(query).slice(1, -1);
-        reqOptions.body = this.resolveSecrets(
-          this.body.replace(/\{\{query\}\}/g, escapedQuery),
-          missingSecrets,
-        );
-
-        if (!headers["Content-Type"]) {
-          headers["Content-Type"] = "application/json";
-        }
+        reqOptions.body = bodyTemplate.replace(/\{\{query\}\}/g, () => escapedQuery);
+        if (!contentTypeKey) headers["Content-Type"] = "application/json";
+      } else if (contentType.includes("x-www-form-urlencoded")) {
+        // Encoded, so "&" or "=" in the query cannot add form fields.
+        reqOptions.body = bodyTemplate.replace(/\{\{query\}\}/g, () => encodeURIComponent(query));
       } else {
-        reqOptions.body = this.resolveSecrets(this.body.replace(/\{\{query\}\}/g, query), missingSecrets);
+        reqOptions.body = bodyTemplate.replace(/\{\{query\}\}/g, () => query);
       }
     }
 
@@ -116,7 +115,14 @@ export class CustomSkill implements Skill {
     }
 
     // Extract data via dot-path (e.g. "results[0].text")
-    let data: unknown = (res.json as unknown) ?? res.text;
+    // res.json throws on a body that is not JSON (plain text, HTML).
+    let data: unknown;
+    try {
+      data = res.json as unknown;
+    } catch {
+      data = res.text;
+    }
+    if (data === undefined || data === null) data = res.text;
 
     if (this.responsePath && isRecord(data)) {
       data = this.extractPath(data, this.responsePath);

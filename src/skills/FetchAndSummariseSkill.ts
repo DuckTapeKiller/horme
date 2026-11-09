@@ -1,4 +1,5 @@
 import { Notice } from "obsidian";
+import { isPublicHttpUrl } from "../utils/urlSafety";
 import { requestUrlWithTimeout } from "../utils/requestWithTimeout";
 import { Skill, SkillParameter } from "./types";
 import HormePlugin from "../../main";
@@ -36,6 +37,9 @@ export class FetchAndSummariseSkill implements Skill {
 
       if (!url.startsWith("http://") && !url.startsWith("https://")) {
         return "Error: Invalid URL protocol specified. Target must begin with http:// or https://.";
+      }
+      if (!isPublicHttpUrl(url)) {
+        return "Error: Only public web pages can be fetched, not local or private network addresses.";
       }
 
       // Fetch the webpage natively using Obsidian HTTP proxy layer
@@ -105,9 +109,13 @@ ${cleanContent}`;
       }
 
       // Call your plugin's primary chat generation channel
+      // No skills for the summary itself: the skill list (and agent-mode
+      // instructions) would otherwise be appended and the model might call one.
       const aiSummary = await this.plugin.aiGateway.generate(
         summaryPrompt,
         "You are a precise research assistant specializing in text synthesis. You never use emojis.",
+        undefined,
+        true,
       );
 
       return `## ◈ Article Summary\n**Source:** ${url}\n\n${aiSummary.trim()}`;

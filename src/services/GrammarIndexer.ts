@@ -1,5 +1,6 @@
 import { TFile, Notice, TFolder, normalizePath } from "obsidian";
 import HormePlugin from "../../main";
+import { EmbeddingService } from "./EmbeddingService";
 import {
   compressEmbedding,
   cosineSimilarityFloatInt8,
@@ -49,8 +50,9 @@ export class GrammarIndexer {
 
         // Check model compatibility
         this.indexedModel = isNewFormat ? getStringProp(parsed, "model") ?? "" : "";
-        const currentModel = this.plugin.settings.ragEmbeddingModel;
-        if (this.indexedModel && this.indexedModel !== currentModel) {
+        this.indexedModel = this.plugin.embeddingService.upgradeLegacyLabel(this.indexedModel);
+        const currentModel = this.plugin.embeddingService.embeddingFingerprint();
+        if (!EmbeddingService.sameSpace(this.indexedModel, currentModel)) {
           this.plugin.debugLog(
             `Horme Grammar: Model changed (${this.indexedModel} → ${currentModel}). Index cleared.`,
           );
@@ -106,6 +108,7 @@ export class GrammarIndexer {
           `Grammar folder "${folderPath}" not found.`,
           "warning",
         );
+        new Notice(`Horme: The grammar folder "${folderPath}" was not found. Set it in Writing tools.`);
         return;
       }
 
@@ -115,7 +118,9 @@ export class GrammarIndexer {
       const files = this.getFilesRecursively(folder);
       let totalChunks = 0;
       let errorCount = 0;
-      const { doc: docPrefix } = getModelPrefixes(this.plugin.settings.ragEmbeddingModel);
+      const { doc: docPrefix } = getModelPrefixes(
+        await this.plugin.embeddingService.resolveEmbeddingModelName(),
+      );
 
       this.plugin.debugLog(`Horme Grammar: Scanning ${files.length} files in "${folderPath}"...`);
 
@@ -157,19 +162,21 @@ export class GrammarIndexer {
         }
       }
 
-      this.chunks = newChunks;
-      this.indexedModel = this.plugin.settings.ragEmbeddingModel;
-      await this.saveIndex();
-
-      this.plugin.setIndexingStatus(null);
-
+      // A rebuild with failures would replace a complete index with a partial
+      // (or empty) one, so the previous index is kept instead.
       if (errorCount > 0) {
-        new Notice(`⚠️ Grammar Index Built with ${errorCount} errors. Check console.`);
-      } else {
-        new Notice(`✅ Grammar Index Ready (${totalChunks} chunks).`);
+        new Notice(
+          `Horme: The grammar index was not rebuilt: ${errorCount} passage${errorCount === 1 ? "" : "s"} could not be embedded. The previous index is kept. See Diagnostics.`,
+        );
+        return;
       }
+      this.chunks = newChunks;
+      this.indexedModel = this.plugin.embeddingService.embeddingFingerprint();
+      await this.saveIndex();
+      new Notice(`Horme: Grammar index ready (${totalChunks} passages).`);
     } finally {
       this.isIndexing = false;
+      this.plugin.setIndexingStatus(null);
     }
   }
 
@@ -187,7 +194,7 @@ export class GrammarIndexer {
       }));
 
       const data = JSON.stringify({
-        model: this.plugin.settings.ragEmbeddingModel,
+        model: this.indexedModel || this.plugin.embeddingService.embeddingFingerprint(),
         chunks: serialized,
       });
       await adapter.write(this.indexPath, data);
@@ -243,10 +250,16 @@ export class GrammarIndexer {
   async search(query: string): Promise<string[]> {
     if (this.chunks.length === 0) await this.loadIndex();
     if (this.chunks.length === 0) return [];
+    // Vectors from another embedding set-up would give meaningless scores.
+    if (!EmbeddingService.sameSpace(this.indexedModel, this.plugin.embeddingService.embeddingFingerprint())) {
+      return [];
+    }
 
     try {
       // Use query prefix for asymmetric models
-      const { query: qPrefix } = getModelPrefixes(this.plugin.settings.ragEmbeddingModel);
+      const { query: qPrefix } = getModelPrefixes(
+        await this.plugin.embeddingService.resolveEmbeddingModelName(),
+      );
       const queryEmbedding = await this.plugin.embeddingService.getEmbedding(`${qPrefix}${query}`);
 
       // Cosine similarity ranking

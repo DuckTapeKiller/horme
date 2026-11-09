@@ -1,4 +1,5 @@
 import { requestUrl } from "obsidian";
+import { isPublicHttpUrl } from "../utils/urlSafety";
 import { Skill, SkillParameter } from "./types";
 import { errorToMessage, getStringProp, getRecordProp, asArray, isRecord } from "../utils/TypeGuards";
 
@@ -185,7 +186,7 @@ export class DeepResearchSkill implements Skill {
   }
 
   private async fetchPage(url: string, title: string): Promise<string | null> {
-    if (!url || (!url.startsWith("http://") && !url.startsWith("https://"))) return null;
+    if (!url || !isPublicHttpUrl(url)) return null;
     try {
       const res = await this.timedRequest(url);
       if (res.status !== 200) return null;

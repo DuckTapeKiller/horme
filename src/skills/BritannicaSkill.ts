@@ -49,18 +49,21 @@ export class BritannicaSkill implements Skill {
         .querySelectorAll("script, style, noscript, iframe, nav, footer, header, aside, .ad-container")
         .forEach((el) => el.remove());
 
+      // The first three substantial paragraphs, as written. (A `return` inside
+      // forEach never stopped the loop, so whole articles were returned, and the
+      // quotation marks of English text were rewritten as guillemets.)
       const paragraphs: string[] = [];
-      doc.querySelectorAll("p").forEach((el) => {
+      for (const el of Array.from(doc.querySelectorAll("p"))) {
         const text = (el.textContent ?? "").trim();
         if (
           text.length > 100 &&
           !text.includes("editors will review") &&
           !text.includes("premium.britannica.com")
         ) {
-          paragraphs.push(text.replace(/–/g, "-").replace(/“/g, "«").replace(/”/g, "»").replace(/’/g, "'"));
+          paragraphs.push(text);
         }
-        if (paragraphs.length >= 3) return;
-      });
+        if (paragraphs.length >= 3) break;
+      }
 
       if (paragraphs.length === 0) return `Article found but no text extracted: ${articleUrl}`;
 
