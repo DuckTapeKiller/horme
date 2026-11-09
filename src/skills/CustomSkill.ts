@@ -124,6 +124,7 @@ export class CustomSkill implements Skill {
     }
     if (data === undefined || data === null) data = res.text;
 
+    // isRecord is true for lists too, so a top-level list can be addressed ("[0].text").
     if (this.responsePath && isRecord(data)) {
       data = this.extractPath(data, this.responsePath);
     }
@@ -148,29 +149,26 @@ export class CustomSkill implements Skill {
 
   /**
    * Extracts a value from a nested object using a dot-path string.
-   * Supports array indexing: "results[0].title" → obj.results[0].title
+   * Supports array indexing: "results[0].title" → obj.results[0].title, and
+   * "[0].title" for a response that is a list.
    */
   private extractPath(obj: unknown, path: string): unknown {
-    const segments = path.split(".");
+    // Segments like "results", "results[0]", "[0]" (a top-level list) or "0".
+    const segments = path.split(".").filter((s) => s !== "");
     let current: unknown = obj;
 
     for (const segment of segments) {
-      if (current === undefined || current === null) return undefined;
-
-      // Handle array indexing like "results[0]"
-      const arrMatch = segment.match(/^(\w+)\[(\d+)\]$/);
-      if (arrMatch) {
-        const key = arrMatch[1];
-        const idx = Number.parseInt(arrMatch[2], 10);
-        const next = isRecord(current) ? current[key] : undefined;
-        if (Array.isArray(next)) {
-          current = next[idx];
-        } else {
-          return undefined;
-        }
-      } else {
-        current = isRecord(current) ? current[segment] : undefined;
+      const m = /^([^[\]]*)((?:\[\d+\])*)$/.exec(segment);
+      if (!m) return undefined;
+      const [, key, indexes] = m;
+      if (key) {
+        if (Array.isArray(current) && /^\d+$/.test(key)) current = current[Number(key)];
+        else current = isRecord(current) && !Array.isArray(current) ? current[key] : undefined;
       }
+      for (const idx of indexes.match(/\d+/g) ?? []) {
+        current = Array.isArray(current) ? current[Number(idx)] : undefined;
+      }
+      if (current === undefined || current === null) return undefined;
     }
 
     return current;

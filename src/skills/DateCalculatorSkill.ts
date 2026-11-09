@@ -164,7 +164,10 @@ export class DateCalculatorSkill implements Skill {
       result = addMonthsClamped(d1, value * 12);
     }
 
-    const resultStr = `${result.getFullYear()}-${String(result.getMonth() + 1).padStart(2, "0")}-${String(result.getDate()).padStart(2, "0")}`;
+    if (Number.isNaN(result.getTime()))
+      return `"${date1Str}" + "${amount}" is outside the range of dates that can be calculated.`;
+
+    const resultStr = `${String(result.getFullYear()).padStart(4, "0")}-${String(result.getMonth() + 1).padStart(2, "0")}-${String(result.getDate()).padStart(2, "0")}`;
     const dayName = this.getDayName(result);
 
     return `## Date Addition\n\n**${date1Str}** + **${amount}** = **${resultStr}** (${dayName})`;
@@ -235,7 +238,9 @@ export class DateCalculatorSkill implements Skill {
 
   private resolveTimezone(input: string): string | null {
     const lower = input.trim().toLowerCase();
-    if (DateCalculatorSkill.CITY_TO_TZ[lower]) return DateCalculatorSkill.CITY_TO_TZ[lower];
+    // Own keys only: "constructor" or "toString" must not read Object's methods.
+    if (Object.prototype.hasOwnProperty.call(DateCalculatorSkill.CITY_TO_TZ, lower))
+      return DateCalculatorSkill.CITY_TO_TZ[lower];
     const asIana = input.trim();
     try {
       Intl.DateTimeFormat(undefined, { timeZone: asIana });

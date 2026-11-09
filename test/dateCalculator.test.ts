@@ -28,3 +28,16 @@ void test("add months clamps to the end of the month", async () => {
   const leap = await run({ operation: "add", date1: "2024-02-29", amount: "1 year" });
   assert.match(leap, /= \*\*2025-02-28\*\*/);
 });
+
+void test("names of Object's own methods are not cities", async () => {
+  const out = await run({ operation: "timezone", timezone: "constructor" });
+  assert.match(out, /Unknown timezone or city/);
+});
+
+void test("additions out of range and early years read correctly", async () => {
+  assert.match(
+    await run({ operation: "add", date1: "2024-01-31", amount: "99999999 years" }),
+    /outside the range/,
+  );
+  assert.match(await run({ operation: "add", date1: "0033-04-03", amount: "1 day" }), /\*\*0033-04-04\*\*/);
+});

@@ -1163,12 +1163,12 @@ t1 -> Translation`;
             const lines = result
               .split("\n")
               .map((line) => line.trim())
-              .filter((line) => /t\s*\d+\s*(?:->|◈|:|=>|=)/.test(line));
+              .filter((line) => /(?:^|[^\p{L}\p{N}_])t\s*\d+\s*(?:->|◈|:|=>|=)/u.test(line));
 
             // 2. Build the lookup map matching index values back to terms safely
             const translationMap = new Map<string, string>();
             lines.forEach((line) => {
-              const match = line.match(/t\s*(\d+)\s*(?:->|◈|:|=>|=)\s*(.*)/);
+              const match = line.match(/(?:^|[^\p{L}\p{N}_])t\s*(\d+)\s*(?:->|◈|:|=>|=)\s*(.*)/u);
               if (match) {
                 const idx = parseInt(match[1], 10);
                 if (idx >= 0 && idx < chunk.length) {
@@ -1395,11 +1395,11 @@ t1 -> Translation`;
         const lines = result
           .split("\n")
           .map((line) => line.trim())
-          .filter((line) => /t\s*\d+\s*(?:->|◈|:|=>|=)/.test(line));
+          .filter((line) => /(?:^|[^\p{L}\p{N}_])t\s*\d+\s*(?:->|◈|:|=>|=)/u.test(line));
 
         const translationMap = new Map<number, string>();
         lines.forEach((line) => {
-          const match = line.match(/t\s*(\d+)\s*(?:->|◈|:|=>|=)\s*(.*)/);
+          const match = line.match(/(?:^|[^\p{L}\p{N}_])t\s*(\d+)\s*(?:->|◈|:|=>|=)\s*(.*)/u);
           if (match) {
             const idx = parseInt(match[1], 10);
             let trans = match[2].trim();

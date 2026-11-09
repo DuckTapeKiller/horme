@@ -51,16 +51,19 @@ export class HistoryManager {
   }
 
   /** Parses the history file. Throws when it is not a valid history, so callers never overwrite it. */
-  private parseConversations(data: string): SavedConversation[] {
-    if (!data.trim()) return [];
+  private parseConversations(data: string): { list: SavedConversation[]; unparsed: unknown[] } {
+    if (!data.trim()) return { list: [], unparsed: [] };
     const parsed = JSON.parse(data) as unknown;
     if (!Array.isArray(parsed)) throw new Error("chat-history.json does not hold a list of chats");
-    const out: SavedConversation[] = [];
+    const list: SavedConversation[] = [];
+    // Entries Horme cannot read are written back untouched, never dropped.
+    const unparsed: unknown[] = [];
     for (const item of parsed) {
       const c = this.parseConversation(item);
-      if (c) out.push(c);
+      if (c) list.push(c);
+      else unparsed.push(item);
     }
-    return out;
+    return { list, unparsed };
   }
 
   /** Chats waiting for the debounced write, by id. */
@@ -99,24 +102,39 @@ export class HistoryManager {
     if (this.pending.size === 0) return this.chain;
     const batch = Array.from(this.pending.values());
     this.pending.clear();
-    return this.update((conversations) => {
-      for (const convo of batch) {
-        const idx = conversations.findIndex((c) => c.id === convo.id);
-        if (idx >= 0) conversations.splice(idx, 1);
-        // The chat used last goes first, so the cap drops the least recently used.
-        conversations.unshift(convo);
-      }
-      return conversations.slice(0, MAX_CONVERSATIONS);
-    }, "write");
+    // A failed write puts the batch back (unless a newer save replaced it), so
+    // the next message or the close of the view tries again.
+    const requeue = () => {
+      for (const convo of batch) if (!this.pending.has(convo.id)) this.pending.set(convo.id, convo);
+    };
+    return this.update(
+      (conversations) => {
+        for (const convo of batch) {
+          const idx = conversations.findIndex((c) => c.id === convo.id);
+          if (idx >= 0) conversations.splice(idx, 1);
+          // The chat used last goes first, so the cap drops the least recently used.
+          conversations.unshift(convo);
+        }
+        return conversations.slice(0, MAX_CONVERSATIONS);
+      },
+      "write",
+      requeue,
+    );
   }
 
   /** Reads, changes and writes the history file, after any write already queued. */
-  private update(change: (list: SavedConversation[]) => SavedConversation[], what: string): Promise<void> {
+  private update(
+    change: (list: SavedConversation[]) => SavedConversation[],
+    what: string,
+    onFail?: () => void,
+  ): Promise<void> {
     this.chain = this.chain.then(async () => {
       try {
-        const current = await this.readStrict();
-        await this.plugin.app.vault.adapter.write(this.historyPath, JSON.stringify(change(current)));
+        const { list, unparsed } = await this.readStrict();
+        const next: unknown[] = [...change(list), ...unparsed];
+        await this.plugin.app.vault.adapter.write(this.historyPath, JSON.stringify(next));
       } catch (e: unknown) {
+        onFail?.();
         this.report(what, e);
       }
     });
@@ -160,10 +178,10 @@ export class HistoryManager {
    * that exists but cannot be read or parsed throws, and is backed up once, so
    * a passing read error (a sync tool mid-write, a lock) never wipes it.
    */
-  private async readStrict(): Promise<SavedConversation[]> {
+  private async readStrict(): Promise<{ list: SavedConversation[]; unparsed: unknown[] }> {
     if (this.unreadable) throw new Error("the history file could not be read earlier; not overwriting it");
     const adapter = this.plugin.app.vault.adapter;
-    if (!(await adapter.exists(this.historyPath))) return [];
+    if (!(await adapter.exists(this.historyPath))) return { list: [], unparsed: [] };
     const data = await adapter.read(this.historyPath);
     try {
       return this.parseConversations(data);
@@ -187,7 +205,7 @@ export class HistoryManager {
     try {
       const adapter = this.plugin.app.vault.adapter;
       if (await adapter.exists(this.historyPath))
-        list = this.parseConversations(await adapter.read(this.historyPath));
+        list = this.parseConversations(await adapter.read(this.historyPath)).list;
     } catch (e: unknown) {
       this.plugin.diagnosticService.report(
         "History",
