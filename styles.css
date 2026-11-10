@@ -559,7 +559,9 @@ body .horme-chat-container .horme-header button.horme-select {
   color: #000000;
 }
 
-.horme-chat-container .horme-input-actions .horme-send-btn.horme-stop-btn.horme-stop-btn svg {
+/* Only the icon itself turns, about its centre. */
+.horme-chat-container .horme-input-actions .horme-send-btn.horme-stop-btn.horme-stop-btn > svg {
+  transform-origin: 50% 50%;
   animation: horme-spin 2s linear infinite;
 }
 
@@ -1131,6 +1133,35 @@ body.is-mobile .horme-chat-container .horme-header .horme-select.horme-select {
   text-decoration: none;
   display: inline-flex;
   align-items: center;
+  gap: 5px;
+  max-width: 280px;
+}
+
+/* The pill's number matches the [n] citations in the answer. */
+.horme-source-num {
+  flex-shrink: 0;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 8px;
+  background: var(--background-modifier-border);
+  color: var(--text-normal);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 15px;
+  text-align: center;
+}
+
+.horme-source-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.horme-source-pill:hover .horme-source-num {
+  background: rgba(255, 255, 255, 0.25);
+  color: inherit;
 }
 
 /* ── Skills dropdown menu ─────────────────────────────── */

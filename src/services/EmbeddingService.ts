@@ -90,18 +90,49 @@ export class EmbeddingService {
     for (let i = 0; i < texts.length; i += BATCH_SIZE) {
       const batch = texts.slice(i, i + BATCH_SIZE).map((t) => t.replace(/\0/g, "").trim());
 
-      if (embedProvider === "ollama") {
-        const result = await this.getOllamaEmbeddingsBatch(batch);
-        allEmbeddings.push(...result);
-      } else if (embedProvider === "lmstudio") {
-        const result = await this.getLMStudioEmbeddingsBatch(batch);
-        allEmbeddings.push(...result);
-      } else if (embedProvider === "llamacpp") {
-        const result = await this.getLlamaCppEmbeddingsBatch(batch);
-        allEmbeddings.push(...result);
+      try {
+        allEmbeddings.push(...(await this.embedBatch(embedProvider, batch)));
+      } catch (e: unknown) {
+        // One text over the server's limit fails the whole batch (llama.cpp:
+        // "input (533 tokens) is too large to process"), and the note was then
+        // left out of the index. Embed one by one, shortening only a text that
+        // is still refused: its passage stays whole, only its vector reads less.
+        if (!EmbeddingService.isSizeError(e)) throw e;
+        for (const text of batch) allEmbeddings.push(await this.embedOneShortening(embedProvider, text));
       }
     }
     return allEmbeddings;
+  }
+
+  private async embedBatch(
+    provider: "ollama" | "lmstudio" | "llamacpp",
+    batch: string[],
+  ): Promise<number[][]> {
+    if (provider === "ollama") return this.getOllamaEmbeddingsBatch(batch);
+    if (provider === "lmstudio") return this.getLMStudioEmbeddingsBatch(batch);
+    return this.getLlamaCppEmbeddingsBatch(batch);
+  }
+
+  private static isSizeError(e: unknown): boolean {
+    return /too large|too long|exceed|context|maximum|token|413|physical batch/i.test(errorToMessage(e));
+  }
+
+  private async embedOneShortening(
+    provider: "ollama" | "lmstudio" | "llamacpp",
+    text: string,
+  ): Promise<number[]> {
+    let lastError: unknown = null;
+    for (const share of [1, 0.75, 0.5, 0.3]) {
+      const input = share === 1 ? text : text.slice(0, Math.max(50, Math.floor(text.length * share)));
+      try {
+        const [vector] = await this.embedBatch(provider, [input]);
+        if (vector) return vector;
+      } catch (e: unknown) {
+        lastError = e;
+        if (!EmbeddingService.isSizeError(e)) break;
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error(errorToMessage(lastError));
   }
 
   private async getOllamaEmbeddingsBatch(inputs: string[]): Promise<number[][]> {
@@ -270,6 +301,7 @@ export class EmbeddingService {
           model,
           input: inputs,
         }),
+        throw: false,
       });
       if (res.status !== 200) throw new Error(`LM Studio Error: ${res.status} - ${res.text}`);
       const json: unknown = res.json;
@@ -333,6 +365,8 @@ export class EmbeddingService {
           model,
           input: inputs,
         }),
+        // Without this requestUrl throws "status 500" and the server's reason is lost.
+        throw: false,
       });
       if (res.status !== 200) throw new Error(`llama.cpp error: ${res.status} - ${res.text}`);
       const json: unknown = res.json;

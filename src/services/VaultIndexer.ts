@@ -3,6 +3,7 @@ import { minimatch } from "minimatch";
 import HormePlugin from "../../main";
 import { HormeErrorModal } from "../modals/HormeErrorModal";
 import { EmbeddingService } from "./EmbeddingService";
+import { KeywordIndex } from "./KeywordIndex";
 import {
   compressEmbedding,
   cosineSimilarityFloatInt8,
@@ -2316,6 +2317,47 @@ t1 -> Translation`;
     return h1.toString(16).padStart(8, "0") + h2.toString(16).padStart(8, "0");
   }
 
+  /** BM25 word index over passage text (see KeywordIndex), kept in step with the vault index. */
+  private keywordIndex = new KeywordIndex();
+  /** Per note: the index state its words were read from ("mtime:entries"). */
+  private keywordSignature = new Map<string, string>();
+
+  /** Brings the word index up to date: notes added, changed or removed since the last search. */
+  private async refreshKeywordIndex(fileCache: Map<string, string>): Promise<void> {
+    for (const path of this.keywordIndex.paths()) {
+      if (!this.pathIndex.has(path)) {
+        this.keywordIndex.removePath(path);
+        this.keywordSignature.delete(path);
+      }
+    }
+    for (const [path, list] of this.pathIndex) {
+      const signature = `${list.reduce((m, e) => Math.max(m, e.mtime), 0)}:${list.length}`;
+      if (this.keywordSignature.get(path) === signature) continue;
+      const file = this.plugin.app.vault.getAbstractFileByPath(path);
+      if (!(file instanceof TFile)) continue;
+      let content = "";
+      try {
+        content = (await this.readIndexableText(file, fileCache)) || "";
+      } catch {
+        continue;
+      }
+      const passages = list.map((e) => {
+        let text: string;
+        if (e.chunkStart === 0 && e.chunkEnd === 0) {
+          text =
+            e.entryType === "highlights"
+              ? e.highlightsText || ""
+              : `${e.summaryText || ""} ${e.tagsText || ""}`;
+        } else {
+          text = content.slice(e.chunkStart, e.chunkEnd);
+        }
+        return { key: this.getSearchEntryKey(e), text: `${file.basename} ${e.headingPath || ""}\n${text}` };
+      });
+      this.keywordIndex.setPath(path, passages);
+      this.keywordSignature.set(path, signature);
+    }
+  }
+
   private getSearchEntryKey(entry: IndexEntry): string {
     const type = entry.entryType ?? "unknown";
     const heading = entry.headingPath ?? "";
@@ -2540,49 +2582,30 @@ t1 -> Translation`;
           .sort((a, b) => b.vectorScore - a.vectorScore)
           .slice(0, poolSize);
 
-        // Sparse seed results (metadata-only keywords)
+        // Sparse results: BM25 over the words of every passage (a name, a date or
+        // a price in the body counts, rare words above common ones), plus the
+        // title, tag and heading matches that used to be the only keyword signal.
         const keywordSeed = scored
           .filter((s) => s.metadataScore > 0)
           .sort((a, b) => b.metadataScore - a.metadataScore)
           .slice(0, poolSize);
-
-        // Deep scan keyword seed against actual chunk text (bounded)
-        const keywordRanked: Array<{ entry: IndexEntry; keywordScore: number }> = [];
-        for (const item of keywordSeed) {
-          let keywordScore = item.metadataScore;
-          try {
-            let content = fileCache.get(item.entry.path);
-            if (content === undefined) {
-              const abstractFile = this.plugin.app.vault.getAbstractFileByPath(item.entry.path);
-              if (abstractFile instanceof TFile) {
-                // readIndexableText returns the extracted text for PDFs, not their bytes.
-                content = await this.readIndexableText(abstractFile, fileCache);
-              }
-            }
-
-            if (content) {
-              const isNoteLevelEntry =
-                item.entry.entryType === "summary" ||
-                item.entry.entryType === "highlights" ||
-                (item.entry.chunkStart === 0 && item.entry.chunkEnd === 0);
-
-              const chunkText = isNoteLevelEntry
-                ? item.entry.entryType === "highlights" && item.entry.highlightsText
-                  ? item.entry.highlightsText
-                  : item.entry.summaryText || item.entry.tagsText
-                    ? (item.entry.summaryText || "") + " " + (item.entry.tagsText || "")
-                    : content.slice(0, 800)
-                : content.slice(item.entry.chunkStart, item.entry.chunkEnd);
-
-              const contentBonus = this.computeContentBonusFromChunkText(chunkText, searchTerms, quotedTerms);
-              keywordScore += Math.min(contentBonus, this.plugin.settings.searchContentCap);
-            }
-          } catch {
-            /* ignore content scan errors */
-          }
-          keywordRanked.push({ entry: item.entry, keywordScore });
+        await this.refreshKeywordIndex(fileCache);
+        const entryByScopeKey = new Map(entries.map((e) => [this.getSearchEntryKey(e), e]));
+        const bm25 = this.keywordIndex.search(query, poolSize, (key) => entryByScopeKey.has(key));
+        const topBm25 = bm25[0]?.score || 1;
+        const keywordByKey = new Map<string, { entry: IndexEntry; keywordScore: number }>();
+        for (const hit of bm25) {
+          const entry = entryByScopeKey.get(hit.key);
+          if (entry) keywordByKey.set(hit.key, { entry, keywordScore: hit.score / topBm25 });
         }
-
+        for (const item of keywordSeed) {
+          const key = this.getSearchEntryKey(item.entry);
+          const prev = keywordByKey.get(key);
+          const bonus = 2 * item.metadataScore;
+          if (prev) prev.keywordScore += bonus;
+          else keywordByKey.set(key, { entry: item.entry, keywordScore: bonus });
+        }
+        const keywordRanked = [...keywordByKey.values()];
         keywordRanked.sort((a, b) => b.keywordScore - a.keywordScore);
 
         // If embeddings are unavailable, fall back to keyword-only list.

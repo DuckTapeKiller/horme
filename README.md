@@ -173,9 +173,9 @@ Skills are tools the model can use while it answers. In **agent mode** it plans 
 | Wikipedia Search         | Web      | Summaries and relevant sections, in many languages.                                  |
 | Wiktionary Lookup        | Web      | Definitions, etymology and usage notes.                                              |
 | Britannica Search        | Web      | The opening paragraphs of an encyclopaedia article.                                  |
-| DuckDuckGo Instant Answer | Web     | Quick facts and topic summaries.                                                     |
+| DuckDuckGo Search        | Web      | The top web results for a query, with links and snippets.                            |
 | Fetch and Summarise      | Web      | Reads a web page you share and summarises it.                                        |
-| Deep Research            | Web      | Searches several sources on a question and gathers the findings.                     |
+| Deep Research            | Web      | Searches Wikipedia (articles and category lists) and the web, reads the best pages in full and hands the model the most relevant passages with numbered sources. Works with no API key; uses your embedding server to pick passages when one is set up. |
 | Date & Time Calculator   | Local    | Durations between dates, days of the week, adding time, and the time in any city.    |
 | Vault Linker             | Your vault | Finds notes related to the conversation.                                           |
 | Grammar Scholar          | Your vault | Consults your grammar notes.                                                       |

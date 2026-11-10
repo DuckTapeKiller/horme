@@ -1,6 +1,7 @@
 import { requestUrlWithTimeout } from "../utils/requestWithTimeout";
+import { searchWeb, WebHit } from "../utils/webResearch";
 import { Skill, SkillParameter } from "./types";
-import { errorToMessage, getStringProp } from "../utils/TypeGuards";
+import { errorToMessage, asArray, getStringProp } from "../utils/TypeGuards";
 
 export class BritannicaSkill implements Skill {
   id = "britannica";
@@ -28,16 +29,27 @@ export class BritannicaSkill implements Skill {
       const query = getStringProp(params, "query");
       if (!query) return `Invalid parameters for ${this.name}: expected {"query": string}.`;
 
-      const searchUrl = `https://www.britannica.com/search?query=${encodeURIComponent(query)}`;
-      const searchRes = await requestUrlWithTimeout({ url: searchUrl }, 12000);
-      const searchHtml = searchRes.text;
-
-      const linkRegex = /<a[^>]*class="font-weight-bold font-18"[^>]*href="([^"]+)"/i;
-      const match = searchHtml.match(linkRegex);
-      if (!match) return `No Britannica article found for "${query}".`;
-
-      const href = match[1];
-      if (typeof href !== "string" || !href.startsWith("/") || href.startsWith("//"))
+      // The search page fills its results in with JavaScript, so its HTML never
+      // holds a result link; the autocomplete endpoint answers with JSON.
+      const searchUrl = `https://www.britannica.com/ajax/search/autocomplete?query=${encodeURIComponent(query)}`;
+      const searchRes = await requestUrlWithTimeout({ url: searchUrl, throw: false }, 12000);
+      if (searchRes.status !== 200) return `Britannica search failed (HTTP ${searchRes.status}).`;
+      let hits: unknown;
+      try {
+        hits = searchRes.json as unknown;
+      } catch {
+        return `Britannica search returned an unexpected answer for "${query}".`;
+      }
+      let href = getStringProp((asArray(hits) ?? [])[0], "url");
+      if (!href) {
+        // The autocomplete only matches article titles ("Peter Abelard", not
+        // "Penny Black"); a web search limited to the site finds the article.
+        const web = await searchWeb(`site:britannica.com ${query}`, 5).catch((): WebHit[] => []);
+        const found = web.find((h) => /^https:\/\/www\.britannica\.com\/(?!search)/.test(h.url));
+        if (found) href = found.url.replace("https://www.britannica.com", "");
+      }
+      if (!href) return `No Britannica article found for "${query}".`;
+      if (!href.startsWith("/") || href.startsWith("//"))
         return `No valid Britannica article link found for "${query}".`;
 
       const articleUrl = "https://www.britannica.com" + href;

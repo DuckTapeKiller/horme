@@ -51,6 +51,7 @@ import {
 } from "./src/constants";
 import { HormeSettings, AiProvider } from "./src/types";
 import { normalizeBaseUrl } from "./src/utils/normalizeBaseUrl";
+import { ensureVaultFolder } from "./src/utils/vaultFolder";
 import { isLocalProvider, providerInfo } from "./src/views/settings/providers";
 
 interface OllamaTagsModel {
@@ -255,9 +256,12 @@ export default class HormePlugin extends Plugin {
     await this.loadSettings();
 
     // Register Custom Icons
+    // addIcon takes the drawing only, on a 100 × 100 grid: Obsidian supplies the
+    // <svg>. A whole 24 × 24 <svg> here became a second <svg> inside the icon,
+    // which the stop button's spin rule also turned, about its top-left corner.
     addIcon(
       "horme-shell",
-      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 11a2 2 0 1 1-4 0 4 4 0 0 1 8 0 6 6 0 0 1-12 0 8 8 0 0 1 16 0 10 10 0 1 1-20 0 11.93 11.93 0 0 1 2.42-7.22 2 2 0 1 1 3.16 2.44"/></svg>`,
+      `<g transform="scale(4.1666667)" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 11a2 2 0 1 1-4 0 4 4 0 0 1 8 0 6 6 0 0 1-12 0 8 8 0 0 1 16 0 10 10 0 1 1-20 0 11.93 11.93 0 0 1 2.42-7.22 2 2 0 1 1 3.16 2.44"/></g>`,
     );
 
     // Apply Mobile Overrides on startup
@@ -554,8 +558,7 @@ export default class HormePlugin extends Plugin {
   }
 
   private async saveBinaryFile(name: string, buffer: ArrayBuffer) {
-    const folder = this.settings.exportFolder.trim() || "HORME";
-    if (!(await this.app.vault.adapter.exists(folder))) await this.app.vault.createFolder(folder);
+    const folder = await ensureVaultFolder(this.app, this.settings.exportFolder.trim() || "HORME");
     let path = `${folder}/${name}`;
     if (await this.app.vault.adapter.exists(path)) path = `${folder}/${new Date().getTime()}_${name}`;
     await this.app.vault.createBinary(path, buffer);
@@ -775,6 +778,8 @@ RULES:
           `\n**Verdict:** Accurate / Inaccurate / Unverifiable` +
           `\n**Source:** [relevant Wikipedia excerpt]` +
           `\n**Note:** [brief explanation of match or discrepancy]` +
+          `\n\nVerdicts: Accurate when an excerpt supports the claim; Inaccurate ONLY when an excerpt contradicts it (quote the contradiction);` +
+          ` Unverifiable when the excerpts do not mention it. A claim the excerpts are silent about is never Inaccurate.` +
           `\n\nRepeat for each claim. End with an overall assessment.`;
       }
 
