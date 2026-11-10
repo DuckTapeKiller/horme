@@ -1,6 +1,6 @@
 /**
  * Shared utility for Int8 Quantization of AI embeddings.
- * Maps float [-1, 1] → Int8 [-127, 127] and stores as base64.
+ * Scales each vector to Int8 [-127, 127] (direction kept, length not) and stores as base64.
  */
 
 function bytesToBase64(bytes: Uint8Array): string {
@@ -38,11 +38,19 @@ function base64ToBytes(b64: string): Uint8Array {
   return bytes;
 }
 
+/**
+ * Scales each vector so its largest component is ±127. Every comparison is a
+ * cosine, so the scale cancels; a fixed ×127 left a normalised 768-dimension
+ * vector (components near ±0.03) only a couple of dozen distinct values.
+ */
 export function quantizeEmbeddingToInt8(embedding: number[]): Int8Array {
   const int8 = new Int8Array(embedding.length);
+  let maxAbs = 0;
+  for (const x of embedding) if (Number.isFinite(x)) maxAbs = Math.max(maxAbs, Math.abs(x));
+  if (maxAbs === 0) return int8;
   for (let i = 0; i < embedding.length; i++) {
-    const clamped = Math.max(-1, Math.min(1, embedding[i]));
-    int8[i] = Math.round(clamped * 127);
+    const x = Number.isFinite(embedding[i]) ? embedding[i] : 0;
+    int8[i] = Math.round((x / maxAbs) * 127);
   }
   return int8;
 }

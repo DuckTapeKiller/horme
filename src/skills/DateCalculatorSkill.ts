@@ -111,25 +111,20 @@ export class DateCalculatorSkill implements Skill {
     const [earlier, later, earlierStr, laterStr] =
       d1 <= d2 ? [d1, d2, date1Str, date2Str] : [d2, d1, date2Str, date1Str];
 
-    // Compute exact difference
-    const totalMs = later.getTime() - earlier.getTime();
-    const totalDays = Math.floor(totalMs / (1000 * 60 * 60 * 24));
+    // Whole days by calendar date (UTC), so daylight-saving changes and old
+    // local time offsets cannot drop a day.
+    const totalDays = Math.round(utcDayNumber(later) - utcDayNumber(earlier));
 
-    // Compute years, months, days
-    let years = later.getFullYear() - earlier.getFullYear();
-    let months = later.getMonth() - earlier.getMonth();
-    let days = later.getDate() - earlier.getDate();
-
-    if (days < 0) {
-      months--;
-      // Get days in the previous month
-      const prevMonth = new Date(later.getFullYear(), later.getMonth(), 0);
-      days += prevMonth.getDate();
-    }
-    if (months < 0) {
-      years--;
-      months += 12;
-    }
+    // Whole months first (clamped to month ends: 31 Jan + 1 month = 28 Feb),
+    // then the days left over. Borrowing the previous month's length instead
+    // gave negative days, e.g. 31 Jan → 1 Mar.
+    let totalMonths =
+      (later.getFullYear() - earlier.getFullYear()) * 12 + (later.getMonth() - earlier.getMonth());
+    if (utcDayNumber(addMonthsClamped(earlier, totalMonths)) > utcDayNumber(later)) totalMonths--;
+    const anchor = addMonthsClamped(earlier, totalMonths);
+    const days = Math.round(utcDayNumber(later) - utcDayNumber(anchor));
+    const years = Math.floor(totalMonths / 12);
+    const months = totalMonths % 12;
 
     const dayName1 = this.getDayName(earlier);
     const dayName2 = this.getDayName(later);
@@ -159,16 +154,20 @@ export class DateCalculatorSkill implements Skill {
     const value = parseInt(match[1]);
     const unit = match[2].toLowerCase();
 
-    const result = new Date(d1);
+    let result = new Date(d1);
     if (unit.startsWith("day")) {
       result.setDate(result.getDate() + value);
     } else if (unit.startsWith("month")) {
-      result.setMonth(result.getMonth() + value);
+      // 31 Jan + 1 month is 28 (or 29) Feb, not 3 Mar.
+      result = addMonthsClamped(d1, value);
     } else if (unit.startsWith("year")) {
-      result.setFullYear(result.getFullYear() + value);
+      result = addMonthsClamped(d1, value * 12);
     }
 
-    const resultStr = `${result.getFullYear()}-${String(result.getMonth() + 1).padStart(2, "0")}-${String(result.getDate()).padStart(2, "0")}`;
+    if (Number.isNaN(result.getTime()))
+      return `"${date1Str}" + "${amount}" is outside the range of dates that can be calculated.`;
+
+    const resultStr = `${String(result.getFullYear()).padStart(4, "0")}-${String(result.getMonth() + 1).padStart(2, "0")}-${String(result.getDate()).padStart(2, "0")}`;
     const dayName = this.getDayName(result);
 
     return `## Date Addition\n\n**${date1Str}** + **${amount}** = **${resultStr}** (${dayName})`;
@@ -239,7 +238,9 @@ export class DateCalculatorSkill implements Skill {
 
   private resolveTimezone(input: string): string | null {
     const lower = input.trim().toLowerCase();
-    if (DateCalculatorSkill.CITY_TO_TZ[lower]) return DateCalculatorSkill.CITY_TO_TZ[lower];
+    // Own keys only: "constructor" or "toString" must not read Object's methods.
+    if (Object.prototype.hasOwnProperty.call(DateCalculatorSkill.CITY_TO_TZ, lower))
+      return DateCalculatorSkill.CITY_TO_TZ[lower];
     const asIana = input.trim();
     try {
       Intl.DateTimeFormat(undefined, { timeZone: asIana });
@@ -290,4 +291,25 @@ export class DateCalculatorSkill implements Skill {
     const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
     return days[date.getDay()];
   }
+}
+
+/** Days since the epoch for a date's calendar day, ignoring time zones. */
+function utcDayNumber(d: Date): number {
+  const t = new Date(0);
+  t.setUTCFullYear(d.getFullYear(), d.getMonth(), d.getDate());
+  return t.getTime() / 86_400_000;
+}
+
+/** Adds whole months, keeping the day within the target month. */
+function addMonthsClamped(d: Date, months: number): Date {
+  const target = new Date(d.getTime());
+  target.setDate(1);
+  target.setMonth(d.getMonth() + months);
+  // setMonth(next, 0) lands on the last day of the target month; new Date(y, m, 0)
+  // would read years below 100 as 19xx.
+  const end = new Date(target.getTime());
+  end.setMonth(end.getMonth() + 1, 0);
+  const lastDay = end.getDate();
+  target.setDate(Math.min(d.getDate(), lastDay));
+  return target;
 }

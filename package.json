@@ -1,6 +1,6 @@
 {
   "name": "horme",
-  "version": "4.0.1",
+  "version": "4.0.2",
   "description": "AI-powered assistant with chat, right-click actions, vault-wide RAG, and an extensible skill system. Supports llama.cpp, Ollama, LM Studio, Claude, Gemini, OpenAI, Groq, OpenRouter, and Mistral.",
   "main": "main.js",
   "scripts": {
@@ -10,7 +10,7 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier . --write",
     "format:check": "prettier . --check",
-    "test": "node --import tsx --test test/vectorUtils.test.ts test/typeGuards.test.ts test/normalizeBaseUrl.test.ts"
+    "test": "node --import tsx --test test/vectorUtils.test.ts test/typeGuards.test.ts test/normalizeBaseUrl.test.ts test/dateCalculator.test.ts test/messageRoles.test.ts test/urlSafety.test.ts test/passages.test.ts test/citations.test.ts test/keywordIndex.test.ts test/grounding.test.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",

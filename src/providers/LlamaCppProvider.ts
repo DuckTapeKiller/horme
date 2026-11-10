@@ -119,6 +119,10 @@ export class LlamaCppProvider implements AiProvider {
         temperature: this.temperature,
         max_tokens: this.maxTokens,
         stream: false,
+        // One-shot jobs (translating tags, writing search queries, text actions)
+        // need no reasoning; a thinking model spent the whole budget on it and
+        // returned nothing (tag translation came back empty with gemma 4).
+        chat_template_kwargs: { enable_thinking: false },
       }),
       throw: false,
     });
@@ -138,6 +142,10 @@ export class LlamaCppProvider implements AiProvider {
         temperature: this.temperature,
         max_tokens: this.maxTokens,
         stream: false,
+        // One-shot jobs (translating tags, writing search queries, text actions)
+        // need no reasoning; a thinking model spent the whole budget on it and
+        // returned nothing (tag translation came back empty with gemma 4).
+        chat_template_kwargs: { enable_thinking: false },
       }),
       throw: false,
     });

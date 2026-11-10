@@ -51,6 +51,8 @@ import {
 } from "./src/constants";
 import { HormeSettings, AiProvider } from "./src/types";
 import { normalizeBaseUrl } from "./src/utils/normalizeBaseUrl";
+import { ensureVaultFolder } from "./src/utils/vaultFolder";
+import { isLocalProvider, providerInfo } from "./src/views/settings/providers";
 
 interface OllamaTagsModel {
   name: string;
@@ -75,6 +77,7 @@ export default class HormePlugin extends Plugin {
   skillManager: SkillManager;
   grammarIndexer: GrammarIndexer;
   diagnosticService: DiagnosticService;
+  private settingTab: HormeSettingTab | null = null;
 
   private indexDebounceMap = new Map<string, number>();
   private statusBarItem: HTMLElement | null = null;
@@ -84,6 +87,8 @@ export default class HormePlugin extends Plugin {
   private _mobileProviderOverrideActive = false;
   private _originalProvider: AiProvider | null = null;
   private _originalModel: string | null = null;
+  /** The provider whose model field the mobile override replaced. */
+  private _overrideProvider: AiProvider | null = null;
   private _lastPersistedAiProvider: AiProvider | null = null;
 
   onSettingsChange(cb: () => void): () => void {
@@ -179,7 +184,7 @@ export default class HormePlugin extends Plugin {
   }
 
   private async fetchOllamaTagsModels(): Promise<OllamaTagsModel[]> {
-    const url = `${this.settings.ollamaBaseUrl.replace(/\/$/, "")}/api/tags`;
+    const url = `${normalizeBaseUrl(this.settings.ollamaBaseUrl)}/api/tags`;
     try {
       const res = await requestUrl({ url, throw: false });
       if (res.status !== 200) return [];
@@ -251,44 +256,24 @@ export default class HormePlugin extends Plugin {
     await this.loadSettings();
 
     // Register Custom Icons
+    // addIcon takes the drawing only, on a 100 × 100 grid: Obsidian supplies the
+    // <svg>. A whole 24 × 24 <svg> here became a second <svg> inside the icon,
+    // which the stop button's spin rule also turned, about its top-left corner.
     addIcon(
       "horme-shell",
-      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 11a2 2 0 1 1-4 0 4 4 0 0 1 8 0 6 6 0 0 1-12 0 8 8 0 0 1 16 0 10 10 0 1 1-20 0 11.93 11.93 0 0 1 2.42-7.22 2 2 0 1 1 3.16 2.44"/></svg>`,
+      `<g transform="scale(4.1666667)" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 11a2 2 0 1 1-4 0 4 4 0 0 1 8 0 6 6 0 0 1-12 0 8 8 0 0 1 16 0 10 10 0 1 1-20 0 11.93 11.93 0 0 1 2.42-7.22 2 2 0 1 1 3.16 2.44"/></g>`,
     );
 
     // Apply Mobile Overrides on startup
     if (Platform.isMobile && this.settings.useMobileOverride) {
-      this._originalProvider = this.settings.aiProvider;
-      this._mobileProviderOverrideActive = true;
-      this.settings.aiProvider = this.settings.mobileProvider;
       const p = this.settings.mobileProvider;
-      const m = this.settings.mobileModel;
-
-      if (p === "claude") {
-        this._originalModel = this.settings.claudeModel;
-        this.settings.claudeModel = m;
-      } else if (p === "gemini") {
-        this._originalModel = this.settings.geminiModel;
-        this.settings.geminiModel = m;
-      } else if (p === "openai") {
-        this._originalModel = this.settings.openaiModel;
-        this.settings.openaiModel = m;
-      } else if (p === "groq") {
-        this._originalModel = this.settings.groqModel;
-        this.settings.groqModel = m;
-      } else if (p === "openrouter") {
-        this._originalModel = this.settings.openRouterModel;
-        this.settings.openRouterModel = m;
-      } else if (p === "lmstudio") {
-        this._originalModel = this.settings.lmStudioModel;
-        this.settings.lmStudioModel = m;
-      } else if (p === "llamacpp") {
-        this._originalModel = this.settings.llamaCppModel;
-        this.settings.llamaCppModel = m;
-      } else {
-        this._originalModel = this.settings.defaultModel;
-        this.settings.defaultModel = m;
-      }
+      const modelKey = providerInfo(p).modelKey;
+      this._originalProvider = this.settings.aiProvider;
+      this._overrideProvider = p;
+      this._originalModel = this.settings[modelKey];
+      this._mobileProviderOverrideActive = true;
+      this.settings.aiProvider = p;
+      if (this.settings.mobileModel.trim()) this.setStringSetting(modelKey, this.settings.mobileModel.trim());
     }
 
     // Initialize Services
@@ -407,13 +392,17 @@ export default class HormePlugin extends Plugin {
       }),
     );
 
-    this.registerEvent(
-      this.app.vault.on("create", (file) => {
-        if (file instanceof TFile && file.path.endsWith(".md")) {
-          void this.vaultIndexer.enqueueIndex(file).catch((e) => this.handleError(e));
-        }
-      }),
-    );
+    // Obsidian fires "create" for every file while the vault loads; registering
+    // after the layout is ready means only notes created afterwards are queued.
+    this.app.workspace.onLayoutReady(() => {
+      this.registerEvent(
+        this.app.vault.on("create", (file) => {
+          if (file instanceof TFile && file.path.endsWith(".md")) {
+            void this.vaultIndexer.enqueueIndex(file).catch((e) => this.handleError(e));
+          }
+        }),
+      );
+    });
 
     this.registerEvent(
       this.app.vault.on("delete", (file) => {
@@ -444,7 +433,8 @@ export default class HormePlugin extends Plugin {
       }),
     );
 
-    this.addSettingTab(new HormeSettingTab(this.app, this));
+    this.settingTab = new HormeSettingTab(this.app, this);
+    this.addSettingTab(this.settingTab);
 
     // Load indexes
     await this.grammarIndexer.loadIndex();
@@ -453,7 +443,8 @@ export default class HormePlugin extends Plugin {
     this.statusBarItem.addClass("horme-status-bar-item");
     this.statusBarItem.hide();
 
-    this.models = await this.fetchModels();
+    // Not awaited: a provider that is down or slow must not hold up Obsidian's start.
+    void this.fetchModels();
 
     // Initialize lastActiveMarkdownLeaf if a note is already open
     const activeLeaf = this.app.workspace.getActiveViewOfType(MarkdownView)?.leaf;
@@ -533,6 +524,8 @@ export default class HormePlugin extends Plugin {
   }
 
   onunload() {
+    // A change made in the last moment before the plugin is turned off.
+    this.settingTab?.flushSave();
     for (const handle of this.indexDebounceMap.values()) window.clearTimeout(handle);
     this.indexDebounceMap.clear();
     void this.vaultIndexer?.flush();
@@ -564,9 +557,8 @@ export default class HormePlugin extends Plugin {
     }
   }
 
-  private async saveBinaryFile(name: string, buffer: Buffer | ArrayBuffer) {
-    const folder = this.settings.exportFolder.trim() || "HORME";
-    if (!(await this.app.vault.adapter.exists(folder))) await this.app.vault.createFolder(folder);
+  private async saveBinaryFile(name: string, buffer: ArrayBuffer) {
+    const folder = await ensureVaultFolder(this.app, this.settings.exportFolder.trim() || "HORME");
     let path = `${folder}/${name}`;
     if (await this.app.vault.adapter.exists(path)) path = `${folder}/${new Date().getTime()}_${name}`;
     await this.app.vault.createBinary(path, buffer);
@@ -628,7 +620,10 @@ ${candidates.map((t) => `${t}`).join("\n")}`;
     new Notice("Horme: Generating tags…");
     this.setIndexingStatus("Generating tags...");
     try {
-      const tagsModel = this.settings.tagsModel.trim();
+      // A cloud tag provider needs the same consent as any note content sent to the
+      // cloud; without it, fall back to the chat provider path.
+      const tagsProviderAllowed = isLocalProvider(this.settings.tagsProvider) || this.settings.allowCloudRAG;
+      const tagsModel = tagsProviderAllowed ? this.settings.tagsModel.trim() : "";
       // Pass the complete 'context' string containing the file title to avoid context starvation
       const response = tagsModel
         ? await this.aiGateway.generateWith(context, prompt, this.settings.tagsProvider, tagsModel)
@@ -694,8 +689,23 @@ ${candidates.map((t) => `${t}`).join("\n")}`;
   /* ── Actions ── */
 
   private async runAction(editor: Editor, sel: string, sysPrompt: string, actionId?: string) {
-    // Capture the exact end of the user's text selection immediately, before any AI delay
+    // Capture the selection now: the model can take many seconds, and the user
+    // may click or type elsewhere in the meantime.
     const selectionEnd = editor.getCursor("to");
+    const selFrom = editor.getCursor("from");
+    const selTo = editor.getCursor("to");
+    const replaceOriginal = (edited: string) => {
+      if (editor.getRange(selFrom, selTo) !== sel) {
+        void navigator.clipboard.writeText(edited).catch(() => undefined);
+        new Notice(
+          "Horme: The text changed while Horme was working, so nothing was replaced. The new text is on the clipboard.",
+          8000,
+        );
+        return;
+      }
+      editor.replaceRange(edited, selFrom, selTo);
+      new Notice("Horme: Done ✓");
+    };
 
     const STATUS_MESSAGES: Record<string, string> = {
       proofread: "Proofreading...",
@@ -736,10 +746,7 @@ TARGET LANGUAGE: ${lang}`;
         }
 
         const response = await this.aiGateway.generate(messages, finalPrompt, undefined, true);
-        new ConfirmReplaceModal(this.app, sel, response, (edited) => {
-          editor.replaceSelection(edited);
-          new Notice("Horme: Done ✓");
-        }).open();
+        new ConfirmReplaceModal(this.app, sel, response, replaceOriginal).open();
         return;
       }
 
@@ -771,6 +778,8 @@ RULES:
           `\n**Verdict:** Accurate / Inaccurate / Unverifiable` +
           `\n**Source:** [relevant Wikipedia excerpt]` +
           `\n**Note:** [brief explanation of match or discrepancy]` +
+          `\n\nVerdicts: Accurate when an excerpt supports the claim; Inaccurate ONLY when an excerpt contradicts it (quote the contradiction);` +
+          ` Unverifiable when the excerpts do not mention it. A claim the excerpts are silent about is never Inaccurate.` +
           `\n\nRepeat for each claim. End with an overall assessment.`;
       }
 
@@ -798,10 +807,7 @@ RULES:
           if (actionId === "fact-check") {
             new FactCheckResultModal(this.app, this, response, editor, selectionEnd).open();
           } else {
-            new ConfirmReplaceModal(this.app, sel, response, (edited) => {
-              editor.replaceSelection(edited);
-              new Notice("Horme: Done ✓");
-            }).open();
+            new ConfirmReplaceModal(this.app, sel, response, replaceOriginal).open();
           }
           break;
         }
@@ -811,8 +817,10 @@ RULES:
         for (const call of skillCalls) {
           new Notice(`Horme Skill: ${call.skillId}...`);
           const result = await this.skillManager.executeSkill(call);
+          // A user turn, not a system one: Claude and Gemini keep only the first
+          // system message, so a later one never reached the model.
           messages.push({
-            role: "system",
+            role: "user",
             content: `RESULT FROM SKILL "${call.skillId}":\n\n${result}\n\nBased on this, finish your task.`,
           });
         }
@@ -862,55 +870,31 @@ RULES:
         return;
       }
 
-      // Parse existing frontmatter.
-      // \r?\n handles both LF (Mac/Linux) and CRLF (Windows / some sync tools).
-      const fmMatch = fullContent.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
+      // Written through processFrontMatter: it reads the note at the moment of
+      // writing (so edits made while the model ran are kept) and writes valid
+      // YAML whatever the summary contains (quotes, backslashes, line breaks).
+      const writeSummary = async (text: string, verb: string) => {
+        await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
+          fm[field] = text;
+        });
+        new Notice(`Horme: Summary ${verb} in "${field}" field.`);
+      };
 
-      // The literal field value we will write (e.g. `Resumen: "..."`)
-      const fieldValue = `${field}: "${summary.replace(/"/g, '\\"')}"`;
-
-      let newContent: string;
-
-      if (fmMatch) {
-        const fmBlock = fmMatch[1];
-        // Escape regex special chars in the user-chosen field name (e.g. "my.field")
-        const escapedField = field.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const fieldRegex = new RegExp(`^${escapedField}:.*$`, "m");
-        const existingMatch = fmBlock.match(fieldRegex);
-
-        // Use slice instead of String.replace() for the outer substitution to avoid
-        // $& / $1 / $` interpolation corrupting content that contains a "$".
-        const fmEndIndex = fmMatch[0].length;
-        const afterFm = fullContent.slice(fmEndIndex);
-
-        if (existingMatch) {
-          const oldSummary = existingMatch[0]
-            .replace(`${field}:`, "")
-            .trim()
-            .replace(/^[''"]|[''"]$/g, "");
-          new ConfirmReplaceModal(this.app, oldSummary, summary, (edited) => {
-            void (async () => {
-              const finalSummary = edited.trim();
-              const updatedFieldValue = `${field}: "${finalSummary.replace(/"/g, '\\"')}"`;
-              const updatedFm = fmBlock.replace(fieldRegex, () => updatedFieldValue);
-              const finalContent = `---\n${updatedFm}\n---\n${afterFm}`;
-              await this.app.vault.modify(file, finalContent);
-              new Notice(`Horme: Summary updated in "${field}" field.`);
-            })().catch((e) => this.handleError(e));
-          }).open();
-          return;
-        } else {
-          // Field doesn't exist yet — append it to the existing frontmatter block
-          const updatedFm = fmBlock + `\n${fieldValue}`;
-          newContent = `---\n${updatedFm}\n---\n${afterFm}`;
-        }
-      } else {
-        // No frontmatter at all — create one with the user's chosen field name
-        newContent = `---\n${fieldValue}\n---\n${fullContent}`;
+      const fm: Record<string, unknown> | undefined = this.app.metadataCache.getFileCache(file)?.frontmatter;
+      const existingValue = fm?.[field];
+      const existing =
+        typeof existingValue === "string" || typeof existingValue === "number"
+          ? String(existingValue).trim()
+          : Array.isArray(existingValue)
+            ? existingValue.map((v) => String(v)).join(" ")
+            : "";
+      if (existing) {
+        new ConfirmReplaceModal(this.app, existing, summary, (edited) => {
+          void writeSummary(edited.trim(), "updated").catch((e) => this.handleError(e));
+        }).open();
+        return;
       }
-
-      await this.app.vault.modify(file, newContent);
-      new Notice(`Horme: Summary added to "${field}" field.`);
+      await writeSummary(summary, "added");
     } catch (e: unknown) {
       console.error("Horme: Summary generation error", e);
       this.diagnosticService.report("Summary", `Generation failed: ${errorToMessage(e)}`);
@@ -1056,7 +1040,7 @@ RULES:
     const p = this.settings.aiProvider;
     try {
       if (p === "ollama") {
-        const url = `${this.settings.ollamaBaseUrl.replace(/\/$/, "")}/api/tags`;
+        const url = `${normalizeBaseUrl(this.settings.ollamaBaseUrl)}/api/tags`;
         const res = await requestUrl({ url, throw: false });
         return res.status === 200;
       }
@@ -1091,23 +1075,13 @@ RULES:
         return res.status === 200;
       }
       if (p === "claude" && apiKey) {
+        // Lists models: checks the key without spending tokens.
         const res = await requestUrl({
-          url: "https://api.anthropic.com/v1/messages",
-          method: "POST",
-          headers: {
-            "x-api-key": apiKey,
-            "anthropic-version": "2023-06-01",
-            "Content-Type": "application/json",
-          },
+          url: "https://api.anthropic.com/v1/models?limit=1",
+          headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
           throw: false,
-          body: JSON.stringify({
-            model: this.settings.claudeModel,
-            max_tokens: 1,
-            messages: [{ role: "user", content: "hi" }],
-          }),
         });
-        // We accept 200 or even a 400 (if it's a model mismatch) as "connected" if it's not a 401/403
-        return res.status >= 200 && res.status < 401;
+        return res.status === 200;
       }
       if (p === "groq" && apiKey) {
         const res = await requestUrl({
@@ -1349,13 +1323,69 @@ RULES:
 
     const migrated = this.migrateLegacyApiKeysToSecretStorage(loaded);
     this.settings = Object.assign({}, DEFAULT_SETTINGS, loaded);
-    if (migrated) {
+    const sanitized = this.sanitizeSettings();
+    if (migrated || sanitized) {
       // Persist the sanitized settings immediately so API keys never remain in data.json.
       await this.saveData(this.settings);
     }
     // Track the provider last saved to disk so we can apply privacy guards on change.
     this._lastPersistedAiProvider = this.settings.aiProvider;
   }
+  private setStringSetting(key: string, value: string): void {
+    (this.settings as unknown as Record<string, string>)[key] = value;
+  }
+
+  /**
+   * Repairs values the settings page can no longer produce: numbers that are not
+   * numbers, and cloud choices whose consent was later withdrawn. Returns true
+   * when something changed.
+   */
+  private sanitizeSettings(): boolean {
+    const s = this.settings;
+    let changed = false;
+    const numbers: Array<[keyof HormeSettings, number, number]> = [
+      ["temperature", 0, 1],
+      ["maxTokens", 256, 1_000_000],
+      ["agentMaxRounds", 1, 50],
+      ["contextFoldersMaxChars", 1000, 10_000_000],
+      ["connectionsThreshold", 0, 1],
+      ["connectionsMaxResults", 1, 200],
+      ["maxSuggestedTags", 1, 100],
+      ["maxHighlightsPerNote", 1, 1000],
+      ["maxHighlightCharsPerNote", 1, 1_000_000],
+      ["vaultBrainRrfK", 1, 10_000],
+      ["vaultIndexPdfMaxChars", 1000, 100_000_000],
+      ["highlightBoost", 0, 10],
+      ["searchMetadataCap", 0, 10],
+      ["searchContentCap", 0, 10],
+    ];
+    for (const [key, min, max] of numbers) {
+      const v = s[key];
+      if (typeof v !== "number" || !Number.isFinite(v) || v < min || v > max) {
+        (s as unknown as Record<string, unknown>)[key] = DEFAULT_SETTINGS[key];
+        changed = true;
+      }
+    }
+    if (!Array.isArray(s.presetsPaths)) {
+      s.presetsPaths = [];
+      changed = true;
+    }
+    if (!Array.isArray(s.customSkills)) {
+      s.customSkills = [];
+      changed = true;
+    }
+    if (!s.allowCloudRAG && !isLocalProvider(s.tagsProvider)) {
+      s.tagsProvider = isLocalProvider(s.aiProvider) ? s.aiProvider : "ollama";
+      s.tagsModel = "";
+      changed = true;
+    }
+    if (!s.allowCloudTagTranslation && !isLocalProvider(s.tagTranslationProvider)) {
+      s.tagTranslationProvider = s.tagTranslationFallbackProvider;
+      changed = true;
+    }
+    return changed;
+  }
+
   async saveSettings() {
     // Privacy guard: privacy warnings are provider-specific.
     // If the user switches to a different *cloud* provider, force the warning flags back to false
@@ -1372,58 +1402,25 @@ RULES:
     ) {
       this.settings.contextCloudWarningShown = false;
       this.settings.contextNotesCloudWarningShown = false;
+      this.settings.contextFoldersCloudWarningShown = false;
       this.settings.documentCloudWarningShown = false;
     }
 
     // If mobile override is active, temporarily restore the original provider and model
-    // before persisting so the override never contaminates saved data.
-    if (this._mobileProviderOverrideActive && this._originalProvider !== null) {
+    // before persisting so the override never contaminates saved data. The model
+    // restored is the one the override replaced: the mobile provider's.
+    if (this._mobileProviderOverrideActive && this._originalProvider !== null && this._overrideProvider) {
+      const modelKey = providerInfo(this._overrideProvider).modelKey;
       const overriddenProvider = this.settings.aiProvider;
+      const overriddenModel = this.settings[modelKey];
       this.settings.aiProvider = this._originalProvider;
-
-      let overriddenModel = "";
-      const p = this._originalProvider;
-      if (p === "claude") {
-        overriddenModel = this.settings.claudeModel;
-        this.settings.claudeModel = this._originalModel || "";
-      } else if (p === "gemini") {
-        overriddenModel = this.settings.geminiModel;
-        this.settings.geminiModel = this._originalModel || "";
-      } else if (p === "openai") {
-        overriddenModel = this.settings.openaiModel;
-        this.settings.openaiModel = this._originalModel || "";
-      } else if (p === "groq") {
-        overriddenModel = this.settings.groqModel;
-        this.settings.groqModel = this._originalModel || "";
-      } else if (p === "openrouter") {
-        overriddenModel = this.settings.openRouterModel;
-        this.settings.openRouterModel = this._originalModel || "";
-      } else if (p === "mistral") {
-        overriddenModel = this.settings.mistralModel;
-        this.settings.mistralModel = this._originalModel || "";
-      } else if (p === "lmstudio") {
-        overriddenModel = this.settings.lmStudioModel;
-        this.settings.lmStudioModel = this._originalModel || "";
-      } else if (p === "llamacpp") {
-        overriddenModel = this.settings.llamaCppModel;
-        this.settings.llamaCppModel = this._originalModel || "";
-      } else {
-        overriddenModel = this.settings.defaultModel;
-        this.settings.defaultModel = this._originalModel || "";
+      this.setStringSetting(modelKey, this._originalModel ?? "");
+      try {
+        await this.saveData(this.settings);
+      } finally {
+        this.settings.aiProvider = overriddenProvider;
+        this.setStringSetting(modelKey, overriddenModel);
       }
-
-      await this.saveData(this.settings);
-
-      this.settings.aiProvider = overriddenProvider;
-      if (p === "claude") this.settings.claudeModel = overriddenModel;
-      else if (p === "gemini") this.settings.geminiModel = overriddenModel;
-      else if (p === "openai") this.settings.openaiModel = overriddenModel;
-      else if (p === "groq") this.settings.groqModel = overriddenModel;
-      else if (p === "openrouter") this.settings.openRouterModel = overriddenModel;
-      else if (p === "mistral") this.settings.mistralModel = overriddenModel;
-      else if (p === "lmstudio") this.settings.lmStudioModel = overriddenModel;
-      else if (p === "llamacpp") this.settings.llamaCppModel = overriddenModel;
-      else this.settings.defaultModel = overriddenModel;
     } else {
       await this.saveData(this.settings);
     }

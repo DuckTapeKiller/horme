@@ -1,7 +1,8 @@
 import { Document, Packer, Paragraph, TextRun, HeadingLevel } from "docx";
 
 export class DocxService {
-  async generateBuffer(markdown: string): Promise<Buffer> {
+  /** ArrayBuffer rather than a Node Buffer, which the mobile apps do not have. */
+  async generateBuffer(markdown: string): Promise<ArrayBuffer> {
     const doc = new Document({
       sections: [
         {
@@ -11,7 +12,7 @@ export class DocxService {
       ],
     });
 
-    return await Packer.toBuffer(doc);
+    return await Packer.toArrayBuffer(doc);
   }
 
   private markdownToDocxParagraphs(markdown: string): Paragraph[] {

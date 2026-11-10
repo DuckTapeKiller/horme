@@ -2,6 +2,7 @@ import {
   ItemView,
   WorkspaceLeaf,
   MarkdownRenderer,
+  normalizePath,
   MarkdownView,
   setIcon,
   Notice,
@@ -10,12 +11,24 @@ import {
   Menu,
 } from "obsidian";
 import HormePlugin from "../../main";
+import { providerInfo, providerModel } from "./settings/providers";
 import { VIEW_TYPE } from "../constants";
 import { ChatMessage, SavedConversation } from "../types";
 import { SkillCall } from "../skills/types";
 import { NotePickerModal } from "../modals/NotePickerModal";
 import { FolderPickerModal } from "../modals/FolderPickerModal";
 import { GenericConfirmModal } from "../modals/GenericConfirmModal";
+import { ensureVaultFolder } from "../utils/vaultFolder";
+import { passageNotePath } from "../utils/passages";
+import { groundedShare, notesUsed } from "../utils/grounding";
+import {
+  CitedSource,
+  SourcePill,
+  linkCitations,
+  mergePills,
+  parseResearchSources,
+  pillsFromSkillResult,
+} from "../utils/citations";
 
 const SKILL_PLACEHOLDERS: Record<string, string> = {
   fetch_and_summarise: "Paste URL to summarise...",
@@ -26,6 +39,20 @@ const SKILL_PLACEHOLDERS: Record<string, string> = {
 };
 
 type ContextFolderSelection = { path: string; noteCount: number; totalChars: number };
+
+/** Opens an answer when Vault Brain searched and found nothing on the question. */
+const VAULT_NOTHING = "Nothing in your vault on this.";
+
+/** The model's own wording of the notice ("**Nothing in your vault on this**", …) becomes the exact line. */
+function normaliseVaultNotice(text: string): string {
+  const m =
+    /^\s*(?:\*\*|__|\*|_)?\s*nothing in (?:your|the) vault(?: on this)?\s*[.!:]?\s*(?:\*\*|__|\*|_)?[ \t]*\n*/i.exec(
+      text,
+    );
+  if (!m) return text;
+  const rest = text.slice(m[0].length).trim();
+  return rest ? `${VAULT_NOTHING}\n\n${rest}` : VAULT_NOTHING;
+}
 
 export class HormeChatView extends ItemView {
   plugin: HormePlugin;
@@ -41,6 +68,20 @@ export class HormeChatView extends ItemView {
   private presetButton!: HTMLButtonElement;
   private isGenerating = false;
   private generationEpoch = 0;
+  /** Set when this message's Vault Brain search found nothing; the answer opens by saying so. */
+  private turnVaultNothing = false;
+  /** The vault passages sent with this message; skill follow-up rounds are not given them again. */
+  private turnPassages = "";
+  private lastTurnPassages = "";
+  /** The notes listed for this message; a skill round after it is not given them again. */
+  private turnSources: string[] = [];
+  private lastTurnSources: string[] = [];
+  /** turnVaultNothing of the request kept for Regenerate. */
+  private lastVaultNothing = false;
+  /** False once the user scrolls up during a reply, so the view stops pulling them down. */
+  private followOutput = true;
+  /** Latest Markdown render per element (see renderMarkdownInto). */
+  private renderSeq = new WeakMap<HTMLElement, number>();
   private showingHistory = false;
   private unregisterSettingsListener: (() => void) | null = null;
   private documentClickHandler: (() => void) | null = null;
@@ -52,6 +93,10 @@ export class HormeChatView extends ItemView {
   private activeAbortController: AbortController | null = null;
   private lastMsgs: ChatMessage[] | null = null;
   private lastModel: string | null = null;
+  /** The provider the last request went to; Regenerate is refused after a switch. */
+  private lastProvider: string | null = null;
+  /** True while a message is being prepared (context, consent, RAG) before streaming starts. */
+  private sendInFlight = false;
   private conversationId: string = this.generateId();
   private uploadedDocContent: string | null = null;
   private uploadedDocName: string | null = null;
@@ -376,7 +421,10 @@ export class HormeChatView extends ItemView {
         void this.toggleHistoryPanel().catch((e) => this.plugin.handleError(e));
       });
 
-      const exportBtn = row1Right.createEl("button", { cls: "horme-header-btn horme-icon-btn" });
+      const exportBtn = row1Right.createEl("button", {
+        cls: "horme-header-btn horme-icon-btn",
+        attr: { "aria-label": "Save the whole chat as a note" },
+      });
       setIcon(exportBtn, "download");
       exportBtn.addEventListener("click", () => {
         void this.exportConversation().catch((e) => this.plugin.handleError(e));
@@ -465,6 +513,19 @@ export class HormeChatView extends ItemView {
 
       this.loadingOverlay.createDiv("horme-spinner");
       this.messagesEl = content.createDiv("horme-messages");
+      // Scrolling up while a reply streams stops the view following it; coming
+      // back to the bottom resumes. Wheel and touch catch the intent at once.
+      const messagesEl = this.messagesEl;
+      this.registerDomEvent(messagesEl, "scroll", () => {
+        this.followOutput = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 40;
+      });
+      this.registerDomEvent(messagesEl, "wheel", (e: WheelEvent) => {
+        if (e.deltaY < 0) this.followOutput = false;
+      });
+      this.registerDomEvent(messagesEl, "touchmove", () => {
+        if (messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight >= 40)
+          this.followOutput = false;
+      });
       this.renderEmpty();
 
       /* Input Area */
@@ -477,7 +538,9 @@ export class HormeChatView extends ItemView {
       });
       this.inputEl.addEventListener("input", () => this.autoGrow());
       this.inputEl.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" && !e.shiftKey) {
+        // isComposing: the Enter that confirms a Japanese, Chinese or Korean
+        // candidate must not send a half-typed message.
+        if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
           e.preventDefault();
           void this.sendMessage().catch((err) => this.plugin.handleError(err, "Chat"));
         }
@@ -760,29 +823,15 @@ export class HormeChatView extends ItemView {
     return { text: parts.join(""), truncated, included, total };
   }
 
+  // The model field of the active provider. llama.cpp was missing here, so the
+  // chat read and wrote Ollama's model while llama.cpp was the provider.
   private getCurrentProviderModel(): string {
-    const p = this.plugin.settings.aiProvider;
-    if (p === "claude") return this.plugin.settings.claudeModel;
-    if (p === "gemini") return this.plugin.settings.geminiModel;
-    if (p === "openai") return this.plugin.settings.openaiModel;
-    if (p === "groq") return this.plugin.settings.groqModel;
-    if (p === "openrouter") return this.plugin.settings.openRouterModel;
-    if (p === "mistral") return this.plugin.settings.mistralModel;
-    if (p === "lmstudio") return this.plugin.settings.lmStudioModel;
-    return this.plugin.settings.defaultModel;
+    return providerModel(this.plugin.settings, this.plugin.settings.aiProvider);
   }
 
   private async setCurrentProviderModel(model: string): Promise<void> {
-    const v = model.trim();
-    const p = this.plugin.settings.aiProvider;
-    if (p === "claude") this.plugin.settings.claudeModel = v;
-    else if (p === "gemini") this.plugin.settings.geminiModel = v;
-    else if (p === "openai") this.plugin.settings.openaiModel = v;
-    else if (p === "groq") this.plugin.settings.groqModel = v;
-    else if (p === "openrouter") this.plugin.settings.openRouterModel = v;
-    else if (p === "mistral") this.plugin.settings.mistralModel = v;
-    else if (p === "lmstudio") this.plugin.settings.lmStudioModel = v;
-    else this.plugin.settings.defaultModel = v;
+    const key = providerInfo(this.plugin.settings.aiProvider).modelKey;
+    (this.plugin.settings as unknown as Record<string, string>)[key] = model.trim();
     await this.plugin.saveSettings();
   }
 
@@ -873,7 +922,7 @@ export class HormeChatView extends ItemView {
       return;
     }
 
-    const label = savedModel || models[0];
+    const label = savedModel || (this.plugin.settings.aiProvider === "llamacpp" ? "Automatic" : models[0]);
     this.modelButton.textContent = `${label} ▾`;
     this.modelButton.title = label;
     this.modelButton.disabled = false;
@@ -983,8 +1032,31 @@ export class HormeChatView extends ItemView {
     });
   }
 
+  /**
+   * Sends the message in the input (or regenerates the last reply). A second
+   * call while one is being prepared is ignored, so a double Enter cannot send
+   * twice before streaming starts.
+   */
   private async sendMessage(regenerate = false) {
+    if (this.isGenerating || this.sendInFlight) return;
+    this.sendInFlight = true;
+    try {
+      await this.sendMessageInner(regenerate);
+    } finally {
+      this.sendInFlight = false;
+    }
+  }
+
+  private async sendMessageInner(regenerate: boolean) {
     if (this.isGenerating) return;
+    this.followOutput = true;
+    this.turnVaultNothing = false;
+    this.turnPassages = "";
+    this.turnSources = [];
+    // Stop, Clear or opening another chat bump the epoch; preparation that was
+    // overtaken must not start a stream.
+    const startEpoch = this.generationEpoch;
+    const startConversation = this.conversationId;
 
     // ── Forced skill execution ──────────────────────────────────────────────
     // When a skill is armed from the dropdown, we bypass both the normal
@@ -1067,7 +1139,7 @@ export class HormeChatView extends ItemView {
 
         loadingEl.remove();
         await this.renderSkillResultBox(skill.id, skill.name, forcedParams, result);
-        const forcedSkillLinks = this.extractSourceLinks(result);
+        const forcedSkillLinks = pillsFromSkillResult(result);
         if (!this.contentEl.isConnected) return; // Connectivity guard from Fix 2
         const resultBubble = this.addMessageBubble("assistant", "");
         const contentArea = resultBubble.querySelector(".horme-content-area") as HTMLElement;
@@ -1078,6 +1150,8 @@ export class HormeChatView extends ItemView {
         this.addAssistantActions(resultBubble, result);
         this.renderSkillSourceLinks(resultBubble, forcedSkillLinks);
         this.history.push({ role: "assistant", content: result });
+        // Regenerate would replay an older turn's request; a skill run is repeated by running it again.
+        this.lastMsgs = null;
         await this.plugin.historyManager.append({
           id: this.conversationId,
           title: this.history.find((m) => m.role === "user")?.content.slice(0, 60) || "Untitled chat",
@@ -1114,11 +1188,19 @@ export class HormeChatView extends ItemView {
     const initialSourcePath = (mdLeaf?.view instanceof MarkdownView ? mdLeaf.view.file?.path : null) ?? null;
     let currentSources: string[] = [];
 
-    if (regenerate && this.lastMsgs && this.lastModel) {
+    if (regenerate && !this.canRegenerate()) {
+      new Notice("Horme: Only the latest reply can be regenerated, with the provider it came from.");
+      return;
+    }
+    if (regenerate && this.lastMsgs && this.lastModel !== null) {
       if (this.history.length && this.history[this.history.length - 1].role === "assistant") {
         this.history.pop();
       }
       msgs = this.lastMsgs;
+      // The vault was not searched again: keep what the first search found.
+      this.turnVaultNothing = this.lastVaultNothing;
+      this.turnPassages = this.lastTurnPassages;
+      this.turnSources = this.lastTurnSources;
       model = this.lastModel;
       injectedPassages = this.lastInjectedPassages;
     } else {
@@ -1126,8 +1208,17 @@ export class HormeChatView extends ItemView {
       if (!text) return;
 
       model = this.getCurrentProviderModel().trim();
-      if (!model) {
-        new Notice("Horme: No model selected.");
+      // llama.cpp resolves an empty model to the one the server has loaded.
+      if (!model && this.plugin.settings.aiProvider !== "llamacpp") {
+        // An empty model list from a local server usually means it is not running.
+        const info = providerInfo(this.plugin.settings.aiProvider);
+        const url = info.urlKey ? String(this.plugin.settings[info.urlKey] ?? "") : "";
+        new Notice(
+          info.local
+            ? `Horme: No ${info.name} model chosen. If ${info.name} is running${url ? ` at ${url}` : ""}, pick a model in the chat's model menu; if not, start it or choose another provider.`
+            : `Horme: No ${info.name} model chosen. Pick one in the chat's model menu.`,
+          8000,
+        );
         return;
       }
 
@@ -1213,12 +1304,14 @@ export class HormeChatView extends ItemView {
       if (this.selectedContextFolders.length > 0) {
         let includeFolderContext = true;
 
-        if (!providerIsLocal && !this.plugin.settings.contextNotesCloudWarningShown) {
+        // Its own consent: agreeing to send up to five picked notes is not
+        // agreeing to send whole folders.
+        if (!providerIsLocal && !this.plugin.settings.contextFoldersCloudWarningShown) {
           const ok = await this.confirmCloudSend(
             `Privacy notice: Notes from your selected folders will be sent to ${providerLabel}, a cloud provider. The content will leave your device. Do you want to continue?`,
           );
           if (ok) {
-            this.plugin.settings.contextNotesCloudWarningShown = true;
+            this.plugin.settings.contextFoldersCloudWarningShown = true;
             await this.plugin.saveSettings();
           } else {
             includeFolderContext = false;
@@ -1276,6 +1369,10 @@ export class HormeChatView extends ItemView {
         } finally {
           this.plugin.setIndexingStatus(null);
         }
+        // No passage at all: the answer opens with the notice, set here. When
+        // passages come back the model judges whether they answer (scores alone
+        // cannot tell "about the topic" from "holds the answer") and says so.
+        if (relevantChunks.length === 0) this.turnVaultNothing = true;
 
         if (relevantChunks.length > 0) {
           // search() returns chunks sorted best-first (highest score first).
@@ -1290,24 +1387,28 @@ export class HormeChatView extends ItemView {
           this.rollingRAGContext = [...relevantChunks, ...prevContext].slice(0, 20);
 
           // Extract unique paths for the "Sources" UI
-          currentSources = relevantChunks
-            .map((c) => {
-              const match = c.match(/^\[From (.*?)(?:\s\(.*\))?\]:/);
-              return match ? match[1] : "";
-            })
-            .filter(Boolean);
+          currentSources = relevantChunks.map((c) => passageNotePath(c)).filter(Boolean);
           currentSources = [...new Set(currentSources)];
+          this.turnSources = currentSources;
         }
 
         if (this.rollingRAGContext.length > 0) {
           ragWasInjected = true;
           injectedPassages = this.rollingRAGContext.join("\n\n---\n\n");
           this.lastInjectedPassages = injectedPassages;
+          this.turnPassages = injectedPassages;
           if (relevantChunks.length > 0) {
             new Notice(`● Vault Brain: Consulting ${relevantChunks.length} notes...`);
           }
           systemParts.push(
-            `LOCAL VAULT CONTEXT — Relevant notes from your vault are provided below.\n` +
+            (relevantChunks.length === 0
+              ? `LOCAL VAULT CONTEXT — The vault search for this message found nothing; the user has been told. ` +
+                `The notes below came up earlier in this conversation: use them only if this message follows up on them.\n`
+              : `LOCAL VAULT CONTEXT — The closest notes from the user's vault are provided below.\n` +
+                `VAULT CHECK: the search returns the closest notes even when none of them answers the question. ` +
+                `First decide whether these notes contain the answer. If they do not, your reply must begin with this exact line: ` +
+                `"${VAULT_NOTHING}" Then answer another way (a skill, or what you know, saying which) and do not present the notes as the source. ` +
+                `If they do contain it, answer from them and do not write that line.\n`) +
               `LANGUAGE RULE: Respond exclusively in the same language the user used in their question. ` +
               `If the context is in a different language, translate the facts accurately — do not switch your response language.\n` +
               `CONTEXT PRIORITY: Base your answer on the vault context above. ` +
@@ -1418,8 +1519,13 @@ export class HormeChatView extends ItemView {
       }
     }
 
+    if (this.generationEpoch !== startEpoch || this.conversationId !== startConversation) return;
     this.lastMsgs = msgs;
+    this.lastVaultNothing = this.turnVaultNothing;
+    this.lastTurnPassages = this.turnPassages;
+    this.lastTurnSources = this.turnSources;
     this.lastModel = model;
+    this.lastProvider = this.plugin.settings.aiProvider;
     const epoch = ++this.generationEpoch;
     const loadingEl = this.showLoading();
     await this.handleStreamingResponse(
@@ -1446,7 +1552,7 @@ export class HormeChatView extends ItemView {
     suppressVaultSkill: boolean,
     skillDepth: number,
     sources: string[] = [],
-    skillSourceLinks: string[] = [],
+    skillSourceLinks: SourcePill[] = [],
     passages: string,
     epoch: number,
     extras: {
@@ -1464,6 +1570,30 @@ export class HormeChatView extends ItemView {
     this.isGenerating = true;
     this.sendBtn.addClass("horme-stop-btn");
     setIcon(this.sendBtn, "horme-shell");
+    // The chat this reply belongs to: after Stop the partial reply is kept here;
+    // after Clear or opening another chat it is dropped, never added to that chat.
+    const convoAtStart = this.conversationId;
+    const historyAtStart = this.history;
+    let partialKept = false;
+    /** After Stop: the text received so far stays in this chat's history, once. */
+    const keepPartialReply = async () => {
+      if (partialKept || !(fullContent || fullReasoning)) return;
+      if (this.conversationId !== convoAtStart || this.history !== historyAtStart) return;
+      partialKept = true;
+      this.history.push({
+        role: "assistant",
+        content: fullContent,
+        reasoning: fullReasoning || undefined,
+        context: passages || undefined,
+        sources: sources.length ? sources : undefined,
+      });
+      await this.plugin.historyManager.append({
+        id: this.conversationId,
+        title: this.history.find((m) => m.role === "user")?.content.slice(0, 60) || "Untitled chat",
+        timestamp: Date.now(),
+        messages: this.history,
+      });
+    };
 
     let bubbleEl: HTMLElement | null = null;
     let fullContent = "";
@@ -1513,10 +1643,12 @@ export class HormeChatView extends ItemView {
         if (renderTask) return; // Skip if busy
         lastRender = now;
         renderTask = (async () => {
-          target.empty();
-          await MarkdownRenderer.render(this.app, text, target, initialSourcePath || "", this);
-          this.scrollToBottom();
-          renderTask = null;
+          try {
+            await this.renderMarkdownInto(target, text, initialSourcePath || "");
+            this.scrollToBottom();
+          } finally {
+            renderTask = null;
+          }
         })();
       };
     })();
@@ -1532,10 +1664,12 @@ export class HormeChatView extends ItemView {
         if (renderTask) return; // Skip if busy
         lastRender = now;
         renderTask = (async () => {
-          target.empty();
-          await MarkdownRenderer.render(this.app, text, target, initialSourcePath || "", this);
-          this.scrollToBottom();
-          renderTask = null;
+          try {
+            await this.renderMarkdownInto(target, text, initialSourcePath || "");
+            this.scrollToBottom();
+          } finally {
+            renderTask = null;
+          }
         })();
       };
     })();
@@ -1629,7 +1763,7 @@ export class HormeChatView extends ItemView {
                     // If there was reasoning, ensure the content is outside/after it
                     let contentArea = el.querySelector(".horme-content-area") as HTMLElement;
                     if (!contentArea) contentArea = el.createDiv("horme-content-area");
-                    void renderProgressiveMarkdown(fullContent, contentArea);
+                    void renderProgressiveMarkdown(this.withVaultNotice(fullContent), contentArea);
                   }
                   this.scrollToBottom();
                 });
@@ -1643,13 +1777,38 @@ export class HormeChatView extends ItemView {
 
       this.activeReader = null;
 
+      if (this.generationEpoch !== epoch) {
+        // Stopped, or overtaken by Clear or another chat: run no skills.
+        await keepPartialReply();
+        return;
+      }
+
+      // The final answer of a turn that ran Deep Research: its [n] citations
+      // become links to the sources, which are listed at the end, in the chat
+      // and in what is saved.
+      if (fullContent && nativeCallParts.size === 0 && !/<call:/.test(fullContent)) {
+        const research = this.researchSourcesForTurn();
+        if (research.size) fullContent = linkCitations(fullContent, research);
+        // Notes were sent but the answer came from an outside skill and few of
+        // its facts are in them: the vault did not answer. (Small models rarely
+        // say so themselves; tested on 48 questions with gemma E2B.)
+        if (
+          this.turnPassages &&
+          !fullContent.trimStart().startsWith(VAULT_NOTHING) &&
+          this.outsideSkillThisTurn()
+        ) {
+          const share = groundedShare(fullContent, this.turnPassages);
+          if (share === null || share < 0.8) this.turnVaultNothing = true;
+        }
+        fullContent = this.withVaultNotice(normaliseVaultNotice(fullContent));
+      }
+
       if (bubbleEl) {
         const el = bubbleEl as HTMLElement;
         // Re-render the final content with Markdown
         const contentArea = el.querySelector(".horme-content-area") as HTMLElement;
         if (contentArea) {
-          contentArea.empty();
-          await MarkdownRenderer.render(this.app, fullContent, contentArea, initialSourcePath || "", this);
+          await this.renderMarkdownInto(contentArea, fullContent, initialSourcePath || "");
         } else {
           // Fallback if only content was received without special area
           el.empty();
@@ -1665,20 +1824,26 @@ export class HormeChatView extends ItemView {
           if (reasoningDetails && reasoningBody) {
             reasoningDetails.removeClass("horme-thinking-active");
             reasoningDetails.open = false;
-            reasoningBody.empty();
-            await MarkdownRenderer.render(
-              this.app,
-              fullReasoning,
-              reasoningBody,
-              initialSourcePath || "",
-              this,
-            );
+            await this.renderMarkdownInto(reasoningBody, fullReasoning, initialSourcePath || "");
           }
+        }
+        // A thinking model can spend the whole answer budget reasoning and never
+        // answer; say so instead of leaving an empty bubble.
+        if (!fullContent.trim() && fullReasoning.trim() && nativeCallParts.size === 0) {
+          const area =
+            el.querySelector<HTMLElement>(".horme-content-area") ?? el.createDiv("horme-content-area");
+          area.empty();
+          area.createEl("p", {
+            cls: "horme-empty-answer",
+            text: `The model wrote only its reasoning and no answer. Usually its thinking used the whole answer budget (Max tokens: ${this.plugin.settings.maxTokens.toLocaleString()}). Raise Max tokens in Horme's settings or turn the model's thinking off, then regenerate.`,
+          });
         }
         // Passages bubble: exactly what RAG context was sent to the model this turn.
         await this.appendPassagesBubble(el, passages, initialSourcePath || "");
         this.addAssistantActions(el, fullContent);
-        this.renderSources(el, sources);
+        // Notes the answer says it could not use are not listed as its sources.
+        const noteSources = this.notesBehind(fullContent, sources.length ? sources : this.turnSources);
+        this.renderSources(el, fullContent.startsWith(VAULT_NOTHING) ? [] : noteSources);
       }
 
       // Assemble native tool calls (if any) from the streamed fragments.
@@ -1758,6 +1923,12 @@ export class HormeChatView extends ItemView {
             const callKey = `${skillName}:${JSON.stringify(call.parameters ?? {})
               .replace(/\s+/g, "")
               .toLowerCase()}`;
+            // Stop pressed (or another chat opened) while earlier skills ran:
+            // run no more of them and record nothing.
+            if (this.generationEpoch !== epoch) {
+              skillLoading.remove();
+              return;
+            }
             let result: string;
             if (seenSkillCalls.has(callKey)) {
               result = `You already ran ${skillName} with these exact arguments and have the results above. Do not repeat this call. Answer the user's question now using what you already found.`;
@@ -1768,10 +1939,8 @@ export class HormeChatView extends ItemView {
             this.completeTimelineStep(stepRow, /^Error:/i.test(result));
             if (!this.contentEl.isConnected) return;
             skillLoading.remove();
-            const skillLinks = this.extractSourceLinks(result);
-            for (const link of skillLinks) {
-              if (!aggregatedSkillLinks.includes(link)) aggregatedSkillLinks.push(link);
-            }
+            if (this.generationEpoch !== epoch) return;
+            mergePills(aggregatedSkillLinks, pillsFromSkillResult(result));
 
             this.history.push({
               role: "tool_result",
@@ -1786,8 +1955,12 @@ export class HormeChatView extends ItemView {
           // questions.  The `terminal` flag only matters for the forced
           // skill dropdown path (handled in sendMessage), never here.
           let nextMsgs: ChatMessage[] = [];
+          // The first round's system message carries the context the user chose
+          // (current note, picked notes, folders, Vault Brain passages, document);
+          // rebuilding it from the bare prompt dropped all of that after a skill call.
+          const turnSystem = msgs[0]?.role === "system" ? msgs[0].content : undefined;
           const effectivePrompt =
-            this.sessionSystemPromptOverride ?? (await this.plugin.getEffectiveSystemPrompt());
+            turnSystem ?? this.sessionSystemPromptOverride ?? (await this.plugin.getEffectiveSystemPrompt());
           if (effectivePrompt) nextMsgs.push({ role: "system", content: effectivePrompt });
 
           const filteredHistory: ChatMessage[] = [];
@@ -1865,7 +2038,9 @@ export class HormeChatView extends ItemView {
             content: fullContent,
             reasoning: fullReasoning || undefined,
             context: passages || undefined,
-            sources: sources.length ? sources : undefined,
+            sources: fullContent.startsWith(VAULT_NOTHING)
+              ? undefined
+              : this.notesBehind(fullContent, sources.length ? sources : this.turnSources),
           });
         }
         if (bubbleEl && skillSourceLinks.length > 0) {
@@ -1881,24 +2056,43 @@ export class HormeChatView extends ItemView {
         });
       }
     } catch (e: unknown) {
-      if (e instanceof DOMException && e.name === "AbortError") {
+      // Stop aborts the request, which usually surfaces here rather than as the
+      // end of the stream; whatever arrived before it is kept.
+      if (this.generationEpoch !== epoch) {
+        await keepPartialReply().catch(() => undefined);
+        new Notice("Generation stopped.");
+      } else if (e instanceof DOMException && e.name === "AbortError") {
         new Notice("Generation stopped.");
       } else {
         this.plugin.handleError(e);
       }
     } finally {
       if (loadingEl) loadingEl.remove();
-      this.isGenerating = false;
-      setIcon(this.sendBtn, "send");
-      this.sendBtn.classList.remove("horme-stop-btn");
-      this.activeAbortController = null;
-      this.activeReader = null;
+      // After Stop, a new request may already be running; its state is not ours to reset.
+      if (this.generationEpoch === epoch) {
+        this.isGenerating = false;
+        setIcon(this.sendBtn, "send");
+        this.sendBtn.classList.remove("horme-stop-btn");
+        this.activeAbortController = null;
+        this.activeReader = null;
+      }
     }
+  }
+
+  /** Regenerate needs the request that produced the latest reply, sent to the same provider. */
+  private canRegenerate(): boolean {
+    const last = this.history[this.history.length - 1];
+    return (
+      Boolean(this.lastMsgs) &&
+      this.lastModel !== null &&
+      this.lastProvider === this.plugin.settings.aiProvider &&
+      last?.role === "assistant"
+    );
   }
 
   private addAssistantActions(bubbleEl: HTMLElement, content: string) {
     const wrapper = this.messagesEl.createDiv("horme-save-wrapper");
-    const copyBtn = wrapper.createEl("button", { cls: "horme-save-btn", text: "Copy" });
+    const copyBtn = wrapper.createEl("button", { cls: "horme-save-btn", attr: { "aria-label": "Copy" } });
     setIcon(copyBtn, "copy");
     copyBtn.addEventListener("click", () => {
       void navigator.clipboard
@@ -1907,36 +2101,49 @@ export class HormeChatView extends ItemView {
         .catch((e) => this.plugin.handleError(e, "Clipboard"));
     });
 
-    const regenBtn = wrapper.createEl("button", { cls: "horme-save-btn", text: "Regenerate" });
+    const regenBtn = wrapper.createEl("button", {
+      cls: "horme-save-btn",
+      attr: { "aria-label": "Regenerate" },
+    });
     setIcon(regenBtn, "refresh-cw");
     regenBtn.addEventListener("click", () => {
+      if (this.isGenerating || this.sendInFlight) return;
+      // Only the latest reply: an older one would be removed from view while
+      // the newest was replaced in the history.
+      const last = this.history[this.history.length - 1];
+      if (!this.canRegenerate() || last.content !== content) {
+        new Notice("Horme: Only the latest reply can be regenerated, with the provider it came from.");
+        return;
+      }
       bubbleEl.remove();
       wrapper.remove();
       void this.sendMessage(true).catch((e) => this.plugin.handleError(e, "Chat"));
     });
 
-    const saveBtn = wrapper.createEl("button", { cls: "horme-save-btn", text: "Save as note" });
+    const saveBtn = wrapper.createEl("button", {
+      cls: "horme-save-btn",
+      attr: { "aria-label": "Save as note" },
+    });
     setIcon(saveBtn, "file-plus");
     saveBtn.addEventListener("click", () => {
-      void (async () => {
-        const folder = this.plugin.settings.exportFolder.trim() || "HORME";
-        if (!(await this.app.vault.adapter.exists(folder))) await this.app.vault.createFolder(folder);
-        const baseName = this.uploadedDocName
-          ? this.uploadedDocName.replace(/\.[^.]+$/, "")
-          : "Horme response";
-        let fileName = `${folder}/${baseName}.md`;
-        if (await this.app.vault.adapter.exists(fileName)) {
-          fileName = `${folder}/${baseName} ${new Date().getTime()}.md`;
+      // The conversation up to and including this reply: the questions belong
+      // with the answers. A reply no longer in the history (another chat was
+      // opened) is saved on its own.
+      let end = -1;
+      for (let i = this.history.length - 1; i >= 0; i--) {
+        if (this.history[i].content === content) {
+          end = i;
+          break;
         }
-        await this.app.vault.create(fileName, content);
-        new Notice(`Saved as ${fileName}`);
-      })().catch((e) => this.plugin.handleError(e));
+      }
+      const messages = end >= 0 ? this.history.slice(0, end + 1) : [{ role: "assistant" as const, content }];
+      void this.saveMessagesAsNote(messages, "Saved").catch((e) => this.plugin.handleError(e));
     });
   }
 
   private addUserActions(content: string) {
     const wrapper = this.messagesEl.createDiv("horme-save-wrapper horme-save-wrapper-user");
-    const copyBtn = wrapper.createEl("button", { cls: "horme-save-btn", text: "Copy" });
+    const copyBtn = wrapper.createEl("button", { cls: "horme-save-btn", attr: { "aria-label": "Copy" } });
     setIcon(copyBtn, "copy");
     copyBtn.addEventListener("click", () => {
       void navigator.clipboard
@@ -2002,28 +2209,6 @@ export class HormeChatView extends ItemView {
     this.scrollToBottom();
   }
 
-  private extractSourceLinks(text: string): string[] {
-    const links = new Set<string>();
-    const add = (raw: string) => {
-      const cleaned = raw.trim().replace(/[)\].,;:!?]+$/g, "");
-      if (!/^https?:\/\//i.test(cleaned)) return;
-      links.add(cleaned);
-    };
-
-    const markdownLinkRegex = /\[[^\]]+\]\((https?:\/\/[^)\s]+)\)/gi;
-    let match: RegExpExecArray | null;
-    while ((match = markdownLinkRegex.exec(text)) !== null) {
-      add(match[1]);
-    }
-
-    const rawUrlRegex = /(https?:\/\/[^\s<>"']+)/gi;
-    while ((match = rawUrlRegex.exec(text)) !== null) {
-      add(match[1]);
-    }
-
-    return Array.from(links);
-  }
-
   private shouldPromoteSkillFailure(result: string): boolean {
     const t = result.trim().toLowerCase();
     if (!t) return false;
@@ -2039,28 +2224,23 @@ export class HormeChatView extends ItemView {
     );
   }
 
-  private renderSkillSourceLinks(bubbleEl: HTMLElement, links: string[]) {
-    if (links.length === 0) return;
-    const uniqueLinks = Array.from(new Set(links));
+  /** The pills under an answer: numbered like the answer's [n] citations, named by what the source is. */
+  private renderSkillSourceLinks(bubbleEl: HTMLElement, pills: SourcePill[]) {
+    if (pills.length === 0) return;
     const sourcesEl = bubbleEl.createDiv("horme-sources-container horme-skill-sources-container");
     sourcesEl.createSpan({ text: "Skill sources:", cls: "horme-sources-label" });
 
     const listEl = sourcesEl.createDiv("horme-sources-list");
-    for (const link of uniqueLinks) {
-      let label = link;
-      try {
-        label = new URL(link).hostname.replace(/^www\./, "");
-      } catch {
-        // Keep full URL if parsing fails.
-      }
+    for (const pill of pills) {
       const anchor = listEl.createEl("a", {
-        text: label,
-        href: link,
+        href: pill.url,
         cls: "horme-source-pill horme-source-link-pill",
       });
+      if (pill.n !== undefined) anchor.createSpan({ cls: "horme-source-num", text: String(pill.n) });
+      anchor.createSpan({ cls: "horme-source-name", text: pill.label });
       anchor.setAttr("target", "_blank");
       anchor.setAttr("rel", "noopener noreferrer");
-      anchor.title = link;
+      anchor.title = `${pill.n !== undefined ? `[${pill.n}] ` : ""}${pill.label}\n${pill.url}`;
     }
   }
 
@@ -2090,20 +2270,44 @@ export class HormeChatView extends ItemView {
   }
 
   private async exportConversation() {
-    if (!this.history.length) return;
-    const folder = this.plugin.settings.exportFolder.trim() || "HORME";
-    if (!(await this.app.vault.adapter.exists(folder))) await this.app.vault.createFolder(folder);
-    const content = this.history
-      .filter((m) => m.role !== "system")
+    if (!this.history.length) {
+      new Notice("Horme: This chat is empty.");
+      return;
+    }
+    await this.saveMessagesAsNote(this.history, "Exported");
+  }
+
+  /** Writes messages as a Markdown note named after the first question. */
+  private async saveMessagesAsNote(messages: ChatMessage[], verb: string): Promise<void> {
+    const folder = await ensureVaultFolder(this.app, this.plugin.settings.exportFolder.trim() || "HORME");
+    const body = messages
       .map((m) => {
-        const who = m.role === "user" ? "You" : "Horme";
-        const thought = m.reasoning ? `> [!thought]\n> ${m.reasoning.replace(/\n/g, "\n> ")}\n\n` : "";
-        return `**${who}**:\n${thought}${m.content}\n`;
+        if (m.role === "user") return `**You**:\n${m.content}\n`;
+        if (m.role === "tool_result" || (m.role === "system" && m.content.startsWith("[SKILL RESULT:"))) {
+          return `> [!info]- Skill result\n> ${m.content.trim().replace(/\n/g, "\n> ")}\n`;
+        }
+        if (m.role === "system") return "";
+        const thought = m.reasoning?.trim()
+          ? `> [!thought]- Reasoning\n> ${m.reasoning.trim().replace(/\n/g, "\n> ")}\n\n`
+          : "";
+        return `**Horme**:\n${thought}${m.content}\n`;
       })
+      .filter(Boolean)
       .join("\n---\n\n");
-    const fileName = `${folder}/Horme chat ${new Date().getTime()}.md`;
-    await this.app.vault.create(fileName, content);
-    new Notice(`Exported to ${fileName}`);
+    const firstQuestion = messages.find((m) => m.role === "user")?.content ?? "";
+    const title =
+      firstQuestion
+        .replace(/[\\/:*?"<>|#^[\]{}\n\r\t]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 60)
+        .trim() || (this.uploadedDocName ? this.uploadedDocName.replace(/\.[^.]+$/, "") : "Horme chat");
+    let fileName = normalizePath(`${folder}/${title}.md`);
+    for (let n = 2; await this.app.vault.adapter.exists(fileName); n++) {
+      fileName = normalizePath(`${folder}/${title} ${n}.md`);
+    }
+    await this.app.vault.create(fileName, body);
+    new Notice(`${verb} to ${fileName}`);
   }
 
   private addMessageBubble(role: "user" | "assistant", content: string, images?: string[]): HTMLElement {
@@ -2173,19 +2377,29 @@ export class HormeChatView extends ItemView {
     empty.createDiv({ cls: "horme-empty-text", text: "Start a conversation with Horme." });
   }
 
-  private async clearChat() {
-    this.history = [];
-    this.conversationId = this.generateId();
+  /** Per-chat state that must not carry over to another chat. */
+  private resetChatState() {
     this.uploadedDocContent = null;
     this.uploadedDocName = null;
+    this.uploadedImages = [];
+    this.uploadedAudio = null;
     this.lastMsgs = null;
     this.lastModel = null;
+    this.lastProvider = null;
     this.rollingRAGContext = [];
     this.lastInjectedPassages = "";
     this.selectedContextNotes = [];
     this.selectedContextFolders = [];
     this.folderContextTruncationNoticeShown = false;
     this.updateContextNotesLabel();
+  }
+
+  private async clearChat() {
+    // A reply still streaming belongs to the chat being left.
+    if (this.isGenerating || this.sendInFlight) await this.stopGeneration();
+    this.resetChatState();
+    this.history = [];
+    this.conversationId = this.generateId();
     this.showingHistory = false;
     await this.renderChatView();
   }
@@ -2202,16 +2416,14 @@ export class HormeChatView extends ItemView {
       this.renderEmpty();
       return;
     }
-    const aggregatedSkillLinks: string[] = [];
+    const aggregatedSkillLinks: SourcePill[] = [];
     for (const m of this.history) {
       if (m.role === "tool_result") {
         const match = m.content.match(/^\[SKILL RESULT: ([a-zA-Z0-9_]+)\]\n\n([\s\S]*)$/);
         if (match) {
           const skill = this.plugin.skillManager.getSkillById(match[1]);
           await this.renderSkillResultBox(match[1], skill?.name ?? match[1], {}, match[2]);
-          for (const link of this.extractSourceLinks(match[2])) {
-            if (!aggregatedSkillLinks.includes(link)) aggregatedSkillLinks.push(link);
-          }
+          mergePills(aggregatedSkillLinks, pillsFromSkillResult(match[2]));
         }
         continue;
       }
@@ -2243,7 +2455,7 @@ export class HormeChatView extends ItemView {
         }
       }
     }
-    this.scrollToBottom();
+    this.followAndScroll();
   }
 
   private async renderHistoryView() {
@@ -2306,6 +2518,8 @@ export class HormeChatView extends ItemView {
   }
 
   private async loadConversation(convo: SavedConversation) {
+    if (this.isGenerating || this.sendInFlight) await this.stopGeneration();
+    this.resetChatState();
     this.showingHistory = false;
     this.conversationId = convo.id;
     this.history = convo.messages.map((m) => ({
@@ -2322,8 +2536,74 @@ export class HormeChatView extends ItemView {
     await this.renderChatView();
   }
 
+  /** Follows new output only while the reader is at the bottom; scrolling up pauses it. */
   private scrollToBottom() {
+    if (!this.followOutput) return;
     this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+  }
+
+  /** "Nothing in your vault on this." first, when this message's vault search found nothing. */
+  private withVaultNotice(text: string): string {
+    if (!this.turnVaultNothing || !text || text.startsWith(VAULT_NOTHING)) return text;
+    return `${VAULT_NOTHING}\n\n${text}`;
+  }
+
+  /** The notes this answer drew on, out of those sent with the message (see notesUsed). */
+  private notesBehind(answer: string, sent: string[]): string[] {
+    if (!sent.length || !this.turnPassages) return sent;
+    const byNote = new Map<string, string>();
+    for (const chunk of this.turnPassages.split("\n\n---\n\n")) {
+      const path = passageNotePath(chunk);
+      if (path && sent.includes(path)) byNote.set(path, `${byNote.get(path) ?? ""}\n${chunk}`);
+    }
+    return notesUsed(answer, byNote, sent);
+  }
+
+  /** Whether a skill that looks outside the vault (web, encyclopaedias…) ran since the user's last message. */
+  private outsideSkillThisTurn(): boolean {
+    const local = new Set(["vault_links", "grammar_scholar", "date_calc"]);
+    for (let i = this.history.length - 1; i >= 0; i--) {
+      const m = this.history[i];
+      if (m.role === "user") break;
+      const id = /^\[SKILL RESULT: ([a-zA-Z0-9_]+)\]/.exec(m.content)?.[1];
+      if ((m.role === "tool_result" || m.role === "system") && id && !local.has(id)) return true;
+    }
+    return false;
+  }
+
+  /** The numbered sources of the latest Deep Research result since the user's last message. */
+  private researchSourcesForTurn(): Map<number, CitedSource> {
+    for (let i = this.history.length - 1; i >= 0; i--) {
+      const m = this.history[i];
+      if (m.role === "user") break;
+      if (
+        (m.role === "tool_result" || m.role === "system") &&
+        m.content.includes("[SKILL RESULT: deep_research]")
+      ) {
+        return parseResearchSources(m.content);
+      }
+    }
+    return new Map();
+  }
+
+  /** Back to following the output (a new message, another chat). */
+  private followAndScroll() {
+    this.followOutput = true;
+    this.scrollToBottom();
+  }
+
+  /**
+   * Renders Markdown off-screen and swaps it in whole. Emptying the bubble
+   * first made it collapse and redraw on every update (flicker, scroll jumps),
+   * and a slow earlier render could land after the final one.
+   */
+  private async renderMarkdownInto(target: HTMLElement, text: string, sourcePath: string): Promise<void> {
+    const seq = (this.renderSeq.get(target) ?? 0) + 1;
+    this.renderSeq.set(target, seq);
+    const staging = createDiv();
+    await MarkdownRenderer.render(this.app, text, staging, sourcePath, this);
+    if (this.renderSeq.get(target) !== seq) return;
+    target.replaceChildren(...Array.from(staging.childNodes));
   }
   private autoGrow() {
     // Without a height of its own the box takes the height of its rows (no rule sets

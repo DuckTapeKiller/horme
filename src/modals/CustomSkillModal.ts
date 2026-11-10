@@ -12,16 +12,35 @@ export class CustomSkillModal extends Modal {
   private headersRaw = "";
   private body = "";
   private responsePath = "";
+  /** Set when an existing skill is being edited; it keeps its id. */
+  private existingId: string | null = null;
 
-  constructor(app: App, plugin: HormePlugin, onSave: (def: CustomSkillDefinition) => void) {
+  constructor(
+    app: App,
+    plugin: HormePlugin,
+    onSave: (def: CustomSkillDefinition) => void,
+    existing?: CustomSkillDefinition,
+  ) {
     super(app);
     this.plugin = plugin;
     this.onSave = onSave;
+    if (existing) {
+      this.existingId = existing.id;
+      this.name = existing.name;
+      this.description = existing.description;
+      this.url = existing.url;
+      this.method = existing.method;
+      this.headersRaw = Object.entries(existing.headers ?? {})
+        .map(([k, v]) => `${k}: ${v}`)
+        .join("\n");
+      this.body = existing.body ?? "";
+      this.responsePath = existing.responsePath ?? "";
+    }
   }
 
   onOpen() {
     const { contentEl } = this;
-    contentEl.createEl("h3", { text: "Create HTTP skill" });
+    contentEl.createEl("h3", { text: this.existingId ? "Edit HTTP skill" : "Create HTTP skill" });
 
     contentEl.createEl("p", {
       cls: "horme-settings-muted",
@@ -32,18 +51,24 @@ export class CustomSkillModal extends Modal {
       .setName("Skill name")
       .setDesc("Shown in the skills dropdown.")
       .addText((t) =>
-        t.setPlaceholder("RAE dictionary").onChange((v) => {
-          this.name = v.trim();
-        }),
+        t
+          .setPlaceholder("RAE dictionary")
+          .setValue(this.name)
+          .onChange((v) => {
+            this.name = v.trim();
+          }),
       );
 
     new Setting(contentEl)
       .setName("Description")
       .setDesc("One line shown under the name.")
       .addText((t) =>
-        t.setPlaceholder("Look up Spanish words in the RAE dictionary.").onChange((v) => {
-          this.description = v.trim();
-        }),
+        t
+          .setPlaceholder("Look up Spanish words in the RAE dictionary.")
+          .setValue(this.description)
+          .onChange((v) => {
+            this.description = v.trim();
+          }),
       );
 
     new Setting(contentEl).setName("Method").addDropdown((d) =>
@@ -61,7 +86,7 @@ export class CustomSkillModal extends Modal {
       .setName("URL")
       .setDesc("Use {{query}} where the user's input should go.")
       .addText((t) => {
-        t.setPlaceholder("https://api.example.com/search?q={{query}}");
+        t.setPlaceholder("https://api.example.com/search?q={{query}}").setValue(this.url);
         t.inputEl.addClass("horme-full-width");
         t.onChange((v) => {
           this.url = v.trim();
@@ -75,7 +100,9 @@ export class CustomSkillModal extends Modal {
         "One per line: Key: Value. Use {{secret:your-secret-id}} to avoid storing tokens in data.json.",
       )
       .addTextArea((t) => {
-        t.setPlaceholder("Authorization: Bearer {{secret:horme-openai-api-key}}\nX-Custom: value");
+        t.setPlaceholder("Authorization: Bearer {{secret:horme-openai-api-key}}\nX-Custom: value").setValue(
+          this.headersRaw,
+        );
         t.inputEl.rows = 3;
         t.inputEl.addClasses(["horme-full-width", "horme-resize-vertical"]);
         t.onChange((v) => {
@@ -88,7 +115,7 @@ export class CustomSkillModal extends Modal {
       .setName("Request body (POST only)")
       .setDesc("JSON body template. Use {{query}} for the user's input.")
       .addTextArea((t) => {
-        t.setPlaceholder('{"q": "{{query}}", "source": "en", "target": "fr"}');
+        t.setPlaceholder('{"q": "{{query}}", "source": "en", "target": "fr"}').setValue(this.body);
         t.inputEl.rows = 4;
         t.inputEl.addClasses(["horme-full-width", "horme-resize-vertical"]);
         t.onChange((v) => {
@@ -104,7 +131,7 @@ export class CustomSkillModal extends Modal {
         "Dot-path to extract data from JSON response (e.g. results[0].text). Leave empty to use full response.",
       )
       .addText((t) => {
-        t.setPlaceholder("data.items[0].content");
+        t.setPlaceholder("data.items[0].content").setValue(this.responsePath);
         t.inputEl.addClass("horme-full-width");
         t.onChange((v) => {
           this.responsePath = v.trim();
@@ -133,10 +160,22 @@ export class CustomSkillModal extends Modal {
             return;
           }
 
-          const id = "custom_" + this.name.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+          // Names with no Latin letters (e.g. Japanese) would all slug to "custom__",
+          // so they get a time-based id instead.
+          const slug = this.name
+            .toLowerCase()
+            .normalize("NFKD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .replace(/[^a-z0-9]+/g, "_")
+            .replace(/^_+|_+$/g, "");
+          const id = this.existingId ?? "custom_" + (slug || Date.now().toString(36));
 
-          // Prevent duplicate IDs
-          const exists = this.plugin.settings.customSkills.some((s) => s.id === id);
+          // Prevent duplicate IDs and names (an edited skill may keep its own).
+          const exists = this.plugin.settings.customSkills.some(
+            (s) =>
+              s.id !== this.existingId &&
+              (s.id === id || s.name.trim().toLowerCase() === this.name.trim().toLowerCase()),
+          );
           if (exists) {
             new Notice(`A custom skill named "${this.name}" already exists.`);
             return;

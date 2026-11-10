@@ -1,5 +1,6 @@
 import { requestUrl } from "obsidian";
 import { AiProvider } from "./AiProvider";
+import { splitSystemMessages } from "../utils/messageRoles";
 import { fetchError, requestUrlError } from "../utils/apiError";
 import { asArray, getRecordProp, getStringProp } from "../utils/TypeGuards";
 
@@ -45,6 +46,12 @@ export class MistralProvider implements AiProvider {
     return this.extractContent(res.json as unknown);
   }
 
+  /** Mistral accepts system messages only at the start; later ones go in as user turns. */
+  private prepare(msgs: Array<{ role: string; content: string }>): Array<{ role: string; content: string }> {
+    const { system, turns } = splitSystemMessages(msgs);
+    return system ? [{ role: "system", content: system }, ...turns] : turns;
+  }
+
   async generateChat(msgs: Array<{ role: string; content: string }>, model: string): Promise<string> {
     if (!this.apiKey) throw new Error("No Mistral API Key");
     const res = await requestUrl({
@@ -56,7 +63,7 @@ export class MistralProvider implements AiProvider {
       },
       body: JSON.stringify({
         model,
-        messages: msgs,
+        messages: this.prepare(msgs),
         temperature: this.temperature,
         max_tokens: this.maxTokens,
       }),
@@ -80,7 +87,7 @@ export class MistralProvider implements AiProvider {
       },
       body: JSON.stringify({
         model,
-        messages: msgs,
+        messages: this.prepare(msgs),
         temperature: this.temperature,
         max_tokens: this.maxTokens,
         stream: true,

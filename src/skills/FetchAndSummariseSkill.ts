@@ -1,5 +1,7 @@
 import { Notice } from "obsidian";
+import { isPublicHttpUrl } from "../utils/urlSafety";
 import { requestUrlWithTimeout } from "../utils/requestWithTimeout";
+import { htmlToText } from "../utils/webResearch";
 import { Skill, SkillParameter } from "./types";
 import HormePlugin from "../../main";
 import { errorToMessage, getStringProp } from "../utils/TypeGuards";
@@ -37,6 +39,9 @@ export class FetchAndSummariseSkill implements Skill {
       if (!url.startsWith("http://") && !url.startsWith("https://")) {
         return "Error: Invalid URL protocol specified. Target must begin with http:// or https://.";
       }
+      if (!isPublicHttpUrl(url)) {
+        return "Error: Only public web pages can be fetched, not local or private network addresses.";
+      }
 
       // Fetch the webpage natively using Obsidian HTTP proxy layer
       const res = await requestUrlWithTimeout({ url });
@@ -44,41 +49,10 @@ export class FetchAndSummariseSkill implements Skill {
         return `Error: Unable to fetch webpage. Remote host returned HTTP Status Code ${res.status}.`;
       }
 
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(res.text, "text/html");
-
-      // Strip intrusive noise elements to shrink VRAM usage profile
-      const noiseSelectors =
-        "script, style, noscript, iframe, nav, footer, header, aside, head, .advertisement, .comments, ytd-engagement-panel-section-list-renderer";
-      doc.querySelectorAll(noiseSelectors).forEach((el) => el.remove());
-
-      // Target relevant content wrapper nodes to extract clean textual content
-      let rootContainer: Element | Document = doc;
-      const structuralBody =
-        doc.querySelector("article") ||
-        doc.querySelector("main") ||
-        doc.querySelector("#content") ||
-        doc.querySelector(".article-body") ||
-        doc.querySelector(".story-body");
-      if (structuralBody) {
-        rootContainer = structuralBody;
-      }
-
-      const elements = rootContainer.querySelectorAll("h1, h2, h3, p");
-      const textLines: string[] = [];
-
-      elements.forEach((el) => {
-        const text = el.textContent?.trim();
-        if (text && text.length > 15) {
-          if (el.tagName.startsWith("H")) {
-            textLines.push(`\n### ${text}\n`);
-          } else {
-            textLines.push(text);
-          }
-        }
-      });
-
-      const fullContent = textLines.join("\n\n").trim();
+      // Headings, paragraphs, list items and table rows: lists and tables are
+      // often the substance of a page and were dropped before.
+      const page = htmlToText(res.text, url);
+      const fullContent = page?.text ?? "";
       if (!fullContent) {
         return "Error: Webpage downloaded successfully, but no readable article text body or paragraphs could be extracted from the structural HTML template.";
       }
@@ -105,9 +79,13 @@ ${cleanContent}`;
       }
 
       // Call your plugin's primary chat generation channel
+      // No skills for the summary itself: the skill list (and agent-mode
+      // instructions) would otherwise be appended and the model might call one.
       const aiSummary = await this.plugin.aiGateway.generate(
         summaryPrompt,
         "You are a precise research assistant specializing in text synthesis. You never use emojis.",
+        undefined,
+        true,
       );
 
       return `## ◈ Article Summary\n**Source:** ${url}\n\n${aiSummary.trim()}`;

@@ -1,8 +1,10 @@
 import { App, normalizePath } from "obsidian";
+import { ensureVaultFolder } from "../utils/vaultFolder";
 import { requestUrlWithTimeout } from "../utils/requestWithTimeout";
 import HormePlugin from "../../main";
 import { Skill, SkillParameter } from "./types";
 import { asArray, errorToMessage, getRecordProp, getStringProp, isRecord } from "../utils/TypeGuards";
+import { WIKIMEDIA_HEADERS } from "../utils/webResearch";
 
 type ReputableContent = { content: string; url: string };
 
@@ -59,7 +61,7 @@ export class CreateConceptNoteSkill implements Skill {
       const base = `https://${lang}.wikipedia.org`;
       const wikiUrl = `${base}/wiki/${slug}`;
       const wikiApiUrl = `${base}/api/rest_v1/page/summary/${slug}`;
-      const res = await requestUrlWithTimeout({ url: wikiApiUrl, throw: false });
+      const res = await requestUrlWithTimeout({ url: wikiApiUrl, headers: WIKIMEDIA_HEADERS, throw: false });
       if (res.status === 200) {
         const extract = getStringProp(res.json as unknown, "extract");
         if (extract && extract.trim().length > 0) return { content: extract.trim(), url: wikiUrl };
@@ -73,7 +75,7 @@ export class CreateConceptNoteSkill implements Skill {
       const wiktBase = `https://${lang}.wiktionary.org`;
       const wiktUrl = `${wiktBase}/wiki/${slug}`;
       const wiktApiUrl = `${wiktBase}/api/rest_v1/page/definition/${slug}`;
-      const res = await requestUrlWithTimeout({ url: wiktApiUrl, throw: false });
+      const res = await requestUrlWithTimeout({ url: wiktApiUrl, headers: WIKIMEDIA_HEADERS, throw: false });
       if (res.status === 200 && isRecord(res.json)) {
         const enArr = asArray(getRecordProp(res.json, "en")) ?? [];
         const first = enArr[0];
@@ -92,19 +94,9 @@ export class CreateConceptNoteSkill implements Skill {
     return { content: "", url: "" };
   }
 
-  private async ensureFolderPath(folderPath: string): Promise<void> {
-    const normalized = normalizePath(folderPath).replace(/\/+$/, "");
-    if (!normalized || normalized === "/" || normalized === ".") return;
-
-    const adapter = this.app.vault.adapter;
-    const segments = normalized.split("/").filter(Boolean);
-    let currentPath = "";
-    for (const segment of segments) {
-      currentPath = currentPath ? `${currentPath}/${segment}` : segment;
-      if (!(await adapter.exists(currentPath))) {
-        await this.app.vault.createFolder(currentPath);
-      }
-    }
+  /** Creates the folder if needed and returns its path as the vault spells it. */
+  private async ensureFolderPath(folderPath: string): Promise<string> {
+    return ensureVaultFolder(this.app, folderPath);
   }
 
   async execute(params: unknown): Promise<string> {
@@ -124,7 +116,7 @@ export class CreateConceptNoteSkill implements Skill {
       }
 
       // 2) Ensure destination folder exists
-      await this.ensureFolderPath(folderPath);
+      const folder = await this.ensureFolderPath(folderPath);
 
       // 3) Render template with snake_case tag + configurable source field
       const snakeTag = title
@@ -142,7 +134,7 @@ export class CreateConceptNoteSkill implements Skill {
       // 4) Create note (do not overwrite)
       const safeBase = title.replace(/[\\/:*?"<>|]/g, "").trim();
       const fileName = `${safeBase || "Concept"}.md`;
-      const filePath = normalizePath(`${folderPath}/${fileName}`);
+      const filePath = normalizePath(`${folder}/${fileName}`);
 
       if (this.app.vault.getAbstractFileByPath(filePath)) {
         return `Note [[${safeBase || title}]] already exists. Skipping creation to avoid overwriting.\n\nSource: ${url}`;

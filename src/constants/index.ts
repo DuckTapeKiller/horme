@@ -16,7 +16,7 @@ Rules:
 * **Concept Notes:** If the user asks you to create a concept note for a term, you MUST call the create_concept_note skill. Pass "language" as the user's language code (e.g. "en", "es"). The skill will handle the research automatically. Always confirm once the note is created.`;
 
 export const DEFAULT_SETTINGS: HormeSettings = {
-  aiProvider: "ollama",
+  aiProvider: "llamacpp",
   ollamaBaseUrl: "http://127.0.0.1:11434",
   // Auto-detected on first successful /api/tags fetch. Avoid hard-coding
   // a model name users may not have installed (e.g., "llama3").
@@ -32,13 +32,13 @@ export const DEFAULT_SETTINGS: HormeSettings = {
   agentMode: true,
   agentMaxRounds: 25,
   claudeSecretId: "",
-  claudeModel: "claude-3-5-haiku-latest",
+  claudeModel: "claude-opus-5-5",
   geminiSecretId: "",
   geminiModel: "gemini-2.5-flash",
   openaiSecretId: "",
   openaiModel: "gpt-4o-mini",
   groqSecretId: "",
-  groqModel: "llama-3.1-70b-versatile",
+  groqModel: "llama-3.3-70b-versatile",
   openRouterSecretId: "",
   openRouterModel: "mistralai/mistral-7b-instruct:free",
   mistralSecretId: "",
@@ -76,6 +76,7 @@ export const DEFAULT_SETTINGS: HormeSettings = {
   maxHighlightCharsPerNote: 2000,
   contextCloudWarningShown: false,
   contextNotesCloudWarningShown: false,
+  contextFoldersCloudWarningShown: false,
   documentCloudWarningShown: false,
   contextFoldersMaxChars: 40000,
   grammarFolderPath: "Gramática",
@@ -87,9 +88,9 @@ export const DEFAULT_SETTINGS: HormeSettings = {
   tagShadowingEnabled: true,
   tagShadowingLanguage: "English",
   tagTranslationModel: "",
-  tagTranslationProvider: "ollama",
-  tagTranslationFallbackProvider: "ollama",
-  tagsProvider: "ollama",
+  tagTranslationProvider: "llamacpp",
+  tagTranslationFallbackProvider: "llamacpp",
+  tagsProvider: "llamacpp",
   tagsModel: "",
   customSkills: [],
   customModelSuggestions: {},
@@ -106,15 +107,16 @@ export const DEFAULT_SETTINGS: HormeSettings = {
 };
 
 export const PROVIDER_MODELS: Record<string, string[]> = {
-  gemini: ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.5-pro"],
+  gemini: ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.5-flash-lite"],
   claude: [
-    "claude-3-5-haiku-latest",
-    "claude-3-5-sonnet-latest",
-    "claude-3-opus-latest",
-    "claude-haiku-4-5-20251001",
+    "claude-opus-5-5",
+    "claude-sonnet-5-5",
+    "claude-haiku-5-5",
+    "claude-fable-5-1",
+    "claude-haiku-4-5",
   ],
   openai: ["gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo"],
-  groq: ["llama-3.1-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768", "gemma2-9b-it"],
+  groq: ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"],
   openrouter: ["mistralai/mistral-7b-instruct:free", "google/gemma-7b-it:free", "openchat/openchat-7b:free"],
   mistral: [
     "mistral-large-latest",

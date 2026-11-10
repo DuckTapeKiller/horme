@@ -50,7 +50,7 @@ export class OllamaProvider implements AiProvider {
         model,
         messages: msgs,
         stream: false,
-        options: { temperature: this.temperature },
+        options: { temperature: this.temperature, num_predict: this.maxTokens },
       }),
       throw: false,
     });
@@ -74,7 +74,7 @@ export class OllamaProvider implements AiProvider {
       model,
       messages: msgs,
       stream: true,
-      options: { temperature: this.temperature },
+      options: { temperature: this.temperature, num_predict: this.maxTokens },
     };
     // Ollama's /api/chat native tools API (tool-trained models emit
     // structured message.tool_calls instead of prompt-taught XML).

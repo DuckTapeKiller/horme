@@ -1,6 +1,7 @@
 import { requestUrlWithTimeout } from "../utils/requestWithTimeout";
 import { Skill, SkillParameter } from "./types";
 import { asArray, errorToMessage, getRecordProp, getStringProp, isRecord } from "../utils/TypeGuards";
+import { WIKIMEDIA_HEADERS } from "../utils/webResearch";
 
 export class WiktionarySkill implements Skill {
   id = "wiktionary";
@@ -40,7 +41,7 @@ export class WiktionarySkill implements Skill {
       const url =
         `${wiktBase}/w/api.php?action=query&titles=${encodeURIComponent(word)}` +
         `&prop=extracts&explaintext=1&format=json&origin=*`;
-      const res = await requestUrlWithTimeout({ url });
+      const res = await requestUrlWithTimeout({ url, headers: WIKIMEDIA_HEADERS });
       const json: unknown = res.json;
       const pages = getRecordProp(getRecordProp(json, "query"), "pages");
 
@@ -74,7 +75,7 @@ export class WiktionarySkill implements Skill {
   private async searchFallback(word: string, lang: string, wiktBase: string): Promise<string> {
     try {
       const searchUrl = `${wiktBase}/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(word)}&srlimit=3&format=json&origin=*`;
-      const searchRes = await requestUrlWithTimeout({ url: searchUrl });
+      const searchRes = await requestUrlWithTimeout({ url: searchUrl, headers: WIKIMEDIA_HEADERS });
       const json: unknown = searchRes.json;
       const results = asArray(getRecordProp(getRecordProp(json, "query"), "search")) ?? [];
 

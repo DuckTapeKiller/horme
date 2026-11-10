@@ -11,10 +11,20 @@ import {
   getModelPrefixes,
 } from "../src/utils/VectorUtils";
 
-void test("quantizeEmbeddingToInt8 maps [-1,1] -> [-127,127] and clamps out-of-range", () => {
+void test("quantizeEmbeddingToInt8 scales each vector to its largest component", () => {
   assert.deepEqual(Array.from(quantizeEmbeddingToInt8([0, 1, -1])), [0, 127, -127]);
   assert.deepEqual(Array.from(quantizeEmbeddingToInt8([2, -2])), [127, -127]);
-  assert.equal(quantizeEmbeddingToInt8([0.5])[0], 64); // round(63.5)
+  assert.deepEqual(Array.from(quantizeEmbeddingToInt8([0.04, -0.01])), [127, -32]);
+  assert.deepEqual(Array.from(quantizeEmbeddingToInt8([0, 0])), [0, 0]);
+  assert.deepEqual(Array.from(quantizeEmbeddingToInt8([NaN, 0.5])), [0, 127]);
+});
+
+void test("small normalised components keep their precision", () => {
+  const dims = 768;
+  const v = Array.from({ length: dims }, (_, i) => Math.sin(i * 1.7) / Math.sqrt(dims / 2));
+  const w = v.map((x, i) => x + Math.cos(i * 0.9) * 0.01);
+  const err = Math.abs(cosineSimilarityFloatInt8(v, quantizeEmbeddingToInt8(w)) - cosineSimilarity(v, w));
+  assert.ok(err < 0.002, `error ${err}`);
 });
 
 void test("compress -> decompress round-trips int8 bytes exactly", () => {

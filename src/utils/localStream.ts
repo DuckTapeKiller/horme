@@ -64,10 +64,20 @@ function nodeHttpStream(
   signal?: AbortSignal,
 ): Promise<ReadableStreamDefaultReader<Uint8Array>> {
   return new Promise((resolve, reject) => {
+    const abortError = () => new DOMException("The operation was aborted.", "AbortError");
+    if (signal?.aborted) {
+      reject(abortError());
+      return;
+    }
+    // Set once the answer starts, so Stop can end the stream as an abort
+    // rather than with the socket's own "aborted" error.
+    let response: MinimalIncomingMessage | null = null;
+    let controllerRef: ReadableStreamDefaultController<Uint8Array> | null = null;
     const req = httpModule.request(
       url,
       { method: "POST", headers: { "Content-Type": "application/json" } },
       (res) => {
+        response = res;
         const status = res.statusCode ?? 0;
         if (status !== 200) {
           const decoder = new TextDecoder();
@@ -82,6 +92,7 @@ function nodeHttpStream(
         }
         const stream = new ReadableStream<Uint8Array>({
           start(controller) {
+            controllerRef = controller;
             res.on("data", (chunk) => {
               try {
                 controller.enqueue(chunk);
@@ -116,8 +127,14 @@ function nodeHttpStream(
       signal.addEventListener(
         "abort",
         () => {
+          try {
+            controllerRef?.error(abortError());
+          } catch {
+            // Already closed — nothing to do.
+          }
+          response?.destroy();
           req.destroy();
-          reject(new DOMException("The operation was aborted.", "AbortError"));
+          reject(abortError());
         },
         { once: true },
       );

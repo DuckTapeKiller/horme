@@ -31,7 +31,7 @@ export class SkillManager {
     this.registerSkill(new VaultLinkSkill(this.plugin));
     this.registerSkill(new GrammarScholarSkill(this.plugin));
     this.registerSkill(new FetchAndSummariseSkill(this.plugin));
-    this.registerSkill(new DeepResearchSkill());
+    this.registerSkill(new DeepResearchSkill(this.plugin));
     this.registerSkill(new BritannicaSkill());
   }
 

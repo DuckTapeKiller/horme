@@ -559,7 +559,9 @@ body .horme-chat-container .horme-header button.horme-select {
   color: #000000;
 }
 
-.horme-chat-container .horme-input-actions .horme-send-btn.horme-stop-btn.horme-stop-btn svg {
+/* Only the icon itself turns, about its centre. */
+.horme-chat-container .horme-input-actions .horme-send-btn.horme-stop-btn.horme-stop-btn > svg {
+  transform-origin: 50% 50%;
   animation: horme-spin 2s linear infinite;
 }
 
@@ -1018,117 +1020,6 @@ textarea.horme-diff-textarea:focus {
   cursor: pointer;
 }
 
-/* ── Settings Header ── */
-.horme-settings-header {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 40px 0 20px 0;
-  text-align: center;
-}
-
-.horme-settings-header-icon {
-  color: var(--interactive-accent);
-  margin-bottom: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  filter: drop-shadow(0 0 8px var(--interactive-accent-hover));
-}
-
-.horme-settings-header-icon svg {
-  width: 64px;
-  height: 64px;
-}
-
-.horme-settings-header .horme-settings-title {
-  margin: 0;
-  font-size: 28px;
-  font-weight: 700;
-  letter-spacing: -0.5px;
-  color: var(--text-normal);
-}
-
-/* ── Settings Sections ── */
-
-.horme-settings-section {
-  border: 1px solid var(--background-modifier-border);
-  border-radius: var(--radius-m);
-  padding: 0;
-  margin-bottom: 20px;
-  overflow: hidden;
-  background: var(--background-secondary-alt);
-}
-
-.horme-settings-section summary {
-  padding: 12px 16px;
-  background: var(--background-secondary);
-  font-weight: 600;
-  font-size: 14px;
-  cursor: pointer;
-  list-style: none;
-  display: flex;
-  align-items: center;
-  border-bottom: 1px solid transparent;
-  transition: background 0.2s ease;
-  user-select: none;
-}
-
-.horme-settings-section summary::-webkit-details-marker {
-  display: none;
-}
-
-.horme-settings-section[open] summary {
-  border-bottom-color: var(--background-modifier-border);
-  background: var(--background-primary-alt);
-}
-
-.horme-settings-section summary:hover {
-  background: var(--background-modifier-hover);
-}
-
-.horme-settings-section .setting-item {
-  padding: 12px 16px;
-  border-top: none;
-}
-
-.horme-settings-section .setting-item:last-child {
-  padding-bottom: 16px;
-}
-
-.horme-settings-section textarea {
-  width: 100%;
-  min-height: 100px;
-  resize: vertical;
-  font-family: var(--font-interface);
-  font-size: 13px;
-  line-height: 1.5;
-  padding: 8px 12px;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: var(--radius-s);
-  background: var(--background-primary);
-  color: var(--text-normal);
-}
-
-.horme-settings-section textarea:focus {
-  border-color: var(--interactive-accent);
-  outline: none;
-}
-
-.horme-nested-settings {
-  padding: 12px 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.horme-nested-settings .horme-settings-section {
-  margin-bottom: 0;
-  border-color: var(--text-normal);
-  color: var(--text-normal);
-}
-
 /* ── Error Modal ── */
 
 .horme-error-modal-title {
@@ -1242,293 +1133,35 @@ body.is-mobile .horme-chat-container .horme-header .horme-select.horme-select {
   text-decoration: none;
   display: inline-flex;
   align-items: center;
+  gap: 5px;
+  max-width: 280px;
 }
 
-/* ── Intelligence Dashboard ── */
-.horme-diag-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 12px;
-  margin-top: 12px;
-  min-height: 110px;
+/* The pill's number matches the [n] citations in the answer. */
+.horme-source-num {
+  flex-shrink: 0;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 8px;
+  background: var(--background-modifier-border);
+  color: var(--text-normal);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 15px;
+  text-align: center;
 }
 
-.horme-diag-card {
-  background: var(--background-secondary-alt);
-  border: 1px solid var(--background-modifier-border);
-  border-radius: var(--radius-s);
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  position: relative;
+.horme-source-name {
+  min-width: 0;
   overflow: hidden;
-  transition:
-    transform 0.2s ease,
-    border-color 0.2s ease;
-}
-
-.horme-diag-card-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-weight: bold;
-  font-size: 13px;
-}
-
-.horme-diag-status-badge {
-  font-size: 10px;
-  padding: 2px 6px;
-  border-radius: var(--radius-s);
-  text-transform: uppercase;
-  font-weight: 800;
-  letter-spacing: 0.5px;
-}
-
-.horme-diag-status-healthy {
-  background: rgba(52, 211, 153, 0.15);
-  color: var(--text-normal);
-}
-
-.horme-diag-status-stale {
-  background: rgba(251, 191, 36, 0.15);
-  color: var(--text-normal);
-}
-
-.horme-diag-status-missing {
-  background: rgba(156, 163, 175, 0.15);
-  color: var(--text-normal);
-}
-
-.horme-diag-status-error {
-  background: rgba(248, 113, 113, 0.15);
-  color: var(--text-normal);
-}
-
-.horme-diag-stat {
-  font-size: 11px;
-  opacity: 0.7;
-}
-
-.horme-diag-footer {
-  margin-top: auto;
-  font-size: 10px;
-  opacity: 0.5;
-}
-
-.horme-diag-card::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  right: 0;
-  width: 4px;
-  height: 100%;
-}
-
-.horme-diag-card.is-healthy::after {
-  background: #34d399;
-  box-shadow: 0 0 10px #34d399;
-}
-
-.horme-diag-card.is-stale::after {
-  background: #fbbf24;
-  box-shadow: 0 0 10px #fbbf24;
-}
-
-.horme-diag-card.is-missing::after {
-  background: #9ca3af;
-}
-
-.horme-diag-card.is-error::after {
-  background: #f87171;
-  box-shadow: 0 0 10px #f87171;
-}
-
-/* Logs Container */
-.horme-diag-logs-wrapper {
-  background: #121212;
-  border-radius: var(--radius-s);
-  margin-top: 16px;
-  border: 1px solid var(--background-modifier-border);
-  font-family: var(--font-monospace);
-  position: relative;
-  color: #eeeeee;
-}
-
-.horme-diag-logs-header {
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--background-modifier-border);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 11px;
-  color: #888888;
-  background: rgba(0, 0, 0, 0.2);
-}
-
-.horme-diag-logs-content {
-  padding: 10px;
-  max-height: 250px;
-  overflow-y: auto;
-}
-
-.horme-diag-entry {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 4px;
-  line-height: 1.4;
-  font-size: 11px;
-}
-
-.horme-diag-entry-time {
-  color: #666666;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.horme-diag-entry-source {
-  color: #a277ff;
-  font-weight: bold;
-  white-space: nowrap;
-  opacity: 1;
-}
-
-.horme-diag-entry-msg {
-  color: #cccccc;
-}
-
-.horme-diag-entry-error .horme-diag-entry-msg {
-  color: #f87171;
-}
-
-.horme-diag-entry-warning .horme-diag-entry-msg {
-  color: #fbbf24;
-}
-
-.horme-diag-logs-title-container {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-/* The log title is written in sentence case and shown in capitals. */
-.horme-diag-logs-title {
-  text-transform: uppercase;
-}
-
-/* The console is fixed-dark (#121212). The active theme styles modal buttons with a
-   high-specificity rule — html body.obsidian-app .modal button:not(.mod-cta)... (0,5,3) —
-   so we out-specify it here with a :not() chain (0,6,2) instead of using !important. */
-html
-  body
-  .horme-diag-logs-header
-  .horme-diag-refresh-btn:not(.mod-cta):not(.mod-warning):not(.mod-destructive):not(.clickable-icon) {
-  background: #121212;
-  border: none;
-  padding: 2px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: none;
-  transition: color 0.2s ease;
-}
-
-/* Keep the background dark on hover too — the theme's :hover rule would otherwise paint
-   it white. The same :not() chain + :hover (0,7,2) out-specifies that hover rule. */
-html
-  body
-  .horme-diag-logs-header
-  .horme-diag-refresh-btn:not(.mod-cta):not(.mod-warning):not(.mod-destructive):not(.clickable-icon):hover {
-  background: #121212;
-  box-shadow: none;
-}
-
-/* Icon: set the stroke directly on the svg. A direct value beats the button's inherited
-   color (which the theme drives to black in light mode), so the icon stays visible on the
-   dark button in both themes — no !important needed. */
-.horme-diag-logs-header .horme-diag-refresh-btn svg {
-  width: 14px;
-  height: 14px;
-  color: #cccccc;
-  stroke: #cccccc;
-}
-
-.horme-diag-logs-header .horme-diag-refresh-btn svg path {
-  stroke: #cccccc;
-}
-
-.horme-diag-logs-header .horme-diag-refresh-btn:hover svg,
-.horme-diag-logs-header .horme-diag-refresh-btn:hover svg path {
-  color: #ffffff;
-  stroke: #ffffff;
-}
-
-.horme-diag-logs-header .horme-diag-refresh-btn.is-spinning svg {
-  animation: horme-spin 0.6s linear infinite;
-}
-
-@keyframes horme-spin {
-  from {
-    transform: rotate(0deg);
-  }
-
-  to {
-    transform: rotate(360deg);
-  }
-}
-/* Dashboard title */
-.horme-diag-title-header {
-  font-size: var(--font-ui-medium);
-  font-weight: 600;
-  color: var(--text-normal);
-  margin: 0 0 12px 0;
-  padding: 16px 16px 0 16px;
-  letter-spacing: 0.04em;
-}
-
-/* Grid error state */
-.horme-diag-empty {
-  color: var(--text-error);
-  font-size: var(--font-ui-smaller);
-  padding: 12px;
-  opacity: 0.7;
-  grid-column: 1 / -1;
-}
-
-/* Loading status badge */
-.horme-diag-status-loading {
-  background: color-mix(in srgb, var(--color-blue) 15%, transparent);
-  color: var(--color-blue);
-}
-
-/* Loading card border indicator */
-.horme-diag-card.is-loading::after {
-  background: var(--color-blue);
-}
-/* Mobile alignment for diagnostic section buttons */
-@media (max-width: 480px) {
-  .is-mobile .horme-diag-section.horme-diag-section .setting-item.setting-item {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    text-align: center;
-    padding: 16px 10px;
-  }
-
-  .is-mobile .horme-diag-section.horme-diag-section .setting-item-info.setting-item-info {
-    margin: 0 0 12px 0;
-    text-align: center;
-  }
-
-  .is-mobile .horme-diag-section.horme-diag-section .setting-item-control.setting-item-control {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: 10px;
-    width: 100%;
-    margin: 0 auto;
-  }
+.horme-source-pill:hover .horme-source-num {
+  background: rgba(255, 255, 255, 0.25);
+  color: inherit;
 }
 
 /* ── Skills dropdown menu ─────────────────────────────── */
@@ -2048,75 +1681,417 @@ textarea.horme-resize-vertical {
   opacity: 0.6;
 }
 
-.horme-diag-entry-msg.horme-diag-entry-quiet {
-  opacity: 0.4;
-}
+/* ══ Settings ══════════════════════════════════════════════════════════════
+   Obsidian 1.13+ draws the settings from definitions, as native pages. These
+   rules only dress Horme's own rows; colours come from the theme's variables,
+   so everything follows the theme in light and dark. */
 
-.horme-settings-warning {
-  color: var(--text-error);
-  padding: 10px;
-  border: 1px solid var(--background-modifier-border);
-}
-
-/* ── Settings: Obsidian 1.13 and later ── */
-
-/* Obsidian 1.13 draws the settings from definitions; the whole page is drawn
-   into the one row of a group of its own, which is a plain block here, so the
-   page looks as it does when drawn straight into the tab. */
-.setting-item.horme-settings-host {
-  display: block;
+/* ── Header card ── */
+.horme-hero-group .setting-items {
   padding: 0;
   border: none;
-  border-radius: 0;
-  background-color: transparent;
+  background: none;
+  box-shadow: none;
 }
 
-/* Obsidian spaces a row's first child from the controls beside it; this row
-   has none. */
-.setting-item.horme-settings-host > :first-child {
-  margin-inline-end: 0;
-}
-
-/* ── Settings: support ── */
-
-/* The Ko-fi card sits at the top of the Support section. Everything reads
-   Obsidian's theme variables, so the card follows the theme, light or dark. */
-.horme-support {
+.setting-item.horme-hero {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: var(--size-4-2);
-  margin: var(--size-4-4) var(--size-4-4) var(--size-4-2);
-  padding: var(--size-4-6) var(--size-4-4);
+  gap: var(--size-4-4);
+  padding: var(--size-4-5);
   border: var(--border-width) solid var(--background-modifier-border);
   border-radius: var(--radius-l);
   background-color: var(--background-secondary);
-  text-align: center;
+  background-image: linear-gradient(120deg, hsla(var(--interactive-accent-hsl), 0.12), transparent 55%);
+}
+
+.horme-hero-mark {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-l);
+  background-color: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.horme-hero-mark svg {
+  width: 30px;
+  height: 30px;
+}
+
+.horme-hero-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--size-2-2);
+  min-width: 0;
+}
+
+.horme-hero-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--size-4-2);
+  color: var(--text-normal);
+  font-size: var(--font-ui-large);
+  font-weight: var(--font-bold);
+}
+
+.horme-hero-version {
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+  font-weight: var(--font-normal);
+  font-variant-numeric: tabular-nums;
+}
+
+.horme-hero-tagline {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  line-height: var(--line-height-tight);
+}
+
+.horme-hero-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--size-4-2);
+  margin-top: var(--size-4-2);
+}
+
+.horme-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--size-2-3);
+  max-width: 100%;
+  padding: var(--size-2-1) var(--size-4-3);
+  border: var(--border-width) solid var(--background-modifier-border);
+  border-radius: 999px;
+  background-color: var(--background-primary);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.horme-chip > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.horme-chip.is-warn {
+  color: var(--text-warning);
+}
+
+.horme-chip-icon {
+  display: inline-flex;
+}
+
+.horme-chip-icon svg {
+  width: var(--icon-xs);
+  height: var(--icon-xs);
+}
+
+.horme-chip-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: var(--text-faint);
+}
+
+.horme-chip-dot.is-ok {
+  background-color: var(--color-green);
+  box-shadow: 0 0 0 3px rgba(var(--color-green-rgb), 0.2);
+}
+
+.horme-chip-dot.is-fail {
+  background-color: var(--color-red);
+  box-shadow: 0 0 0 3px rgba(var(--color-red-rgb), 0.2);
+}
+
+.horme-chip-dot.is-checking {
+  background-color: var(--color-yellow);
+  animation: horme-pulse 1s ease-in-out infinite;
+}
+
+@keyframes horme-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .horme-chip-dot.is-checking {
+    animation: none;
+  }
+}
+
+.is-phone .setting-item.horme-hero {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+/* ── Rows ── */
+.horme-conn-line {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2);
+}
+
+.setting-item.horme-note-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--size-4-2);
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  line-height: var(--line-height-tight);
+}
+
+.setting-item.horme-note-row.is-warning {
+  color: var(--text-warning);
+}
+
+.horme-note-icon {
+  display: inline-flex;
+  flex: none;
+  margin-top: 1px;
+}
+
+.horme-note-icon svg {
+  width: var(--icon-s);
+  height: var(--icon-s);
+}
+
+.horme-model-status,
+.horme-index-when {
+  margin-top: var(--size-2-1);
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+}
+
+.horme-model-status:empty,
+.horme-index-when:empty {
+  display: none;
+}
+
+.horme-model-status.is-ok {
+  color: var(--text-muted);
+}
+
+.horme-model-status.is-warn {
+  color: var(--text-warning);
+}
+
+.horme-link-button {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--size-4-1) var(--size-4-3);
+  border-radius: var(--button-radius);
+  background-color: var(--interactive-normal);
+  box-shadow: var(--input-shadow);
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.horme-link-button:hover {
+  background-color: var(--interactive-hover);
+  color: var(--text-normal);
+}
+
+/* ── Diagnostics ── */
+.setting-item.horme-health,
+.setting-item.horme-log {
+  display: block;
+}
+
+.horme-health-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: var(--size-4-3);
+}
+
+.horme-health-loading {
+  color: var(--text-faint);
+  font-size: var(--font-ui-small);
+}
+
+.horme-health-card {
+  padding: var(--size-4-3);
+  border: var(--border-width) solid var(--background-modifier-border);
+  border-top: 3px solid var(--text-faint);
+  border-radius: var(--radius-m);
+  background-color: var(--background-primary);
+}
+
+.horme-health-card.is-healthy {
+  border-top-color: var(--color-green);
+}
+
+.horme-health-card.is-stale {
+  border-top-color: var(--color-orange);
+}
+
+.horme-health-card.is-error {
+  border-top-color: var(--color-red);
+}
+
+.horme-health-card.is-loading {
+  border-top-color: var(--color-yellow);
+}
+
+.horme-health-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--size-4-2);
+  color: var(--text-normal);
+  font-weight: var(--font-semibold);
+}
+
+.horme-health-icon {
+  display: inline-flex;
+  color: var(--text-muted);
+}
+
+.horme-health-icon svg {
+  width: var(--icon-s);
+  height: var(--icon-s);
+}
+
+.horme-health-name {
+  white-space: nowrap;
+}
+
+.horme-health-badge {
+  margin-inline-start: auto;
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+  font-weight: var(--font-normal);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.horme-health-count {
+  margin-top: var(--size-4-2);
+  color: var(--text-normal);
+  font-variant-numeric: tabular-nums;
+}
+
+.horme-health-when {
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+}
+
+.horme-log-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--size-4-2);
+}
+
+.horme-log-summary {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.horme-log-actions {
+  display: flex;
+  gap: var(--size-2-1);
+}
+
+.horme-log-list {
+  max-height: 260px;
+  overflow-y: auto;
+  border: var(--border-width) solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  background-color: var(--background-primary);
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+}
+
+.horme-log-row {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: var(--size-4-2);
+  padding: var(--size-2-2) var(--size-4-2);
+  border-bottom: var(--border-width) solid var(--background-modifier-border);
+}
+
+.horme-log-row:last-child {
+  border-bottom: none;
+}
+
+.horme-log-time {
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.horme-log-source {
+  color: var(--text-accent);
+  white-space: nowrap;
+}
+
+.horme-log-msg {
+  color: var(--text-normal);
+  overflow-wrap: anywhere;
+}
+
+.horme-log-row.is-error .horme-log-msg {
+  color: var(--text-error);
+}
+
+.horme-log-row.is-warning .horme-log-msg {
+  color: var(--text-warning);
+}
+
+.horme-log-empty {
+  padding: var(--size-4-3);
+  color: var(--text-faint);
+  font-family: var(--font-interface);
+}
+
+.is-phone .horme-log-row {
+  grid-template-columns: 1fr;
+  gap: 0;
+}
+
+/* ── Support ── */
+.setting-item.horme-support {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-4);
 }
 
 .horme-support-icon {
   display: inline-flex;
+  flex: none;
   color: var(--color-red);
 }
 
 .horme-support-icon svg {
-  width: var(--icon-xl);
-  height: var(--icon-xl);
+  width: var(--icon-l);
+  height: var(--icon-l);
   fill: currentColor;
 }
 
-.horme-support-title {
-  font-size: var(--font-ui-large);
-  font-weight: var(--font-semibold);
-  color: var(--text-normal);
+.horme-support-text {
+  flex: 1;
+  min-width: 0;
 }
 
-.horme-support p {
-  max-width: 34em;
-  margin: 0;
+.horme-support-title {
+  color: var(--text-normal);
+  font-weight: var(--font-semibold);
+}
+
+.horme-support-text p {
+  margin: var(--size-2-1) 0 0;
   color: var(--text-muted);
   font-size: var(--font-ui-small);
-  line-height: var(--line-height-normal);
+  line-height: var(--line-height-tight);
 }
 
 .horme-support-nowrap {
@@ -2125,9 +2100,9 @@ textarea.horme-resize-vertical {
 
 .horme-support-button {
   display: inline-flex;
+  flex: none;
   align-items: center;
   gap: var(--size-4-2);
-  margin-top: var(--size-4-2);
   padding: var(--size-4-2) var(--size-4-4);
   border-radius: var(--radius-m);
   background-color: var(--interactive-accent);
@@ -2151,21 +2126,62 @@ textarea.horme-resize-vertical {
   height: var(--icon-s);
 }
 
-/* The issues link looks like Obsidian's own buttons in a settings row. */
-.horme-support-link {
-  display: inline-flex;
-  align-items: center;
-  padding: var(--size-4-1) var(--size-4-3);
-  border-radius: var(--button-radius);
-  background-color: var(--interactive-normal);
-  box-shadow: var(--input-shadow);
-  color: var(--text-normal);
-  font-size: var(--font-ui-small);
-  text-decoration: none;
-  white-space: nowrap;
+.is-phone .setting-item.horme-support {
+  flex-wrap: wrap;
 }
 
-.horme-support-link:hover {
-  background-color: var(--interactive-hover);
-  color: var(--text-normal);
+/* ── Tag translation test, inside its row ── */
+.horme-tag-test-results {
+  flex-basis: 100%;
+  margin-top: var(--size-4-3);
+}
+
+/* ── Obsidian before 1.13: pages drawn as collapsible sections ── */
+.horme-fallback-page {
+  margin-bottom: var(--size-4-2);
+  border: var(--border-width) solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+}
+
+.horme-fallback-page > summary {
+  display: flex;
+  gap: var(--size-4-2);
+  padding: var(--size-4-3);
+  cursor: pointer;
+  font-weight: var(--font-semibold);
+  list-style: none;
+}
+
+.horme-fallback-page > summary::-webkit-details-marker {
+  display: none;
+}
+
+.horme-fallback-page-value {
+  margin-inline-start: auto;
+  color: var(--text-muted);
+  font-weight: var(--font-normal);
+}
+
+.horme-fallback-page > summary.is-warning .horme-fallback-page-name {
+  color: var(--text-warning);
+}
+
+.horme-fallback-page-desc {
+  padding: 0 var(--size-4-3);
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.horme-fallback-page-body {
+  padding: 0 var(--size-4-3) var(--size-4-2);
+}
+
+.horme-fallback-slider-value {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+textarea.horme-fallback-wide {
+  width: 100%;
+  min-height: 4em;
 }

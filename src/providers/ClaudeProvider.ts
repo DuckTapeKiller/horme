@@ -2,6 +2,7 @@ import { requestUrl } from "obsidian";
 import { AiProvider } from "./AiProvider";
 import { fetchError, requestUrlError } from "../utils/apiError";
 import { asArray, getRecordProp, getStringProp } from "../utils/TypeGuards";
+import { claudeAcceptsTemperature, splitSystemMessages } from "../utils/messageRoles";
 
 type ClaudeMessage = { role: "user" | "assistant"; content: string };
 
@@ -30,17 +31,15 @@ export class ClaudeProvider implements AiProvider {
     system: string;
     history: ClaudeMessage[];
   } {
-    const system = msgs.find((m) => m.role === "system")?.content ?? "";
-    const history: ClaudeMessage[] = [];
-    for (const m of msgs) {
-      if (m.role === "system") continue;
-      if (m.role === "assistant" || m.role === "user") {
-        history.push({ role: m.role, content: m.content });
-      } else {
-        history.push({ role: "user", content: m.content });
-      }
-    }
-    return { system, history };
+    const { system, turns } = splitSystemMessages(msgs);
+    return { system, history: turns };
+  }
+
+  /** Body fields shared by every request. */
+  private baseBody(model: string, system: string): Record<string, unknown> {
+    const body: Record<string, unknown> = { model, max_tokens: this.maxTokens, system };
+    if (claudeAcceptsTemperature(model)) body.temperature = this.temperature;
+    return body;
   }
 
   async generate(prompt: string, system: string, model: string): Promise<string> {
@@ -54,11 +53,8 @@ export class ClaudeProvider implements AiProvider {
         "content-type": "application/json",
       },
       body: JSON.stringify({
-        model,
-        max_tokens: this.maxTokens,
-        system,
+        ...this.baseBody(model, system),
         messages: [{ role: "user", content: prompt }],
-        temperature: this.temperature,
       }),
       throw: false,
     });
@@ -80,10 +76,7 @@ export class ClaudeProvider implements AiProvider {
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model,
-        max_tokens: this.maxTokens,
-        temperature: this.temperature,
-        system,
+        ...this.baseBody(model, system),
         messages: history,
       }),
       throw: false,
@@ -106,12 +99,12 @@ export class ClaudeProvider implements AiProvider {
         "Content-Type": "application/json",
         "x-api-key": this.apiKey,
         "anthropic-version": "2023-06-01",
+        // fetch from Obsidian's window sends an Origin header; Anthropic answers
+        // such requests only with this header (requestUrl sends no Origin).
+        "anthropic-dangerous-direct-browser-access": "true",
       },
       body: JSON.stringify({
-        model,
-        max_tokens: this.maxTokens,
-        temperature: this.temperature,
-        system,
+        ...this.baseBody(model, system),
         messages: history,
         stream: true,
       }),

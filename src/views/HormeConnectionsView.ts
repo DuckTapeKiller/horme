@@ -34,12 +34,14 @@ export class HormeConnectionsView extends ItemView {
     headerEl.createEl("h4", { text: "Connections" });
 
     const controlsEl = headerEl.createDiv({ cls: "horme-connections-controls" });
-    const pauseBtn = controlsEl.createEl("button", { text: "▣ pause", cls: "horme-connections-pause-btn" });
+    const pauseBtn = controlsEl.createEl("button", { text: "▣ Pause", cls: "horme-connections-pause-btn" });
     pauseBtn.onclick = () => {
       this.isPaused = !this.isPaused;
       pauseBtn.textContent = this.isPaused ? "▻ Resume" : "▣ Pause";
-      if (!this.isPaused && this.activeFilePath) {
-        void this.updateConnections(this.activeFilePath);
+      // On resume, show the note opened last, even if it was opened while paused.
+      const latest = this.latestRequestedPath ?? this.activeFilePath;
+      if (!this.isPaused && latest) {
+        void this.updateConnections(latest, true);
       }
     };
 
@@ -59,9 +61,13 @@ export class HormeConnectionsView extends ItemView {
     emptyEl.createEl("p", { text: "Open a note to see related connections." });
   }
 
-  public async updateConnections(filePath: string) {
+  /** The last note asked for, kept while paused so Resume can catch up. */
+  private latestRequestedPath: string | null = null;
+
+  public async updateConnections(filePath: string, force = false) {
+    this.latestRequestedPath = filePath;
     if (this.isPaused) return;
-    if (filePath === this.activeFilePath) return;
+    if (!force && filePath === this.activeFilePath) return;
 
     this.activeFilePath = filePath;
 

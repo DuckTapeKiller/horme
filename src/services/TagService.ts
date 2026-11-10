@@ -39,16 +39,21 @@ export class TagService {
   }
 
   private toArray(v: unknown): string[] {
-    if (Array.isArray(v)) return v.filter((x): x is string => typeof x === "string");
+    // YAML reads `tags: [2024, art]` as a number and a string; both are tags, and
+    // dropping the number here would delete it when the list is written back.
+    if (Array.isArray(v)) {
+      return v
+        .filter((x) => typeof x === "string" || typeof x === "number" || typeof x === "boolean")
+        .map((x) => String(x).trim())
+        .filter(Boolean);
+    }
+    if (typeof v === "number") return [String(v)];
     if (typeof v === "string") {
-      const s = v.trim();
-      if (!s) return [];
-      if (s.includes(","))
-        return s
-          .split(",")
-          .map((x) => x.trim())
-          .filter(Boolean);
-      return [s];
+      // Obsidian reads a tags string as tags separated by commas or spaces.
+      return v
+        .split(/[,\s]+/)
+        .map((x) => x.trim())
+        .filter(Boolean);
     }
     return [];
   }

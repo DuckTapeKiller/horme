@@ -1,12 +1,13 @@
 import { requestUrlWithTimeout } from "../utils/requestWithTimeout";
+import { searchWeb, WebHit } from "../utils/webResearch";
 import { Skill, SkillParameter } from "./types";
 import { asArray, errorToMessage, getRecordProp, getStringProp } from "../utils/TypeGuards";
 
 export class DuckDuckGoSkill implements Skill {
   id = "ddg_search";
-  name = "DuckDuckGo Instant Answer";
+  name = "DuckDuckGo Search";
   description =
-    "Searches DuckDuckGo for instant answers, quick facts, and topic summaries. Useful for recent events, technical specs, and claims not covered by Wikipedia.";
+    "Searches the web through DuckDuckGo and returns the top results with their links and snippets. Useful for recent events, technical specs, and claims not covered by Wikipedia.";
   terminal = true;
   primaryParam = "query";
 
@@ -25,6 +26,18 @@ export class DuckDuckGoSkill implements Skill {
     try {
       const query = getStringProp(params, "query");
       if (!query) return `Invalid parameters for ${this.name}: expected {"query": string}.`;
+
+      // Real web results first. The Instant Answer API below only knows topics
+      // with an abstract (mostly Wikipedia's), so on its own it found nothing for
+      // most searches.
+      const web = await searchWeb(query, 8).catch((): WebHit[] => []);
+      if (web.length) {
+        let out = `## DuckDuckGo: "${query}"\n\n`;
+        web.forEach((h, i) => {
+          out += `${i + 1}. **[${h.title.replace(/[[\]]/g, "")}](${h.url})**${h.snippet ? `: ${h.snippet}` : ""}\n`;
+        });
+        return out.trim();
+      }
 
       const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`;
       const res = await requestUrlWithTimeout({ url });
