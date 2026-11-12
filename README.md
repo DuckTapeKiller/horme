@@ -26,7 +26,7 @@ _In Greek mythology, Horme (Ancient Greek: Ὁρμή) is the spirit of impulse a
 - **Fix and reshape text.** Select text, right-click, and proofread, rewrite, expand, summarise, translate or fact-check it. You approve every change before it replaces anything.
 - **Find related notes.** A side panel shows the notes closest in meaning to the one you are reading.
 - **Tag, summarise and file.** Horme suggests tags, writes a summary into a note's properties, and turns a term into a researched concept note.
-- **Use tools.** Horme can look things up on Wikipedia, Wiktionary, Britannica and DuckDuckGo, read a web page, calculate dates, consult your own grammar notes, and call any web API you set up.
+- **Use tools.** Horme can look things up on Wikipedia, Wiktionary, Britannica and DuckDuckGo, show pictures (and illustrate answers with the Wikipedia article's picture), read a web page, calculate dates, consult your own grammar notes, and call any web API you set up.
 - **Stay private.** With a local model, nothing leaves your computer. Cloud providers are optional, and every kind of content needs your consent before it is sent to one.
 
 ---
@@ -173,6 +173,7 @@ Skills are tools the model can use while it answers. In **agent mode** it plans 
 | Wikipedia Search         | Web      | Summaries and relevant sections, in many languages.                                  |
 | Wiktionary Lookup        | Web      | Definitions, etymology and usage notes.                                              |
 | Britannica Search        | Web      | The opening paragraphs of an encyclopaedia article.                                  |
+| Find image               | Web      | Photos and pictures in the chat, with author and licence. See [Pictures](#pictures).  |
 | DuckDuckGo Search        | Web      | The top web results for a query, with links and snippets.                            |
 | Fetch and Summarise      | Web      | Reads a web page you share and summarises it.                                        |
 | Deep Research            | Web      | Searches Wikipedia (articles and category lists) and the web, reads the best pages in full and hands the model the most relevant passages with numbered sources. Works with no API key; uses your embedding server to pick passages when one is set up. |
@@ -181,7 +182,24 @@ Skills are tools the model can use while it answers. In **agent mode** it plans 
 | Grammar Scholar          | Your vault | Consults your grammar notes.                                                       |
 | Create Concept Note      | Web and vault | Researches a term and writes a concept note.                                   |
 
+The round after a skill only writes the reply from what the skill found, so a local thinking model (llama.cpp, Ollama) skips its second thinking phase there and answers sooner. **Think again after a skill**, under Skills and agent, turns that thinking back on.
+
 **Custom skills** connect Horme to any web API. Give a URL with a `{{query}}` placeholder, such as `https://openlibrary.org/search.json?q={{query}}&limit=3`, and the part of the answer to keep, such as `docs`. API keys can be read from Obsidian's keychain with `{{secret:your-secret-id}}`, so they never sit in the settings file.
+
+### Pictures
+
+Horme shows pictures in the chat, each with its title, author, licence and source, and a button that saves a copy to your vault.
+
+<p align="center">
+  <img src="images/picture-in-answer.png" alt="Asking who Dean Benedetti is: the Wikipedia lookup brings his photo, credited, above the answer" width="48%">
+  &nbsp;
+  <img src="images/picture-request.png" alt="Asking for two pictures of the Alhambra: two credited pictures and their sources, shown without the model" width="48%">
+</p>
+
+- **Pictures in answers.** When Horme looks something up on Wikipedia, the article's picture comes with the answer, at no extra cost: ask who Dean Benedetti was and his photo appears above the reply. With **With every lookup**, Britannica, web search and deep research also bring a picture of what they looked up, fetched while the lookup runs.
+- **Picture requests.** "Show me two pictures of the Alhambra" or "muéstrame tres fotos de Frida Kahlo" shows the pictures straight away, without the model, in a second or two. A message that asks for more, such as "show me the Colosseum and tell me when it was built", goes to the model as usual.
+- **Sources.** Wikipedia and Wikimedia Commons, The Met, NASA and the Art Institute of Chicago need no key. Openverse, Pexels, Unsplash and Brave Search use your own keys, kept in Obsidian's keychain. Brave Search finds pictures on any website, so their licences are unknown. Horme tries the sources you switch on, in the order you set, until it has enough pictures. Your search terms go to these services; your notes never do.
+- **Saving.** The download button saves a large copy (never a huge original) to the folder set in **Save pictures to**, or to Obsidian's attachments folder.
 
 ---
 
@@ -230,7 +248,8 @@ The settings open on a status card: the active provider with a live connection d
 | **Live connections** | How close a note must be, how many to show, folders to leave out, style.                                                           |
 | **Tags**             | Tag suggestions (tag list note, provider, model, tag index) and bilingual tag shadowing.                                           |
 | **Writing tools**    | Grammar notes, frontmatter summaries and concept notes.                                                                            |
-| **Skills and agent** | Native tool calling, agent mode and its skill budget, and your custom skills.                                                      |
+| **Skills and agent** | Native tool calling, agent mode and its skill budget, thinking after a skill, and your custom skills.                              |
+| **Images**           | Pictures in answers, direct picture requests, how many pictures, where they are saved, the picture sources and their order, keys. |
 | **On mobile**        | A different provider and model for phones and tablets.                                                                             |
 | **Diagnostics**      | Index health, the activity log, and debug logging.                                                                                 |
 

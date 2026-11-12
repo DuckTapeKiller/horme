@@ -11,6 +11,7 @@ import { CreateConceptNoteSkill } from "../skills/CreateConceptNoteSkill";
 import { FetchAndSummariseSkill } from "../skills/FetchAndSummariseSkill";
 import { DeepResearchSkill } from "../skills/DeepResearchSkill";
 import { BritannicaSkill } from "../skills/BritannicaSkill";
+import { FindImageSkill } from "../skills/FindImageSkill";
 
 export class SkillManager {
   private plugin: HormePlugin;
@@ -23,7 +24,7 @@ export class SkillManager {
   }
 
   private registerBuiltInSkills() {
-    this.registerSkill(new WikipediaSkill());
+    this.registerSkill(new WikipediaSkill(() => this.plugin.settings.imagesInAnswers !== "off"));
     this.registerSkill(new WiktionarySkill());
     this.registerSkill(new DuckDuckGoSkill());
     this.registerSkill(new DateCalculatorSkill());
@@ -33,6 +34,7 @@ export class SkillManager {
     this.registerSkill(new FetchAndSummariseSkill(this.plugin));
     this.registerSkill(new DeepResearchSkill(this.plugin));
     this.registerSkill(new BritannicaSkill());
+    this.registerSkill(new FindImageSkill(this.plugin));
   }
 
   registerSkill(skill: Skill) {

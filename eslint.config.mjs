@@ -37,6 +37,8 @@ export default defineConfig([
             "LM Studio",
             "Wikipedia",
             "Wiktionary",
+            "Wikimedia",
+            "Wikimedia Commons",
             "DuckDuckGo",
             "Claude",
             "Anthropic",

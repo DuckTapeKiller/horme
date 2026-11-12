@@ -121,6 +121,11 @@ export function sourceLabel(url: string, title?: string): string {
     const name = page ? titleFromPath(page[1]) : title?.trim() ?? "";
     return name ? `${site}${lang}: ${name}` : `${site}${lang}`;
   }
+  if (host === "commons.wikimedia.org") {
+    const page = /^\/wiki\/(?:File:)?(.+)$/.exec(u.pathname);
+    const name = title?.trim() || (page ? titleFromPath(page[1]).replace(/\.[a-z0-9]{2,5}$/i, "") : "");
+    return name ? `Wikimedia Commons: ${name}` : "Wikimedia Commons";
+  }
   if (host === "britannica.com") {
     const last = u.pathname.split("/").filter(Boolean).pop();
     const name = title?.trim() || (last ? titleFromPath(last).replace(/-/g, " ") : "");

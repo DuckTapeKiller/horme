@@ -29,6 +29,22 @@ import {
   parseResearchSources,
   pillsFromSkillResult,
 } from "../utils/citations";
+import {
+  FoundImage,
+  cardCredit,
+  imagesSummary,
+  imageFileName,
+  imagesToMarkdown,
+  imagesFromSkillResult,
+  isAllowedImageUrl,
+  extensionForType,
+  withoutImageData,
+} from "../utils/images";
+import { requestUrlWithTimeout } from "../utils/requestWithTimeout";
+import { WIKIMEDIA_HEADERS } from "../utils/webResearch";
+import { errorToMessage } from "../utils/TypeGuards";
+import { pingUnsplashDownload, sourceReady } from "../services/ImageSearch";
+import { onlyAsksForPictures, pictureRequest } from "../utils/pictureRequest";
 
 const SKILL_PLACEHOLDERS: Record<string, string> = {
   fetch_and_summarise: "Paste URL to summarise...",
@@ -36,6 +52,7 @@ const SKILL_PLACEHOLDERS: Record<string, string> = {
   ddg_search: "Type search query or claim to verify live...",
   wiktionary: "Type a specific word to inspect layout or definition...",
   vault_links: "Type topic or content snippet to map related notes...",
+  find_image: "Type what to show, e.g. Roman Colosseum...",
 };
 
 type ContextFolderSelection = { path: string; noteCount: number; totalChars: number };
@@ -68,6 +85,8 @@ export class HormeChatView extends ItemView {
   private presetButton!: HTMLButtonElement;
   private isGenerating = false;
   private generationEpoch = 0;
+  /** Pictures already drawn for the current message, so a second skill does not repeat one. */
+  private shownImageUrls = new Set<string>();
   /** Set when this message's Vault Brain search found nothing; the answer opens by saying so. */
   private turnVaultNothing = false;
   /** The vault passages sent with this message; skill follow-up rounds are not given them again. */
@@ -192,6 +211,7 @@ export class HormeChatView extends ItemView {
     vault_links: "cable",
     grammar_scholar: "signature",
     date_calc: "calendar",
+    find_image: "image",
   };
 
   /** Returns the Lucide icon name for a skill. Custom skills use "bot". */
@@ -215,6 +235,7 @@ export class HormeChatView extends ItemView {
       "ddg_search",
       "wiktionary",
       "vault_links",
+      "find_image",
       "fetch_and_summarise", // ◈ Forces the skill to run in Direct Mode and bypass Vault Brain entirely
     ]);
 
@@ -1058,6 +1079,25 @@ export class HormeChatView extends ItemView {
     const startEpoch = this.generationEpoch;
     const startConversation = this.conversationId;
 
+    // ── Picture requests ────────────────────────────────────────────────────
+    // "Show me a photo of …" is answered by Find image directly, like a skill run
+    // from the menu: no model round, so a second or two instead of two rounds.
+    let quickParams: Record<string, string | number | boolean> | null = null;
+    if (
+      !regenerate &&
+      !this.forcedSkillId &&
+      this.plugin.settings.imageQuickRequests &&
+      this.uploadedImages.length === 0
+    ) {
+      const ask = pictureRequest(this.inputEl.value);
+      if (ask && this.plugin.settings.imageSources.some((src) => sourceReady(this.plugin, src.id))) {
+        this.forcedSkillId = "find_image";
+        quickParams = { query: ask.query, count: ask.count };
+        // English is the skill's default; another language picks that Wikipedia's article picture.
+        if (ask.language !== "en") quickParams.language = ask.language;
+      }
+    }
+
     // ── Forced skill execution ──────────────────────────────────────────────
     // When a skill is armed from the dropdown, we bypass both the normal
     // send flow AND Vault Brain RAG. The skill owns the context for this turn.
@@ -1079,7 +1119,8 @@ export class HormeChatView extends ItemView {
       this.inputEl.placeholder = "Ask Horme…"; // Revert placeholder text
       this.containerEl.querySelector(".horme-skill-pill")?.remove();
 
-      // Render the user's message in the chat
+      // Render the user's message in the chat; the first one replaces the empty-chat greeting.
+      if (!this.history.length) this.messagesEl.empty();
       this.addMessageBubble("user", query);
       this.addUserActions(query);
       this.history.push({ role: "user", content: query });
@@ -1105,7 +1146,9 @@ export class HormeChatView extends ItemView {
           throw new Error("Skill configuration error: no primary parameter defined.");
         }
 
-        const forcedParams: Record<string, string | number | boolean> = { [primaryParam]: query };
+        const forcedParams: Record<string, string | number | boolean> = quickParams ?? {
+          [primaryParam]: query,
+        };
 
         // Verify and inject required parameters that are not the primary one
         for (const param of skill.parameters) {
@@ -1141,15 +1184,30 @@ export class HormeChatView extends ItemView {
         await this.renderSkillResultBox(skill.id, skill.name, forcedParams, result);
         const forcedSkillLinks = pillsFromSkillResult(result);
         if (!this.contentEl.isConnected) return; // Connectivity guard from Fix 2
-        const resultBubble = this.addMessageBubble("assistant", "");
-        const contentArea = resultBubble.querySelector(".horme-content-area") as HTMLElement;
-        if (contentArea) {
-          contentArea.empty();
-          await MarkdownRenderer.render(this.app, result, contentArea, "", this);
+        // Pictures stay with the skill result, which is drawn again when the chat is
+        // reopened; the reply carries only the text.
+        const pictures = skill.id === "find_image" ? imagesFromSkillResult(result) : [];
+        if (pictures.length) {
+          // The cards are the whole reply: each shows its title and credit and links
+          // to its page. The titles and credits are kept for the model and for notes.
+          this.history.push({ role: "tool_result", content: `[SKILL RESULT: ${skill.id}]\n\n${result}` });
+          this.history.push({ role: "assistant", content: imagesSummary(pictures), picturesOnly: true });
+          this.pillsUnderPictures(forcedSkillLinks);
+        } else {
+          const shownText = withoutImageData(result);
+          const resultBubble = this.addMessageBubble("assistant", "");
+          const contentArea = resultBubble.querySelector(".horme-content-area") as HTMLElement;
+          if (contentArea) {
+            contentArea.empty();
+            await MarkdownRenderer.render(this.app, shownText, contentArea, "", this);
+          }
+          this.addAssistantActions(resultBubble, shownText);
+          this.renderSkillSourceLinks(resultBubble, forcedSkillLinks);
+          if (shownText !== result) {
+            this.history.push({ role: "tool_result", content: `[SKILL RESULT: ${skill.id}]\n\n${result}` });
+          }
+          this.history.push({ role: "assistant", content: shownText });
         }
-        this.addAssistantActions(resultBubble, result);
-        this.renderSkillSourceLinks(resultBubble, forcedSkillLinks);
-        this.history.push({ role: "assistant", content: result });
         // Regenerate would replay an older turn's request; a skill run is repeated by running it again.
         this.lastMsgs = null;
         await this.plugin.historyManager.append({
@@ -1484,7 +1542,7 @@ export class HormeChatView extends ItemView {
         if (toolResults.length > 0) {
           consolidatedToolResult = {
             role: "user",
-            content: toolResults.map((r) => r.content).join("\n\n"),
+            content: toolResults.map((r) => withoutImageData(r.content)).join("\n\n"),
           };
         }
 
@@ -1675,12 +1733,15 @@ export class HormeChatView extends ItemView {
     })();
 
     try {
+      // The rounds after a skill only write the reply from text already found;
+      // a local thinking model skipping its thinking there answers much sooner.
       const reader = await this.plugin.aiGateway.stream(
         msgs,
         model,
         this.activeAbortController.signal,
         suppressVaultSkill,
         skillsSuppressed,
+        skillDepth > 0 && !this.plugin.settings.thinkAfterSkills ? { noThinking: true } : undefined,
       );
       if (!this.contentEl.isConnected) return;
       this.activeReader = reader;
@@ -1903,6 +1964,7 @@ export class HormeChatView extends ItemView {
           }
 
           const aggregatedSkillLinks = [...skillSourceLinks];
+          const roundResults: string[] = [];
           for (const call of skillCalls) {
             const skillName = call.skillId;
             const skill = this.plugin.skillManager.getSkillById(skillName);
@@ -1929,6 +1991,8 @@ export class HormeChatView extends ItemView {
               skillLoading.remove();
               return;
             }
+            // "With every lookup": a picture of the subject is fetched while the lookup runs.
+            const pictureTask = this.pictureAlongside(call);
             let result: string;
             if (seenSkillCalls.has(callKey)) {
               result = `You already ran ${skillName} with these exact arguments and have the results above. Do not repeat this call. Answer the user's question now using what you already found.`;
@@ -1948,6 +2012,35 @@ export class HormeChatView extends ItemView {
             });
             await this.renderSkillResultBox(skillName, displayName, call.parameters, result);
             if (!this.contentEl.isConnected) return;
+            roundResults.push(result);
+
+            const picture = await (pictureTask ?? this.pictureAfterLookup(call, result));
+            if (picture && this.generationEpoch === epoch && this.contentEl.isConnected) {
+              this.history.push({
+                role: "tool_result",
+                content: `[SKILL RESULT: find_image]\n\n${picture.result}`,
+              });
+              await this.renderSkillResultBox(
+                "find_image",
+                "Find image",
+                { query: picture.query },
+                picture.result,
+              );
+            }
+          }
+
+          // A round that only showed pictures for a message that only asked for
+          // pictures is finished: the cards carry title and credit, so another
+          // model round would only repeat them, slowly.
+          if (
+            skillDepth === 0 &&
+            skillCalls.every((c) => c.skillId === "find_image") &&
+            roundResults.length > 0 &&
+            roundResults.every((r) => imagesFromSkillResult(r).length > 0) &&
+            onlyAsksForPictures(this.lastUserText())
+          ) {
+            await this.finishWithPictures(roundResults, aggregatedSkillLinks);
+            return;
           }
 
           // Always continue the loop — the model needs a chance to
@@ -1978,7 +2071,7 @@ export class HormeChatView extends ItemView {
           }
 
           if (toolResults.length > 0) {
-            const consolidated = toolResults.map((r) => r.content).join("\n\n---\n\n");
+            const consolidated = toolResults.map((r) => withoutImageData(r.content)).join("\n\n---\n\n");
             nextMsgs.push({
               role: "user",
               content:
@@ -2206,7 +2299,185 @@ export class HormeChatView extends ItemView {
     summaryEl.appendText(` ${summaryText}`);
     const body = details.createDiv("horme-reasoning-body");
     await MarkdownRenderer.render(this.app, result, body, "", this);
+    // A picture already shown for this message (say by a Wikipedia lookup) is not repeated.
+    const images = imagesFromSkillResult(result).filter((img) => !this.shownImageUrls.has(img.thumbUrl));
+    for (const img of images) this.shownImageUrls.add(img.thumbUrl);
+    if (images.length > 0) this.renderImageGallery(resultBubble, images);
     this.scrollToBottom();
+  }
+
+  /** The latest message the user sent. */
+  private lastUserText(): string {
+    for (let i = this.history.length - 1; i >= 0; i--)
+      if (this.history[i].role === "user") return this.history[i].content;
+    return "";
+  }
+
+  /** Lookups that come with a picture of their subject in "With every lookup" mode. */
+  private static readonly PICTURE_LOOKUPS = new Set(["britannica", "ddg_search", "deep_research"]);
+
+  /** Starts Find image for a lookup's subject, when answers come with a picture of it. */
+  private pictureAlongside(call: SkillCall): Promise<{ query: string; result: string } | null> | null {
+    if (this.plugin.settings.imagesInAnswers !== "always") return null;
+    if (!HormeChatView.PICTURE_LOOKUPS.has(call.skillId)) return null;
+    return this.pictureFor(call);
+  }
+
+  /** A Wikipedia lookup whose article has no picture gets one from Find image ("With every lookup"). */
+  private async pictureAfterLookup(
+    call: SkillCall,
+    result: string,
+  ): Promise<{ query: string; result: string } | null> {
+    if (this.plugin.settings.imagesInAnswers !== "always" || call.skillId !== "wikipedia") return null;
+    if (imagesFromSkillResult(result).length > 0 || /^Error:|^No Wikipedia/i.test(result)) return null;
+    return this.pictureFor(call);
+  }
+
+  private async pictureFor(call: SkillCall): Promise<{ query: string; result: string } | null> {
+    // One picture per message is enough; the first lookup's subject is the one asked about.
+    if (this.shownImageUrls.size > 0) return null;
+    const skill = this.plugin.skillManager.getSkillById(call.skillId);
+    const raw = call.parameters as Record<string, unknown> | null;
+    const value = raw?.[skill?.primaryParam ?? "query"] ?? raw?.query;
+    const query = typeof value === "string" ? value.trim() : "";
+    if (!query || query.length > 120) return null;
+    if (!this.plugin.settings.imageSources.some((src) => sourceReady(this.plugin, src.id))) return null;
+    const result = await this.plugin.skillManager
+      .executeSkill({ skillId: "find_image", parameters: { query, count: 1 } })
+      .catch(() => "");
+    return imagesFromSkillResult(result).length > 0 ? { query, result } : null;
+  }
+
+  /** The source pills of a pictures-only reply, under the last picture cards. */
+  private pillsUnderPictures(pills: SourcePill[]): void {
+    const boxes = this.messagesEl.querySelectorAll<HTMLElement>(".horme-msg.horme-skill-only");
+    const host = boxes[boxes.length - 1];
+    if (host) this.renderSkillSourceLinks(host, pills);
+  }
+
+  /**
+   * Ends a turn that only showed pictures. The cards are the reply (title, credit,
+   * link); the titles and credits are kept in the history for the model and notes.
+   */
+  private async finishWithPictures(results: string[], pills: SourcePill[]): Promise<void> {
+    const text = imagesSummary(results.flatMap((r) => imagesFromSkillResult(r)));
+    this.history.push({ role: "assistant", content: text, picturesOnly: true });
+    this.pillsUnderPictures(pills);
+    // Regenerate would replay a request whose answer was never the model's.
+    this.lastMsgs = null;
+    if (!this.contentEl.isConnected) return;
+    await this.plugin.historyManager.append({
+      id: this.conversationId,
+      title: this.history.find((m) => m.role === "user")?.content.slice(0, 60) || "Untitled chat",
+      timestamp: Date.now(),
+      messages: this.history,
+    });
+    this.followAndScroll();
+  }
+
+  /** Image cards: the picture (opening its Wikimedia page), its title and credit, and Save to vault. */
+  private renderImageGallery(container: HTMLElement, images: FoundImage[]): void {
+    const gallery = container.createDiv({
+      cls: images.length > 1 ? "horme-image-gallery is-multiple" : "horme-image-gallery",
+    });
+    for (const img of images) {
+      const card = gallery.createEl("figure", { cls: "horme-image-card" });
+      const link = card.createEl("a", {
+        cls: "horme-image-link",
+        href: img.pageUrl || img.thumbUrl,
+        attr: {
+          target: "_blank",
+          rel: "noopener noreferrer",
+          "aria-label": `Open “${img.title}” at ${img.source}`,
+        },
+      });
+      const picture = link.createEl("img", {
+        cls: "horme-image",
+        attr: { src: img.thumbUrl, alt: img.description || img.title, loading: "lazy", decoding: "async" },
+      });
+      // The real proportions keep the space reserved while the picture loads.
+      if (img.width > 0 && img.height > 0) {
+        picture.setAttr("width", String(img.width));
+        picture.setAttr("height", String(img.height));
+      }
+      picture.addEventListener("load", () => this.scrollToBottom());
+      picture.addEventListener("error", () => {
+        link.empty();
+        link.addClass("is-broken");
+        link.createSpan({ text: `The picture could not be loaded. Open its page at ${img.source}.` });
+      });
+
+      const caption = card.createEl("figcaption", { cls: "horme-image-caption" });
+      const text = caption.createDiv({ cls: "horme-image-text" });
+      text.createDiv({ cls: "horme-image-title", text: img.title });
+      // Credit and where it is from ("Diliff · CC BY-SA 4.0 · Wikimedia Commons"), once.
+      const credit = cardCredit(img);
+      if (credit) text.createDiv({ cls: "horme-image-credit", text: credit });
+      const save = caption.createEl("button", {
+        cls: "horme-save-btn horme-image-save",
+        attr: { "aria-label": "Save to vault" },
+      });
+      setIcon(save, "download");
+      save.addEventListener("click", () => {
+        void this.saveImageToVault(img, save);
+      });
+    }
+  }
+
+  /** "Name.jpg" in a folder, or "Name 1.jpg", "Name 2.jpg"… when that is taken. */
+  private async freePath(folder: string, fileName: string): Promise<string> {
+    const dot = fileName.lastIndexOf(".");
+    const base = dot > 0 ? fileName.slice(0, dot) : fileName;
+    const ext = dot > 0 ? fileName.slice(dot) : "";
+    const inFolder = (n: string) => normalizePath(folder === "/" ? n : `${folder}/${n}`);
+    let candidate = inFolder(fileName);
+    for (let i = 1; await this.app.vault.adapter.exists(candidate); i++)
+      candidate = inFolder(`${base} ${i}${ext}`);
+    return candidate;
+  }
+
+  /** Downloads the picture (a large copy, never a huge original) into the chosen folder. */
+  private async saveImageToVault(img: FoundImage, button: HTMLElement): Promise<void> {
+    if (button.hasClass("is-busy")) return;
+    button.addClass("is-busy");
+    try {
+      const urls = [img.saveUrl, img.thumbUrl].filter(
+        (u, i, all) => isAllowedImageUrl(u) && all.indexOf(u) === i,
+      );
+      // Unsplash's guidelines ask for this call whenever one of its pictures is downloaded.
+      if (img.downloadPing) await pingUnsplashDownload(this.plugin, img.downloadPing);
+      let data: ArrayBuffer | null = null;
+      let ext: string | undefined;
+      for (const url of urls) {
+        const res = await requestUrlWithTimeout({ url, headers: WIKIMEDIA_HEADERS, throw: false }, 30000);
+        const type = (res.headers["content-type"] ?? res.headers["Content-Type"] ?? "").toLowerCase();
+        // Only a picture is written to the vault, never an error page.
+        if (res.status === 200 && res.arrayBuffer.byteLength > 0 && (!type || type.startsWith("image/"))) {
+          data = res.arrayBuffer;
+          ext = extensionForType(type);
+          break;
+        }
+      }
+      if (!data) throw new Error(`${img.source} did not send the picture.`);
+      const view = this.plugin.lastActiveMarkdownLeaf?.view;
+      const sourcePath =
+        (view instanceof MarkdownView ? view.file?.path : undefined) ??
+        this.app.workspace.getActiveFile()?.path ??
+        "";
+      const name = imageFileName(img, ext);
+      const folder = this.plugin.settings.imageSaveFolder.trim();
+      const path = folder
+        ? await this.freePath(await ensureVaultFolder(this.app, folder), name)
+        : await this.app.fileManager.getAvailablePathForAttachment(name, sourcePath);
+      const file = await this.app.vault.createBinary(path, data);
+      setIcon(button, "check");
+      button.setAttr("aria-label", `Saved to ${file.path}`);
+      new Notice(`Horme: Picture saved to ${file.path}.`);
+    } catch (e: unknown) {
+      new Notice(`Horme: Could not save the picture. ${errorToMessage(e)}`);
+    } finally {
+      button.removeClass("is-busy");
+    }
   }
 
   private shouldPromoteSkillFailure(result: string): boolean {
@@ -2284,9 +2555,12 @@ export class HormeChatView extends ItemView {
       .map((m) => {
         if (m.role === "user") return `**You**:\n${m.content}\n`;
         if (m.role === "tool_result" || (m.role === "system" && m.content.startsWith("[SKILL RESULT:"))) {
-          return `> [!info]- Skill result\n> ${m.content.trim().replace(/\n/g, "\n> ")}\n`;
+          const callout = `> [!info]- Skill result\n> ${withoutImageData(m.content).trim().replace(/\n/g, "\n> ")}\n`;
+          const pictures = imagesToMarkdown(imagesFromSkillResult(m.content));
+          return pictures ? `${callout}\n${pictures}\n` : callout;
         }
         if (m.role === "system") return "";
+        if (m.picturesOnly) return "";
         const thought = m.reasoning?.trim()
           ? `> [!thought]- Reasoning\n> ${m.reasoning.trim().replace(/\n/g, "\n> ")}\n\n`
           : "";
@@ -2311,6 +2585,7 @@ export class HormeChatView extends ItemView {
   }
 
   private addMessageBubble(role: "user" | "assistant", content: string, images?: string[]): HTMLElement {
+    if (role === "user") this.shownImageUrls.clear();
     const el = this.messagesEl.createDiv(`horme-msg horme-msg-${role}`);
 
     if (images && images.length > 0) {
@@ -2427,6 +2702,11 @@ export class HormeChatView extends ItemView {
         }
         continue;
       }
+      if (m.role === "assistant" && m.picturesOnly) {
+        this.pillsUnderPictures([...aggregatedSkillLinks]);
+        aggregatedSkillLinks.length = 0;
+        continue;
+      }
       if (m.role === "user" || m.role === "assistant") {
         const bubble = this.addMessageBubble(m.role, "", m.images);
         if (m.role === "assistant") {
@@ -2530,6 +2810,7 @@ export class HormeChatView extends ItemView {
       reasoning: m.reasoning,
       context: m.context,
       sources: m.sources,
+      picturesOnly: m.picturesOnly,
     }));
     this.lastMsgs = null;
     this.lastModel = null;

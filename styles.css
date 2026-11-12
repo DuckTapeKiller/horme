@@ -787,6 +787,99 @@ body.is-mobile .workspace-drawer.horme-keyboard-open .workspace-drawer-tab-optio
   height: 12px;
 }
 
+/* ── Pictures from the Find image skill ── */
+
+.horme-image-gallery {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.horme-image-gallery.is-multiple {
+  /* auto-fit: two or three pictures share the whole row, however wide the panel is. */
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+}
+
+.horme-image-card {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  overflow: hidden;
+  background: var(--background-secondary);
+}
+
+.horme-image-link {
+  display: block;
+  line-height: 0;
+  background: var(--background-modifier-hover);
+}
+
+.horme-image {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 360px;
+  object-fit: contain;
+}
+
+.horme-image-gallery.is-multiple .horme-image {
+  height: auto;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+}
+
+.horme-image-link.is-broken {
+  line-height: var(--line-height-normal);
+  padding: 16px 12px;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+
+.horme-image-caption {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+}
+
+.horme-image-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.horme-image-title {
+  font-size: var(--font-ui-small);
+  color: var(--text-normal);
+  overflow-wrap: anywhere;
+}
+
+.horme-image-credit {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.horme-image-save {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 6px;
+  border-radius: var(--radius-s);
+  border: 1px solid var(--background-modifier-border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.horme-image-save.is-busy {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
 /* ── History Panel ── */
 
 .horme-history-panel {

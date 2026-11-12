@@ -44,7 +44,9 @@ export class HistoryManager {
       const sources = Array.isArray(sourcesUnknown)
         ? sourcesUnknown.filter((x): x is string => typeof x === "string")
         : undefined;
-      messages.push({ role, content, images, audio, reasoning, context, sources });
+      // A reply that was only pictures: drawn as the cards above it, without text.
+      const picturesOnly = getRecordProp(m, "picturesOnly") === true ? true : undefined;
+      messages.push({ role, content, images, audio, reasoning, context, sources, picturesOnly });
     }
 
     return { id, title, timestamp, messages };

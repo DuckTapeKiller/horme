@@ -1,5 +1,5 @@
 import { requestUrl } from "obsidian";
-import { AiProvider } from "./AiProvider";
+import { AiProvider, StreamOptions } from "./AiProvider";
 import { getRecordProp, getStringProp } from "../utils/TypeGuards";
 import { fetchError, requestUrlError } from "../utils/apiError";
 import { normalizeBaseUrl } from "../utils/normalizeBaseUrl";
@@ -69,6 +69,7 @@ export class OllamaProvider implements AiProvider {
     model: string,
     signal?: AbortSignal,
     tools?: NativeTool[],
+    options?: StreamOptions,
   ): Promise<ReadableStreamDefaultReader<Uint8Array>> {
     const body: Record<string, unknown> = {
       model,
@@ -79,6 +80,8 @@ export class OllamaProvider implements AiProvider {
     // Ollama's /api/chat native tools API (tool-trained models emit
     // structured message.tool_calls instead of prompt-taught XML).
     if (tools && tools.length) body.tools = tools;
+    // Writing the reply from a skill result needs no second thinking phase.
+    if (options?.noThinking) body.think = false;
     const res = await window.fetch(`${this.baseUrl}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

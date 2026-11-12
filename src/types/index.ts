@@ -1,3 +1,5 @@
+import type { ImageSourceSetting } from "../utils/imageSources";
+
 export type AiProvider =
   | "llamacpp"
   | "ollama"
@@ -41,6 +43,8 @@ export interface HormeSettings {
   agentMode: boolean;
   /** Maximum tool calls per request in agent mode. */
   agentMaxRounds: number;
+  /** Local models think again on the round after a skill result (slower). */
+  thinkAfterSkills: boolean;
   // Cloud provider secrets (SecretStorage IDs, not raw keys)
   claudeSecretId: string;
   claudeModel: string;
@@ -142,6 +146,24 @@ export interface HormeSettings {
   customModelSuggestions: Record<string, string[]>;
   customSkills: CustomSkillDefinition[];
 
+  // Images (Find image skill and pictures in answers)
+  /** Picture sources in the order they are tried, each switched on or off. */
+  imageSources: ImageSourceSetting[];
+  /** The most pictures one request can show. */
+  imageMaxCount: number;
+  /** "wikipedia": Wikipedia lookups show the article's picture; "always": the model is also asked to illustrate answers. */
+  imagesInAnswers: "off" | "wikipedia" | "always";
+  /** Folder for pictures saved from the chat; empty means Obsidian's attachment location. */
+  imageSaveFolder: string;
+  /** "Show me a photo of …" is answered by Find image directly, without the model. */
+  imageQuickRequests: boolean;
+  /** Keychain names (SecretStorage ids) of the image sources' keys, never the keys themselves. */
+  imageOpenverseIdSecret: string;
+  imageOpenverseSecretSecret: string;
+  imagePexelsSecret: string;
+  imageUnsplashSecret: string;
+  imageBraveSecret: string;
+
   // Concept Notes (Autonomous research + note creation)
   conceptNoteFolder: string;
   conceptNoteTemplate: string;
@@ -171,4 +193,6 @@ export interface ChatMessage {
   context?: string;
   /** Vault note paths surfaced as "Sources" pills for this turn. */
   sources?: string[];
+  /** The reply was only pictures: the cards above it carry title and credit, so no text is drawn. */
+  picturesOnly?: boolean;
 }

@@ -1,5 +1,5 @@
 import { requestUrl } from "obsidian";
-import { AiProvider } from "./AiProvider";
+import { AiProvider, StreamOptions } from "./AiProvider";
 import { requestUrlError } from "../utils/apiError";
 import { asArray, getRecordProp, getStringProp } from "../utils/TypeGuards";
 import { normalizeBaseUrl } from "../utils/normalizeBaseUrl";
@@ -158,6 +158,7 @@ export class LlamaCppProvider implements AiProvider {
     model: string,
     signal?: AbortSignal,
     tools?: NativeTool[],
+    options?: StreamOptions,
   ): Promise<ReadableStreamDefaultReader<Uint8Array>> {
     const resolvedModel = await this.prepareModel(model);
     const body: Record<string, unknown> = {
@@ -168,6 +169,8 @@ export class LlamaCppProvider implements AiProvider {
       stream: true,
     };
     if (tools && tools.length) body.tools = tools;
+    // Writing the reply from a skill result needs no second thinking phase.
+    if (options?.noThinking) body.chat_template_kwargs = { enable_thinking: false };
     // CORS-proof transport chain (llama-server has no CORS allowance for
     // Obsidian's app://obsidian.md origin): Node http → fetch → requestUrl.
     return streamOpenAiCompatible(`${this.baseUrl}/v1/chat/completions`, body, signal);

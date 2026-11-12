@@ -2,6 +2,8 @@ import { requestUrlWithTimeout } from "../utils/requestWithTimeout";
 import { Skill, SkillParameter } from "./types";
 import { asArray, errorToMessage, getRecordProp, getStringProp, isRecord } from "../utils/TypeGuards";
 import { WIKIMEDIA_HEADERS } from "../utils/webResearch";
+import { imageBlock } from "../utils/images";
+import { wikipediaArticlePicture } from "../services/ImageSearch";
 
 export class WikipediaSkill implements Skill {
   id = "wikipedia";
@@ -10,6 +12,9 @@ export class WikipediaSkill implements Skill {
     "Searches Wikipedia for factual information, detailed article sections, and verification of claims. Supports multiple languages.";
   terminal = true;
   primaryParam = "query";
+
+  /** @param withPicture Whether answers show the article's picture (Images settings). */
+  constructor(private withPicture: () => boolean = () => false) {}
 
   parameters: SkillParameter[] = [
     {
@@ -135,6 +140,17 @@ export class WikipediaSkill implements Skill {
       // Cap total output
       if (output.length > 3000) {
         output = output.substring(0, 2950) + "\n\n...[TRUNCATED for efficiency]";
+      }
+
+      // 5. The article's picture, drawn in the chat under the lookup (added after the
+      // cap so it is never cut). The model never reads the hidden block.
+      if (this.withPicture()) {
+        const picture = await wikipediaArticlePicture(pageTitle, lang).catch(() => null);
+        if (picture) {
+          output +=
+            "\n\n<!-- For the assistant: the article's picture is shown to the user. Do not search for another picture of this subject or write image links. -->\n" +
+            imageBlock([picture]);
+        }
       }
 
       return output;

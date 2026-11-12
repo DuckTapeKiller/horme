@@ -1,5 +1,5 @@
 import HormePlugin from "../../main";
-import { AiProvider } from "./AiProvider";
+import { AiProvider, StreamOptions } from "./AiProvider";
 import { OllamaProvider } from "./OllamaProvider";
 import { LmStudioProvider } from "./LmStudioProvider";
 import { LlamaCppProvider } from "./LlamaCppProvider";
@@ -99,6 +99,7 @@ export class AiGateway {
     signal?: AbortSignal,
     suppressVaultSkill = false,
     suppressAllSkills = false,
+    options?: StreamOptions,
   ): Promise<ReadableStreamDefaultReader<Uint8Array>> {
     const provider = this.getProvider();
     const model = modelOverride || this.getCurrentModel();
@@ -149,6 +150,7 @@ export class AiGateway {
         model,
         signal,
         useNative ? tools : undefined,
+        options,
       );
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -161,7 +163,7 @@ export class AiGateway {
           "warning",
         );
         try {
-          return await provider.stream(buildEnhancedMsgs(false), model, signal);
+          return await provider.stream(buildEnhancedMsgs(false), model, signal, undefined, options);
         } catch (fallbackError: unknown) {
           const fallbackMsg = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
           this.plugin.diagnosticService.report(

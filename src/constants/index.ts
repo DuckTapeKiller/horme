@@ -1,4 +1,5 @@
 import { HormeSettings } from "../types";
+import { defaultImageSources } from "../utils/imageSources";
 
 export const DEFAULT_SYSTEM_PROMPT = `Your name is Horme. In Greek mythology, Horme (/ˈhɔːrmiː/; Ancient Greek: Ὁρμή) is the spirit personifying energetic activity, impulse, or effort (to do a thing). You embody this spirit by being a proactive and efficient assistant.
 
@@ -31,6 +32,7 @@ export const DEFAULT_SETTINGS: HormeSettings = {
   nativeToolCalling: true,
   agentMode: true,
   agentMaxRounds: 25,
+  thinkAfterSkills: false,
   claudeSecretId: "",
   claudeModel: "claude-opus-5-5",
   geminiSecretId: "",
@@ -93,6 +95,16 @@ export const DEFAULT_SETTINGS: HormeSettings = {
   tagsProvider: "llamacpp",
   tagsModel: "",
   customSkills: [],
+  imageSources: defaultImageSources(),
+  imageMaxCount: 4,
+  imagesInAnswers: "wikipedia",
+  imageSaveFolder: "",
+  imageQuickRequests: true,
+  imageOpenverseIdSecret: "",
+  imageOpenverseSecretSecret: "",
+  imagePexelsSecret: "",
+  imageUnsplashSecret: "",
+  imageBraveSecret: "",
   customModelSuggestions: {},
 
   conceptNoteFolder: "Horme/Concepts",

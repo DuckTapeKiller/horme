@@ -51,6 +51,7 @@ import {
 } from "./src/constants";
 import { HormeSettings, AiProvider } from "./src/types";
 import { normalizeBaseUrl } from "./src/utils/normalizeBaseUrl";
+import { normalizeImageSources } from "./src/utils/imageSources";
 import { ensureVaultFolder } from "./src/utils/vaultFolder";
 import { isLocalProvider, providerInfo } from "./src/views/settings/providers";
 
@@ -116,6 +117,17 @@ export default class HormePlugin extends Plugin {
     if (p === "openrouter") return (s.openRouterSecretId || "").trim() || null;
     if (p === "mistral") return (s.mistralSecretId || "").trim() || null;
     return null;
+  }
+
+  /** A key kept in Obsidian's keychain, by the name stored in the settings; "" when unset. */
+  getSecretValue(secretId: string): string {
+    const id = (secretId || "").trim();
+    if (!id) return "";
+    try {
+      return this.app.secretStorage.getSecret(id) ?? "";
+    } catch {
+      return "";
+    }
   }
 
   getApiKeyForProvider(p: AiProvider): string {
@@ -1358,6 +1370,7 @@ RULES:
       ["highlightBoost", 0, 10],
       ["searchMetadataCap", 0, 10],
       ["searchContentCap", 0, 10],
+      ["imageMaxCount", 1, 8],
     ];
     for (const [key, min, max] of numbers) {
       const v = s[key];
@@ -1365,6 +1378,14 @@ RULES:
         (s as unknown as Record<string, unknown>)[key] = DEFAULT_SETTINGS[key];
         changed = true;
       }
+    }
+    // A fresh copy, so later edits never touch the defaults; new sources are appended.
+    const sources = normalizeImageSources(s.imageSources);
+    if (JSON.stringify(sources) !== JSON.stringify(s.imageSources)) changed = true;
+    s.imageSources = sources;
+    if (!["off", "wikipedia", "always"].includes(s.imagesInAnswers)) {
+      s.imagesInAnswers = DEFAULT_SETTINGS.imagesInAnswers;
+      changed = true;
     }
     if (!Array.isArray(s.presetsPaths)) {
       s.presetsPaths = [];

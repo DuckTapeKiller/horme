@@ -39,6 +39,8 @@ import {
   tagTranslationTestItem,
 } from "./settings/widgets";
 import { disposeFallback, renderFallback } from "./settings/fallback";
+import { IMAGE_SOURCES, imageSourceInfo } from "../utils/imageSources";
+import { sourceKeys } from "../services/ImageSearch";
 
 type Item = SettingDefinitionItem<SettingKey>;
 type GroupItem = SettingGroupItem<SettingKey>;
@@ -220,7 +222,7 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
         heading: "Your notes",
         items: [this.vaultBrainPage(), this.connectionsPage(), this.tagsPage()],
       },
-      { type: "group", heading: "Tools", items: [this.writingPage(), this.skillsPage()] },
+      { type: "group", heading: "Tools", items: [this.writingPage(), this.skillsPage(), this.imagesPage()] },
       { type: "group", heading: "More", items: [this.mobilePage(), this.diagnosticsPage()] },
       {
         type: "group",
@@ -1098,6 +1100,149 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
 
   /* ── Skills and agent ────────────────────────────────────────────────── */
 
+  /* ── Images ──────────────────────────────────────────────────────────── */
+
+  private moveImageSource(index: number, by: -1 | 1): void {
+    const list = this.s.imageSources;
+    const to = index + by;
+    if (to < 0 || to >= list.length) return;
+    [list[index], list[to]] = [list[to], list[index]];
+    this.saveSoon();
+    this.refresh(true);
+  }
+
+  private imagesPage(): SettingDefinitionPage<SettingKey> {
+    const enabled = (id: string) => this.s.imageSources.some((src) => src.id === id && src.enabled);
+    const missingKey = (id: (typeof IMAGE_SOURCES)[number]["id"]) =>
+      imageSourceInfo(id).keys.length > 0 && sourceKeys(this.plugin, id) === null;
+    const keyed = IMAGE_SOURCES.filter((src) => src.keys.length > 0);
+
+    const sourceRows = this.s.imageSources.map((entry, i): GroupItem => {
+      const info = imageSourceInfo(entry.id);
+      const desc = () =>
+        entry.enabled && missingKey(entry.id) ? `${info.desc} Needs its key, in Keys below.` : info.desc;
+      return {
+        name: info.name,
+        desc: info.desc,
+        render: (setting: Setting) => {
+          setting.setName(info.name).setDesc(desc());
+          setting.addExtraButton((b) => {
+            b.setIcon("arrow-up")
+              .setTooltip("Try earlier")
+              .setDisabled(i === 0);
+            b.onClick(() => this.moveImageSource(i, -1));
+          });
+          setting.addExtraButton((b) => {
+            b.setIcon("arrow-down")
+              .setTooltip("Try later")
+              .setDisabled(i === this.s.imageSources.length - 1);
+            b.onClick(() => this.moveImageSource(i, 1));
+          });
+          setting.addToggle((t) => {
+            t.setValue(entry.enabled);
+            t.onChange((value) => {
+              entry.enabled = value;
+              this.saveSoon();
+              this.refresh(true);
+            });
+          });
+        },
+      };
+    });
+
+    const keyItems = keyed.flatMap((info): GroupItem[] =>
+      info.keys.map((k, ki) => ({
+        name: k.name,
+        desc:
+          ki === 0 && info.signUpUrl
+            ? createFragment((f) => {
+                f.appendText(
+                  `For ${info.name}. Kept in Obsidian's keychain, never in Horme's settings file. `,
+                );
+                f.createEl("a", { text: "Sign up for a key", href: info.signUpUrl });
+              })
+            : `For ${info.name}. Kept in Obsidian's keychain, never in Horme's settings file.`,
+        visible: () => enabled(info.id),
+        control: { type: "secret", key: k.key },
+      })),
+    );
+
+    return {
+      type: "page",
+      name: "Images",
+      desc: "Where pictures come from, and when answers show them.",
+      displayValue: () => {
+        const on = this.s.imageSources.filter((src) => src.enabled).length;
+        return on ? `${on} source${on === 1 ? "" : "s"}` : "Off";
+      },
+      status: () => (this.s.imageSources.some((src) => src.enabled && missingKey(src.id)) ? "warning" : null),
+      items: [
+        {
+          type: "group",
+          heading: "Answers",
+          items: [
+            {
+              name: "Pictures in answers",
+              desc: "With Wikipedia lookups, an answer that looks something up on Wikipedia shows the article's picture. With every lookup, Britannica, web search and deep research also come with a picture of what they looked up, fetched while the lookup runs. Neither adds a model round.",
+              aliases: ["Images", "Photos", "Illustrate answers"],
+              control: {
+                type: "dropdown",
+                key: "imagesInAnswers",
+                options: {
+                  off: "Off",
+                  wikipedia: "With Wikipedia lookups",
+                  always: "With every lookup",
+                },
+              },
+            },
+            {
+              name: "Answer picture requests directly",
+              desc: "“Show me a photo of the Colosseum” or “muéstrame tres fotos de Frida Kahlo” shows the pictures straight away, without the model: a second or two instead of two model rounds. Requests that ask for more go to the model as usual.",
+              aliases: ["Quick pictures", "Fast pictures"],
+              control: { type: "toggle", key: "imageQuickRequests" },
+            },
+            {
+              name: "Most pictures per request",
+              desc: "The most pictures one request shows, however many are asked for.",
+              control: { type: "slider", key: "imageMaxCount", min: 1, max: 8, step: 1 },
+            },
+            {
+              name: "Save pictures to",
+              desc: "The folder for pictures saved from the chat with their download button. Leave empty to use Obsidian's own place for attachments (Files and links).",
+              aliases: ["Image folder", "Save to vault", "Attachments"],
+              control: {
+                type: "folder",
+                key: "imageSaveFolder",
+                placeholder: "Obsidian's attachment folder",
+              },
+            },
+          ],
+        },
+        {
+          type: "group",
+          heading: "Sources",
+          items: [
+            noteItem(
+              "Find image tries the sources that are on, from the top, until it has enough pictures. Your search terms go to these services; your notes never do.",
+            ),
+            ...sourceRows,
+            noteItem(
+              "No source is on, so Find image cannot show pictures.",
+              "warning",
+              () => !this.s.imageSources.some((src) => src.enabled),
+            ),
+          ],
+        },
+        {
+          type: "group",
+          heading: "Keys",
+          visible: () => keyed.some((info) => enabled(info.id)),
+          items: keyItems,
+        },
+      ],
+    };
+  }
+
   private skillsPage(): SettingDefinitionPage<SettingKey> {
     const skills = this.s.customSkills;
     return {
@@ -1129,6 +1274,12 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
               aliases: ["Agent tool budget"],
               visible: () => this.s.agentMode,
               control: { type: "slider", key: "agentMaxRounds", min: 1, max: 50, step: 1 },
+            },
+            {
+              name: "Think again after a skill",
+              desc: "Off: once a skill has answered, a local model (llama.cpp, Ollama) writes the reply without a second thinking phase, which is much faster. On: it thinks again first, as on the first round.",
+              aliases: ["Reasoning after skills", "Thinking"],
+              control: { type: "toggle", key: "thinkAfterSkills" },
             },
           ],
         },
