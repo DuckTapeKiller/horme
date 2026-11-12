@@ -53,6 +53,14 @@ import { HormeSettings, AiProvider } from "./src/types";
 import { normalizeBaseUrl } from "./src/utils/normalizeBaseUrl";
 import { normalizeImageSources } from "./src/utils/imageSources";
 import { ensureVaultFolder } from "./src/utils/vaultFolder";
+import { replaceRetiredModels } from "./src/utils/retiredModels";
+import {
+  applyMobileOverride,
+  removeMobileOverride,
+  settingsForDisk,
+  syncMobileOverride,
+  type MobileOverride,
+} from "./src/utils/mobileOverride";
 import { isLocalProvider, providerInfo } from "./src/views/settings/providers";
 
 interface OllamaTagsModel {
@@ -65,8 +73,6 @@ export default class HormePlugin extends Plugin {
   settings: HormeSettings;
   models: string[] = [];
   lastActiveMarkdownLeaf: WorkspaceLeaf | null = null;
-  mobileModel: string;
-  contextCloudWarningShown: boolean;
 
   docxService: DocxService;
   historyManager: HistoryManager;
@@ -85,11 +91,9 @@ export default class HormePlugin extends Plugin {
   private backgroundStatusText: string | null = null;
   private foregroundStatusText: string | null = null;
   private settingsChangeListeners = new Set<() => void>();
-  private _mobileProviderOverrideActive = false;
-  private _originalProvider: AiProvider | null = null;
-  private _originalModel: string | null = null;
-  /** The provider whose model field the mobile override replaced. */
-  private _overrideProvider: AiProvider | null = null;
+  /** Set on a phone or tablet while "Use a different provider on mobile" is on. */
+  private mobileOverride: MobileOverride | null = null;
+  /** The provider in use at the last save, for the cloud privacy warnings. */
   private _lastPersistedAiProvider: AiProvider | null = null;
 
   onSettingsChange(cb: () => void): () => void {
@@ -276,17 +280,9 @@ export default class HormePlugin extends Plugin {
       `<g transform="scale(4.1666667)" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 11a2 2 0 1 1-4 0 4 4 0 0 1 8 0 6 6 0 0 1-12 0 8 8 0 0 1 16 0 10 10 0 1 1-20 0 11.93 11.93 0 0 1 2.42-7.22 2 2 0 1 1 3.16 2.44"/></g>`,
     );
 
-    // Apply Mobile Overrides on startup
-    if (Platform.isMobile && this.settings.useMobileOverride) {
-      const p = this.settings.mobileProvider;
-      const modelKey = providerInfo(p).modelKey;
-      this._originalProvider = this.settings.aiProvider;
-      this._overrideProvider = p;
-      this._originalModel = this.settings[modelKey];
-      this._mobileProviderOverrideActive = true;
-      this.settings.aiProvider = p;
-      if (this.settings.mobileModel.trim()) this.setStringSetting(modelKey, this.settings.mobileModel.trim());
-    }
+    // On a phone or tablet, switch to the mobile provider and model.
+    this.updateMobileOverride();
+    this._lastPersistedAiProvider = this.settings.aiProvider;
 
     // Initialize Services
     this.diagnosticService = new DiagnosticService(this);
@@ -1336,15 +1332,56 @@ RULES:
     const migrated = this.migrateLegacyApiKeysToSecretStorage(loaded);
     this.settings = Object.assign({}, DEFAULT_SETTINGS, loaded);
     const sanitized = this.sanitizeSettings();
-    if (migrated || sanitized) {
+    // A model its provider has retired can only fail: move it to the replacement.
+    const moved = replaceRetiredModels(this.settings, (p) => providerInfo(p).modelKey);
+    for (const m of moved) {
+      const name = providerInfo(m.provider).name;
+      new Notice(
+        m.gone
+          ? `Horme: ${name} retired ${m.from} on ${m.gone}. Now using ${m.to}, its replacement.`
+          : `Horme: ${name} no longer offers ${m.from}. Now using ${m.to}.`,
+        10000,
+      );
+    }
+    if (migrated || sanitized || moved.length > 0) {
       // Persist the sanitized settings immediately so API keys never remain in data.json.
       await this.saveData(this.settings);
     }
     // Track the provider last saved to disk so we can apply privacy guards on change.
     this._lastPersistedAiProvider = this.settings.aiProvider;
   }
-  private setStringSetting(key: string, value: string): void {
-    (this.settings as unknown as Record<string, string>)[key] = value;
+
+  /**
+   * Obsidian calls this when a sync service rewrites data.json. Without it the
+   * settings in memory went stale, and the next save on this device wrote them
+   * back over what the other device had just chosen.
+   */
+  async onExternalSettingsChange() {
+    this.mobileOverride = null;
+    await this.loadSettings();
+    this.updateMobileOverride();
+    this._lastPersistedAiProvider = this.settings.aiProvider;
+    this.settingsChangeListeners.forEach((cb) => cb());
+    this.skillManager?.loadCustomSkills();
+  }
+
+  /**
+   * Keeps the phone's provider and model in step with the settings: switches the
+   * override on or off when the toggle changes, and stores a provider or model
+   * picked on the phone as the mobile one. Does nothing on a computer.
+   */
+  private updateMobileOverride(): void {
+    const modelKey = (p: AiProvider) => providerInfo(p).modelKey;
+    const s = this.settings;
+    if (this.mobileOverride) {
+      syncMobileOverride(s, this.mobileOverride, modelKey);
+      if (!s.useMobileOverride || !Platform.isMobile) {
+        removeMobileOverride(s, this.mobileOverride, modelKey);
+        this.mobileOverride = null;
+      }
+    } else if (Platform.isMobile && s.useMobileOverride) {
+      this.mobileOverride = applyMobileOverride(s, modelKey);
+    }
   }
 
   /**
@@ -1408,18 +1445,17 @@ RULES:
   }
 
   async saveSettings() {
-    // Privacy guard: privacy warnings are provider-specific.
-    // If the user switches to a different *cloud* provider, force the warning flags back to false
-    // so they must acknowledge again before any note/document content leaves the device.
-    const providerToPersist =
-      this._mobileProviderOverrideActive && this._originalProvider !== null
-        ? this._originalProvider
-        : this.settings.aiProvider;
+    this.updateMobileOverride();
 
+    // Privacy guard: privacy warnings are provider-specific. When the provider in
+    // use changes to a different *cloud* provider, the warning flags go back to
+    // false, so the user must acknowledge again before any note or document
+    // content leaves the device.
+    const provider = this.settings.aiProvider;
     if (
       this._lastPersistedAiProvider &&
-      providerToPersist !== this._lastPersistedAiProvider &&
-      this.isCloudProvider(providerToPersist)
+      provider !== this._lastPersistedAiProvider &&
+      this.isCloudProvider(provider)
     ) {
       this.settings.contextCloudWarningShown = false;
       this.settings.contextNotesCloudWarningShown = false;
@@ -1427,25 +1463,14 @@ RULES:
       this.settings.documentCloudWarningShown = false;
     }
 
-    // If mobile override is active, temporarily restore the original provider and model
-    // before persisting so the override never contaminates saved data. The model
-    // restored is the one the override replaced: the mobile provider's.
-    if (this._mobileProviderOverrideActive && this._originalProvider !== null && this._overrideProvider) {
-      const modelKey = providerInfo(this._overrideProvider).modelKey;
-      const overriddenProvider = this.settings.aiProvider;
-      const overriddenModel = this.settings[modelKey];
-      this.settings.aiProvider = this._originalProvider;
-      this.setStringSetting(modelKey, this._originalModel ?? "");
-      try {
-        await this.saveData(this.settings);
-      } finally {
-        this.settings.aiProvider = overriddenProvider;
-        this.setStringSetting(modelKey, overriddenModel);
-      }
-    } else {
-      await this.saveData(this.settings);
-    }
-    this._lastPersistedAiProvider = providerToPersist;
+    // With the mobile override on, the file keeps the desktop's provider and model,
+    // so the phone's never reach a computer. A copy is saved: the settings in
+    // memory stay the phone's while the write is in progress.
+    const o = this.mobileOverride;
+    await this.saveData(
+      o ? settingsForDisk(this.settings, o, (p) => providerInfo(p).modelKey) : this.settings,
+    );
+    this._lastPersistedAiProvider = provider;
     this.settingsChangeListeners.forEach((cb) => cb());
     this.skillManager?.loadCustomSkills();
   }

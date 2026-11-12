@@ -12,6 +12,7 @@ import { FetchAndSummariseSkill } from "../skills/FetchAndSummariseSkill";
 import { DeepResearchSkill } from "../skills/DeepResearchSkill";
 import { BritannicaSkill } from "../skills/BritannicaSkill";
 import { FindImageSkill } from "../skills/FindImageSkill";
+import { VaultQuerySkill } from "../skills/VaultQuerySkill";
 
 export class SkillManager {
   private plugin: HormePlugin;
@@ -30,6 +31,7 @@ export class SkillManager {
     this.registerSkill(new DateCalculatorSkill());
     this.registerSkill(new CreateConceptNoteSkill(this.plugin.app, this.plugin));
     this.registerSkill(new VaultLinkSkill(this.plugin));
+    this.registerSkill(new VaultQuerySkill(this.plugin));
     this.registerSkill(new GrammarScholarSkill(this.plugin));
     this.registerSkill(new FetchAndSummariseSkill(this.plugin));
     this.registerSkill(new DeepResearchSkill(this.plugin));
@@ -54,6 +56,14 @@ export class SkillManager {
     if (targetSkillId && skill.id !== targetSkillId) return false;
     // Suppress vault_links when RAG context has already been injected OR vault is privacy-locked
     if ((suppressVaultSkill || this.isVaultSkillLocked()) && skill.id === "vault_links") return false;
+    // vault_query needs no vault index, but sends note names and text to the
+    // model: a cloud model gets it only with the same consent as Vault Brain.
+    if (
+      skill.id === "vault_query" &&
+      !this.plugin.isLocalProviderActive() &&
+      !this.plugin.settings.allowCloudRAG
+    )
+      return false;
     return true;
   }
 

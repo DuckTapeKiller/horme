@@ -154,6 +154,11 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
       s.tagsModel = "";
       changedOthers = true;
     }
+    // A model belongs to its provider: Gemini's model sent to Mistral fails.
+    if (key === "mobileProvider" && value !== before && s.mobileModel) {
+      s.mobileModel = "";
+      changedOthers = true;
+    }
 
     this.saveSoon();
     this.refresh(typeof value === "boolean" || STRUCTURAL_KEYS.has(key) || changedOthers, changedOthers);
@@ -1352,7 +1357,7 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
           items: [
             {
               name: "Use a different provider on mobile",
-              desc: "Phones and tablets use the provider and model below. Desktop settings stay as they are, so a model picked on the phone is not kept. Takes effect when Obsidian next starts on the device.",
+              desc: "Phones and tablets use the provider and model below, and keep any provider or model you pick on the phone, here or in the chat. Desktop settings stay as they are.",
               aliases: ["Enable mobile override", "Platform overrides"],
               control: { type: "toggle", key: "useMobileOverride" },
             },
@@ -1363,7 +1368,7 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
             },
             modelField(this, {
               name: "Mobile model",
-              desc: "Pick a model or type its name.",
+              desc: "Pick a model or type its name. Leave empty to use the provider's model from the Models page.",
               key: "mobileModel",
               listId: "horme-mobile-models",
               provider: () => this.s.mobileProvider,
