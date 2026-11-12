@@ -211,6 +211,7 @@ export class HormeChatView extends ItemView {
     ddg_search: "binoculars",
     wiktionary: "book-a",
     vault_links: "cable",
+    vault_query: "folder-search",
     grammar_scholar: "signature",
     date_calc: "calendar",
     find_image: "image",
@@ -1490,7 +1491,10 @@ export class HormeChatView extends ItemView {
               `CONTEXT PRIORITY: Base your answer on the vault context above. ` +
               `If the context contains specific facts (dates, names, events), treat them as ground truth ` +
               `and do not substitute your training data for them.\n` +
-              `Do NOT call vault_links or any other vault search skill — the search has already been done.\n\n` +
+              `Do NOT call vault_links: the search has already been done.\n` +
+              `QUESTIONS ABOUT THE VAULT ITSELF — how many notes, which notes, notes in a folder, with a tag or a property, ` +
+              `or from a period, or reading a whole note — cannot be answered from these passages: call vault_query for them, ` +
+              `and do not begin that answer with "${VAULT_NOTHING}"\n\n` +
               this.rollingRAGContext.join("\n\n---\n\n"),
           );
         }
@@ -1879,6 +1883,13 @@ export class HormeChatView extends ItemView {
           const share = groundedShare(fullContent, this.turnPassages);
           if (share === null || share < 0.8) this.turnVaultNothing = true;
         }
+        // A count or list from vault_query is the vault answering: no notice, even
+        // when the passages sent with the message held nothing on it (they cannot
+        // hold a count) and the model wrote the line before calling the skill.
+        if (this.vaultQueryThisTurn()) {
+          this.turnVaultNothing = false;
+          fullContent = normaliseVaultNotice(fullContent).replace(/^Nothing in your vault on this\.\s*/, "");
+        }
         fullContent = this.withVaultNotice(normaliseVaultNotice(fullContent));
       }
 
@@ -2069,7 +2080,16 @@ export class HormeChatView extends ItemView {
           // The first round's system message carries the context the user chose
           // (current note, picked notes, folders, Vault Brain passages, document);
           // rebuilding it from the bare prompt dropped all of that after a skill call.
-          const turnSystem = msgs[0]?.role === "system" ? msgs[0].content : undefined;
+          let turnSystem = msgs[0]?.role === "system" ? msgs[0].content : undefined;
+          // Once vault_query has answered from the whole vault, the passages are
+          // noise: they cannot hold a count, and in a vault with notes in another
+          // language they pulled a small model into that language. They also make
+          // the round slower.
+          if (turnSystem && this.turnPassages && this.vaultQueryThisTurn())
+            turnSystem = turnSystem.replace(
+              this.turnPassages,
+              "(The passages are left out here: vault_query has answered from the whole vault.)",
+            );
           const effectivePrompt =
             turnSystem ?? this.sessionSystemPromptOverride ?? (await this.plugin.getEffectiveSystemPrompt());
           if (effectivePrompt) nextMsgs.push({ role: "system", content: effectivePrompt });
@@ -2090,11 +2110,15 @@ export class HormeChatView extends ItemView {
 
           if (toolResults.length > 0) {
             const consolidated = toolResults.map((r) => withoutImageData(r.content)).join("\n\n---\n\n");
+            // These results arrive as a message of their own, so "the user's last
+            // message" no longer named the question. (Quoting the question instead
+            // made a small model repeat it as its answer.)
             nextMsgs.push({
               role: "user",
               content:
                 consolidated +
-                "\n\n[SKILL RESULTS ABOVE] If the user's request is fully answered, write your final answer now. " +
+                "\n\n[SKILL RESULTS ABOVE] If the user's request is fully answered, write your final answer now, " +
+                "in the same language as the user's question, whatever the language of the results or the notes. " +
                 "If you still need more information, call the next skill immediately — do not narrate or explain, just call it.",
             });
           }
@@ -2843,7 +2867,8 @@ export class HormeChatView extends ItemView {
 
   /** "Nothing in your vault on this." first, when this message's vault search found nothing. */
   private withVaultNotice(text: string): string {
-    if (!this.turnVaultNothing || !text || text.startsWith(VAULT_NOTHING)) return text;
+    if (!this.turnVaultNothing || !text || text.startsWith(VAULT_NOTHING) || this.vaultQueryThisTurn())
+      return text;
     return `${VAULT_NOTHING}\n\n${text}`;
   }
 
@@ -2858,9 +2883,23 @@ export class HormeChatView extends ItemView {
     return notesUsed(answer, byNote, sent);
   }
 
+  /** Whether vault_query answered since the user's last message: the vault did answer, whatever the passages held. */
+  private vaultQueryThisTurn(): boolean {
+    for (let i = this.history.length - 1; i >= 0; i--) {
+      const m = this.history[i];
+      if (m.role === "user") break;
+      if (
+        (m.role === "tool_result" || m.role === "system") &&
+        m.content.startsWith("[SKILL RESULT: vault_query]")
+      )
+        return true;
+    }
+    return false;
+  }
+
   /** Whether a skill that looks outside the vault (web, encyclopaedias…) ran since the user's last message. */
   private outsideSkillThisTurn(): boolean {
-    const local = new Set(["vault_links", "grammar_scholar", "date_calc"]);
+    const local = new Set(["vault_links", "vault_query", "grammar_scholar", "date_calc"]);
     for (let i = this.history.length - 1; i >= 0; i--) {
       const m = this.history[i];
       if (m.role === "user") break;
