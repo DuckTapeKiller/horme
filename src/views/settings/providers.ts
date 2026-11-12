@@ -130,26 +130,17 @@ export function embeddingProvider(s: HormeSettings): LocalProviderId {
   return isLocalProvider(s.aiProvider) ? s.aiProvider : "ollama";
 }
 
-/** Suggestions for cloud providers when the live list cannot be fetched. */
-const CLOUD_FALLBACK_MODELS: Record<CloudProviderId, string[]> = {
-  claude: [
-    "claude-opus-5-5",
-    "claude-sonnet-5-5",
-    "claude-haiku-5-5",
-    "claude-fable-5-1",
-    "claude-haiku-4-5",
-  ],
-  gemini: ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.5-flash-lite"],
-  openai: ["gpt-4o-mini", "gpt-4o", "gpt-4.1", "gpt-4.1-mini"],
-  groq: ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"],
-  openrouter: ["openai/gpt-4o-mini", "google/gemini-2.5-flash", "anthropic/claude-sonnet-4.5"],
-  mistral: ["mistral-large-latest", "mistral-medium-latest", "mistral-small-latest", "codestral-latest"],
-};
-
 export type ModelPurpose = "chat" | "embedding" | "any";
 
+/**
+ * Models in a provider's own list that cannot chat: embeddings, speech, images,
+ * moderation and safety classifiers, OCR, and OpenAI's old completion models.
+ */
+const NOT_CHAT =
+  /embed|whisper|tts|dall-e|image|moderation|transcri|realtime|audio|sora|ocr|babbage|davinci|guard|orpheus/i;
+
 function filterByPurpose(ids: string[], purpose: ModelPurpose): string[] {
-  if (purpose === "chat") return ids.filter((m) => !/embed/i.test(m));
+  if (purpose === "chat") return ids.filter((m) => !NOT_CHAT.test(m));
   if (purpose === "embedding") return ids.filter((m) => /embed|bge|minilm|e5-|gte-/i.test(m));
   return ids;
 }
@@ -261,7 +252,7 @@ export async function listModels(
         note: `Could not reach ${name} at ${serverLabel(s, id, purpose)}. You can still type a model name.`,
       };
     }
-    const fallback = CLOUD_FALLBACK_MODELS[id] ?? PROVIDER_MODELS[id] ?? [];
+    const fallback = PROVIDER_MODELS[id] ?? [];
     const why =
       e instanceof Error && e.message === "no API key" ? "Add an API key to list" : "Could not list";
     return {

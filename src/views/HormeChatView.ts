@@ -106,6 +106,8 @@ export class HormeChatView extends ItemView {
   private documentClickHandler: (() => void) | null = null;
   private sessionSystemPromptOverride: string | null = null;
   private availableModels: string[] = [];
+  /** The provider the model menu was last filled for. */
+  private modelsProvider: string | null = null;
   private availablePresets: Array<{ name: string; prompt: string }> = [];
 
   private activeReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
@@ -596,6 +598,10 @@ export class HormeChatView extends ItemView {
       this.unregisterSettingsListener = this.plugin.onSettingsChange(() => {
         void (async () => {
           if (this.presetButton) await this.refreshPresets();
+          // A model or provider changed in the settings (or by sync) showed here
+          // only after the chat was reopened.
+          if (this.plugin.settings.aiProvider !== this.modelsProvider) await this.refreshModels();
+          else this.showModelLabel();
           await this.updateVaultBrainToggle();
         })();
       });
@@ -929,27 +935,39 @@ export class HormeChatView extends ItemView {
   }
 
   private async refreshModels() {
+    const provider = this.plugin.settings.aiProvider;
+    this.modelsProvider = provider;
     await this.plugin.fetchModels();
-    const savedModel = this.getCurrentProviderModel().trim();
-    const fetchedModels = (this.plugin.models || []).map((m) => m.trim()).filter(Boolean);
-    const models = Array.from(new Set([...(savedModel ? [savedModel] : []), ...fetchedModels]));
+    // Models typed by hand on the Models page are offered here too.
+    const typed = this.plugin.settings.customModelSuggestions?.[`horme-${provider}-models`] ?? [];
+    this.availableModels = Array.from(
+      new Set([...(this.plugin.models || []), ...typed].map((m) => m.trim()).filter(Boolean)),
+    );
+    this.showModelLabel();
+    await this.updateConnectionStatus();
+    await this.updateVaultBrainToggle();
+  }
 
-    this.availableModels = models;
-    if (models.length === 0) {
+  /** Shows the saved model on the model button. */
+  private showModelLabel() {
+    const savedModel = this.getCurrentProviderModel().trim();
+    // The saved model is offered even when the list no longer has it.
+    if (savedModel && !this.availableModels.includes(savedModel)) this.availableModels.unshift(savedModel);
+
+    if (this.availableModels.length === 0) {
       this.modelButton.textContent = "No models found";
       this.modelButton.title = "No models found";
       this.modelButton.disabled = true;
-      await this.updateConnectionStatus();
       return;
     }
 
-    const label = savedModel || (this.plugin.settings.aiProvider === "llamacpp" ? "Automatic" : models[0]);
+    // With no model saved, showing the first in the list looked like a choice,
+    // but sending then refused: "No model chosen".
+    const label =
+      savedModel || (this.plugin.settings.aiProvider === "llamacpp" ? "Automatic" : "Choose a model");
     this.modelButton.textContent = `${label} ▾`;
     this.modelButton.title = label;
     this.modelButton.disabled = false;
-
-    await this.updateConnectionStatus();
-    await this.updateVaultBrainToggle();
   }
 
   private async refreshPresets() {

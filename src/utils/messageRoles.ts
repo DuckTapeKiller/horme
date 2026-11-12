@@ -53,7 +53,12 @@ export function claudeAcceptsTemperature(model: string): boolean {
   return true;
 }
 
-/** OpenAI reasoning models take max_completion_tokens and only the default temperature. */
+/**
+ * OpenAI reasoning models take max_completion_tokens and only the default
+ * temperature. GPT-6 (gpt-6-astra, gpt-6.1-sol…) is one too: Chat Completions
+ * defaults its reasoning effort to "medium", and with any effort but "none" a
+ * temperature is refused.
+ */
 export function isOpenAiReasoningModel(model: string): boolean {
-  return /^(o\d|gpt-5)/i.test(model.trim());
+  return /^(o\d|gpt-(?:[5-9]|\d{2,})(?:[.-]|$))/i.test(model.trim());
 }

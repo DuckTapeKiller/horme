@@ -36,15 +36,15 @@ export const DEFAULT_SETTINGS: HormeSettings = {
   claudeSecretId: "",
   claudeModel: "claude-opus-5-5",
   geminiSecretId: "",
-  geminiModel: "gemini-2.5-flash",
+  geminiModel: "gemini-3.6-flash",
   openaiSecretId: "",
-  openaiModel: "gpt-4o-mini",
+  openaiModel: "gpt-6-luna",
   groqSecretId: "",
-  groqModel: "llama-3.3-70b-versatile",
+  groqModel: "openai/gpt-oss-120b",
   openRouterSecretId: "",
-  openRouterModel: "mistralai/mistral-7b-instruct:free",
+  openRouterModel: "google/gemma-4-31b-it:free",
   mistralSecretId: "",
-  mistralModel: "mistral-large-latest",
+  mistralModel: "open-mistral-nemo",
   systemPromptPath: "",
   presetsPaths: [],
   temperature: 0.3,
@@ -56,7 +56,7 @@ export const DEFAULT_SETTINGS: HormeSettings = {
   maxSuggestedTags: 12,
   useMobileOverride: false,
   mobileProvider: "gemini",
-  mobileModel: "gemini-2.5-flash",
+  mobileModel: "gemini-3.6-flash",
   vaultBrainEnabled: false,
   vaultBrainUseRrfHybridSearch: true,
   vaultBrainRrfK: 60,
@@ -118,23 +118,48 @@ export const DEFAULT_SETTINGS: HormeSettings = {
   tagCacheSanitised: false,
 };
 
+/**
+ * The cloud models offered in the chat's model menu, and on the Models page when
+ * the provider's own list cannot be fetched. Strongest first. Checked against
+ * each provider's model and deprecation pages on 12 November 2026; models that
+ * were deprecated by then (gpt-4o-mini, mistral-large-latest, gemini-2.5-flash)
+ * are left out even where they still answer. Any other model ID can be typed
+ * on the Models page.
+ *
+ * Mistral NeMo is the exception: Mistral's pages list it as retired on 31 July
+ * 2026, but it still answered on 12 November 2026, so it stays, first in the
+ * list and the default Mistral model.
+ */
 export const PROVIDER_MODELS: Record<string, string[]> = {
-  gemini: ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.5-flash-lite"],
-  claude: [
-    "claude-opus-5-5",
-    "claude-sonnet-5-5",
-    "claude-haiku-5-5",
-    "claude-fable-5-1",
-    "claude-haiku-4-5",
+  claude: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-2"],
+  gemini: [
+    "gemini-4-carbon",
+    "gemini-4-argon",
+    "gemini-3.8-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash-lite",
   ],
-  openai: ["gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo"],
-  groq: ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"],
-  openrouter: ["mistralai/mistral-7b-instruct:free", "google/gemma-7b-it:free", "openchat/openchat-7b:free"],
+  openai: ["gpt-6-astra", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-luna"],
+  // Groq's Llama models were shut down for free and developer keys on 16 August 2026.
+  groq: ["openai/gpt-oss-120b", "openai/gpt-oss-20b"],
+  openrouter: [
+    "anthropic/claude-sonnet-5.5",
+    "openai/gpt-6.1-sol",
+    "google/gemini-3.8-flash",
+    "mistralai/mistral-large-4-0",
+    "deepseek/deepseek-v4.1-flash",
+    "qwen/qwen3.8-flash",
+    "meta-llama/llama-3.3-70b-instruct",
+    "google/gemma-4-31b-it:free",
+    "nvidia/nemotron-3.5-super-vl:free",
+  ],
   mistral: [
-    "mistral-large-latest",
-    "mistral-small-latest",
-    "pixtral-large-latest",
     "open-mistral-nemo",
+    "mistral-large-4",
+    "mistral-small-latest",
+    "ministral-14b-latest",
+    "ministral-8b-latest",
+    "ministral-3b-latest",
     "codestral-latest",
   ],
 };

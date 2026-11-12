@@ -49,5 +49,11 @@ void test("temperature only for Claude models that take it", () => {
 void test("OpenAI reasoning models are recognised", () => {
   assert.equal(isOpenAiReasoningModel("o3-mini"), true);
   assert.equal(isOpenAiReasoningModel("gpt-5"), true);
+  assert.equal(isOpenAiReasoningModel("gpt-5.6-terra"), true);
+  assert.equal(isOpenAiReasoningModel("gpt-6-astra"), true);
+  assert.equal(isOpenAiReasoningModel("gpt-6.1-sol"), true);
+  assert.equal(isOpenAiReasoningModel("gpt-10"), true);
   assert.equal(isOpenAiReasoningModel("gpt-4o-mini"), false);
+  assert.equal(isOpenAiReasoningModel("gpt-4.1"), false);
+  assert.equal(isOpenAiReasoningModel("gpt-3.5-turbo"), false);
 });
