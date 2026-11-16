@@ -57,6 +57,7 @@ export const DEFAULT_SETTINGS: HormeSettings = {
   useMobileOverride: false,
   mobileProvider: "gemini",
   mobileModel: "gemini-3.6-flash",
+  mobileChangedAt: 0,
   vaultBrainEnabled: false,
   vaultBrainUseRrfHybridSearch: true,
   vaultBrainRrfK: 60,

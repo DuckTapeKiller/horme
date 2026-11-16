@@ -294,7 +294,7 @@ Model fields offer the models your provider reports and accept any name you type
 
 - **Obsidian 1.11.4 or later.** The settings are drawn as Obsidian's own pages from version 1.13; earlier versions show the same settings as sections you open and close.
 - **A provider.** llama.cpp is recommended; see the quick start above.
-- **Desktop and mobile.** On a phone or tablet, use a cloud provider or a server on your network: a phone cannot reach `127.0.0.1` on your computer. **Settings → Horme → On mobile** sets a separate provider for mobile devices.
+- **Desktop and mobile.** On a phone or tablet, use a cloud provider or a server on your network: a phone cannot reach `127.0.0.1` on your computer. **Settings → Horme → On mobile** sets a separate provider for mobile devices. A provider or model you pick on a phone is kept on that phone, whatever the other devices save, until you change the mobile provider or model on a computer.
 
 ---
 

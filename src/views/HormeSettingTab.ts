@@ -1,5 +1,6 @@
 import {
   App,
+  Platform,
   PluginSettingTab,
   Setting,
   requireApiVersion,
@@ -158,6 +159,11 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
     if (key === "mobileProvider" && value !== before && s.mobileModel) {
       s.mobileModel = "";
       changedOthers = true;
+    }
+    // Changed on a computer, it is meant for every phone and replaces what a
+    // phone picked before. Changed on a phone, it is that phone's own choice.
+    if ((key === "mobileProvider" || key === "mobileModel") && value !== before && !Platform.isMobile) {
+      s.mobileChangedAt = Date.now();
     }
 
     this.saveSoon();
@@ -1357,7 +1363,7 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
           items: [
             {
               name: "Use a different provider on mobile",
-              desc: "Phones and tablets use the provider and model below, and keep any provider or model you pick on the phone, here or in the chat. Desktop settings stay as they are.",
+              desc: "Phones and tablets start from the provider and model below. A provider or model picked on a phone, here or in the chat, is kept on that phone until you change the ones below on a computer. Desktop settings stay as they are.",
               aliases: ["Enable mobile override", "Platform overrides"],
               control: { type: "toggle", key: "useMobileOverride" },
             },

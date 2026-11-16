@@ -53,15 +53,20 @@ import { HormeSettings, AiProvider } from "./src/types";
 import { normalizeBaseUrl } from "./src/utils/normalizeBaseUrl";
 import { normalizeImageSources } from "./src/utils/imageSources";
 import { ensureVaultFolder } from "./src/utils/vaultFolder";
-import { replaceRetiredModels } from "./src/utils/retiredModels";
+import { RETIRED_MODELS, replaceRetiredModels } from "./src/utils/retiredModels";
 import {
   applyMobileOverride,
+  parsePhoneChoice,
   removeMobileOverride,
   settingsForDisk,
   syncMobileOverride,
   type MobileOverride,
+  type PhoneChoice,
 } from "./src/utils/mobileOverride";
 import { isLocalProvider, providerInfo } from "./src/views/settings/providers";
+
+/** Where a phone keeps the provider and model it chose for itself (device storage). */
+const PHONE_CHOICE_KEY = "horme-phone-choice";
 
 interface OllamaTagsModel {
   name: string;
@@ -93,6 +98,8 @@ export default class HormePlugin extends Plugin {
   private settingsChangeListeners = new Set<() => void>();
   /** Set on a phone or tablet while "Use a different provider on mobile" is on. */
   private mobileOverride: MobileOverride | null = null;
+  /** The phone's own choice as last written to this device's storage, as JSON. */
+  private storedPhoneChoice: string | null = null;
   /** The provider in use at the last save, for the cloud privacy warnings. */
   private _lastPersistedAiProvider: AiProvider | null = null;
 
@@ -1380,8 +1387,31 @@ RULES:
         this.mobileOverride = null;
       }
     } else if (Platform.isMobile && s.useMobileOverride) {
-      this.mobileOverride = applyMobileOverride(s, modelKey);
+      this.mobileOverride = applyMobileOverride(s, modelKey, this.loadPhoneChoice());
     }
+    if (this.mobileOverride) this.storePhoneChoice(this.mobileOverride.choice);
+  }
+
+  /**
+   * The provider and model this phone chose for itself. They are kept in the
+   * device's own storage, not in data.json: sync shares that file, and another
+   * device saving its copy put the phone back on the model it had before.
+   */
+  private loadPhoneChoice(): PhoneChoice | null {
+    const stored: unknown = this.app.loadLocalStorage(PHONE_CHOICE_KEY);
+    const choice = parsePhoneChoice(stored);
+    this.storedPhoneChoice = JSON.stringify(choice);
+    if (!choice) return null;
+    // A model its provider has retired since can only fail.
+    const retired = RETIRED_MODELS[choice.provider]?.[choice.model];
+    return retired ? { ...choice, model: retired.to } : choice;
+  }
+
+  private storePhoneChoice(choice: PhoneChoice | null): void {
+    const json = JSON.stringify(choice);
+    if (json === this.storedPhoneChoice) return;
+    this.storedPhoneChoice = json;
+    this.app.saveLocalStorage(PHONE_CHOICE_KEY, choice);
   }
 
   /**

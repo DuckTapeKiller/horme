@@ -71,6 +71,11 @@ export interface HormeSettings {
   useMobileOverride: boolean;
   mobileProvider: AiProvider;
   mobileModel: string;
+  /**
+   * When the mobile provider or model was last changed on a computer (milliseconds
+   * since 1970, 0 if never). A model picked on a phone before that gives way to it.
+   */
+  mobileChangedAt: number;
   contextCloudWarningShown: boolean;
   contextNotesCloudWarningShown: boolean;
   /** Consent to send folder context ("+ Add folders") to a cloud provider. */
