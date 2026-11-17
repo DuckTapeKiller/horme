@@ -20,6 +20,7 @@ export const DEFAULT_SETTINGS: HormeSettings = {
   aiProvider: "llamacpp",
   ollamaBaseUrl: "http://127.0.0.1:11434",
   ollamaSecretId: "",
+  ollamaContextLength: 16384,
   // Auto-detected on first successful /api/tags fetch. Avoid hard-coding
   // a model name users may not have installed (e.g., "llama3").
   defaultModel: "",

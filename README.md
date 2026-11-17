@@ -245,7 +245,7 @@ When you choose a cloud provider:
 | Provider       | Where it runs | Notes                                                                    |
 | -------------- | ------------- | ------------------------------------------------------------------------ |
 | **llama.cpp**  | Your computer | Recommended, and selected on a new install. Leave the model empty to use the one the server has loaded. |
-| **Ollama**     | Your computer | Picks an installed chat model if none is set.                            |
+| **Ollama**     | Your computer | Picks an installed chat model if none is set. Asks Ollama for a 16,384-token context window (**Context window** on its page in Models; 0 leaves it to Ollama). |
 | **LM Studio**  | Your computer | Uses LM Studio's local server.                                           |
 | **Claude**     | Cloud         | Needs an API key from Anthropic.                                         |
 | **Gemini**     | Cloud         | Needs an API key from Google.                                            |
@@ -310,6 +310,8 @@ Model fields offer the models your provider reports and accept any name you type
 | What you see                                    | What to do                                                                                                                                      |
 | ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | The **Connection** dot is red                   | Check that `llama-server` is running and that the address in **Models** matches its port. If the server was started with `--api-key`, add the key there. |
+| "Ollama cut this request", or Ollama's answers ignore your notes | Ollama cuts a request bigger than the model's context window without saying so, dropping Horme's instructions and note passages, and left to itself it gives models 4,096 tokens on many computers (depending on graphics memory). Horme asks for 16,384 by default and warns when a request was cut: raise **Context window** on Ollama's page in Models. |
+| "This request … is bigger than the context window" | The model's context window is too small for the chat with Vault Brain and skills. Raise it where the message says, or turn off Vault Brain or skills for that chat. |
 | Vault Brain finds nothing                       | Check that the embedding server is running, then press **Rebuild** in **Vault Brain**.                                                          |
 | "Built with another embedding set-up"           | The embedding model or server changed. Switch back, or press **Rebuild** to index your notes with the new one.                                  |
 | Tags are not translated                         | Set a translation model in **Tags**, or use llama.cpp, which needs none.                                                                        |

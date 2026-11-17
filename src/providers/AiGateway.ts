@@ -2,11 +2,24 @@ import HormePlugin from "../../main";
 import { AiProvider, StreamOptions } from "./AiProvider";
 import { createProvider } from "./createProvider";
 import { AiProvider as AiProviderId } from "../types";
+import { explainContextOverflow } from "../utils/contextOverflow";
+import { providerInfo } from "../views/settings/providers";
 export class AiGateway {
   private plugin: HormePlugin;
 
   constructor(plugin: HormePlugin) {
     this.plugin = plugin;
+  }
+
+  /**
+   * The error to show for a failed request: a context-window refusal becomes
+   * what to do about it, anything else is passed on as it was.
+   */
+  private explain(e: unknown, provider: AiProviderId = this.plugin.settings.aiProvider): Error {
+    const msg = e instanceof Error ? e.message : String(e);
+    const better = explainContextOverflow(msg, provider, providerInfo(provider).name);
+    if (better) return new Error(better);
+    return e instanceof Error ? e : new Error(msg);
   }
 
   public getProvider(): AiProvider {
@@ -50,7 +63,7 @@ export class AiGateway {
           `${this.plugin.settings.aiProvider}`,
           `Generation failed: ${msg}`,
         );
-        throw e instanceof Error ? e : new Error(msg);
+        throw this.explain(e);
       }
     }
 
@@ -59,7 +72,7 @@ export class AiGateway {
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       this.plugin.diagnosticService.report(`${this.plugin.settings.aiProvider}`, `Generation failed: ${msg}`);
-      throw e instanceof Error ? e : new Error(msg);
+      throw this.explain(e);
     }
   }
 
@@ -140,11 +153,11 @@ export class AiGateway {
             `${this.plugin.settings.aiProvider}`,
             `Streaming failed: ${fallbackMsg}`,
           );
-          throw fallbackError instanceof Error ? fallbackError : new Error(fallbackMsg);
+          throw this.explain(fallbackError);
         }
       }
       this.plugin.diagnosticService.report(`${this.plugin.settings.aiProvider}`, `Streaming failed: ${msg}`);
-      throw e instanceof Error ? e : new Error(msg);
+      throw this.explain(e);
     }
   }
 
@@ -180,7 +193,7 @@ export class AiGateway {
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       this.plugin.diagnosticService.report("Tags", `Tag generation failed (model: ${model}): ${msg}`);
-      throw e instanceof Error ? e : new Error(msg);
+      throw this.explain(e, providerName as AiProviderId);
     }
   }
 }

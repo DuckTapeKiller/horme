@@ -28,6 +28,12 @@ export interface HormeSettings {
   ollamaBaseUrl: string;
   /** Keychain name of the key for a server in front of Ollama ("" when it needs none). */
   ollamaSecretId: string;
+  /**
+   * Tokens Ollama gives the model per request (num_ctx), capped at what the
+   * model can take; 0 leaves it to Ollama (4,096 on many computers, which
+   * cuts Horme's requests).
+   */
+  ollamaContextLength: number;
   defaultModel: string;
   lmStudioUrl: string;
   /** Keychain name of LM Studio's API token ("" when it needs none). */

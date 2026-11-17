@@ -16,6 +16,8 @@ export interface ProviderSource {
   settings: HormeSettings;
   /** The provider's API key from Obsidian's keychain; "" when it has none. */
   getApiKeyForProvider(p: AiProviderId): string;
+  /** Shows and logs something the user should know about a reply (a request the server cut). */
+  providerWarning?(source: string, message: string): void;
 }
 
 /**
@@ -55,6 +57,8 @@ export function createProvider(
         s.temperature,
         maxTokens,
         src.getApiKeyForProvider("ollama"),
+        (message) => src.providerWarning?.("Ollama", message),
+        s.ollamaContextLength,
       );
   }
 }

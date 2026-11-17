@@ -178,6 +178,20 @@ export default class HormePlugin extends Plugin {
     console.debug(...args);
   }
 
+  private lastProviderWarning = 0;
+
+  /**
+   * Something the user should know about a reply that still arrived (Ollama
+   * cut the request to fit its context window). Always logged; shown at most
+   * once a minute, so a long chat is not covered in notices.
+   */
+  providerWarning(source: string, message: string): void {
+    this.diagnosticService.report(source, message, "warning");
+    if (Date.now() - this.lastProviderWarning < 60_000) return;
+    this.lastProviderWarning = Date.now();
+    new Notice(`Horme: ${message}`, 15000);
+  }
+
   debugWarn(...args: unknown[]) {
     if (!this.settings?.debugLoggingEnabled) return;
     console.warn(...args);
@@ -1055,7 +1069,11 @@ RULES:
 
       if (provider === "ollama") {
         const tagsModels = await this.fetchOllamaTagsModels();
-        fetchedModels = tagsModels.map((m) => m.name).filter(Boolean);
+        // Embedding models cannot chat; keep them out of the chat's model menu.
+        fetchedModels = tagsModels
+          .filter((m) => !this.isLikelyOllamaEmbeddingModel(m))
+          .map((m) => m.name)
+          .filter(Boolean);
         await this.maybeAutodetectOllamaDefaultModel(tagsModels, fetchedModels);
       } else if (provider === "lmstudio") {
         const res = await requestUrl({

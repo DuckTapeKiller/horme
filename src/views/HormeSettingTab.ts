@@ -361,6 +361,23 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
         control: { type: "secret", key: p.secretKey },
       });
     }
+    if (p.id === "ollama") {
+      items.push({
+        name: "Context window",
+        desc: "Tokens Ollama gives the model for each request: your question, Horme's instructions, note passages and the reply. Horme with Vault Brain needs about 16,384; more uses more memory, and Ollama reloads the model when this changes. Capped at what the model can take. 0 leaves it to Ollama, which gives 4,096 on many computers and then cuts Horme's requests.",
+        aliases: ["num_ctx", "Context length", "Ollama context"],
+        control: {
+          type: "number",
+          key: "ollamaContextLength",
+          min: 0,
+          step: 1024,
+          validate: (v: number) =>
+            Number.isInteger(v) && (v === 0 || v >= 2048)
+              ? undefined
+              : "Use 0, or a whole number of 2,048 or more.",
+        },
+      });
+    }
     items.push(
       modelField(this, {
         name: "Model",
