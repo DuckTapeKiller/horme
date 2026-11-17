@@ -3,6 +3,7 @@ import { AiProvider } from "./AiProvider";
 import { requestUrlError } from "../utils/apiError";
 import { asArray, getRecordProp, getStringProp } from "../utils/TypeGuards";
 import { normalizeBaseUrl } from "../utils/normalizeBaseUrl";
+import { bearer } from "../utils/providerAccess";
 import { streamOpenAiCompatible } from "../utils/localStream";
 import { NativeTool } from "../skills/types";
 
@@ -11,10 +12,14 @@ export class LmStudioProvider implements AiProvider {
   private temperature: number;
   private maxTokens: number;
 
-  constructor(baseUrl: string, temperature: number, maxTokens: number) {
+  /** The server's API key, sent only when there is one. */
+  private apiKey: string;
+
+  constructor(baseUrl: string, temperature: number, maxTokens: number, apiKey = "") {
     this.baseUrl = normalizeBaseUrl(baseUrl);
     this.temperature = temperature;
     this.maxTokens = maxTokens;
+    this.apiKey = apiKey;
   }
 
   private extractContent(json: unknown): string {
@@ -31,7 +36,11 @@ export class LmStudioProvider implements AiProvider {
   /** Models LM Studio reports, with load state (native /api/v0/models). */
   private async listModels(): Promise<Array<{ id: string; state: string; type: string }>> {
     try {
-      const res = await requestUrl({ url: `${this.baseUrl}/api/v0/models`, throw: false });
+      const res = await requestUrl({
+        url: `${this.baseUrl}/api/v0/models`,
+        headers: bearer(this.apiKey),
+        throw: false,
+      });
       if (res.status === 200) {
         const dataArr = asArray(getRecordProp(res.json as unknown, "data")) ?? [];
         return dataArr
@@ -60,7 +69,11 @@ export class LmStudioProvider implements AiProvider {
     const firstNative = native.find((m) => !this.isEmbeddingModel(m.id, m.type));
     if (firstNative) return firstNative.id;
     try {
-      const res = await requestUrl({ url: `${this.baseUrl}/v1/models`, throw: false });
+      const res = await requestUrl({
+        url: `${this.baseUrl}/v1/models`,
+        headers: bearer(this.apiKey),
+        throw: false,
+      });
       if (res.status === 200) {
         const dataArr = asArray(getRecordProp(res.json as unknown, "data")) ?? [];
         const ids = dataArr.map((m) => getStringProp(m, "id")).filter((id): id is string => Boolean(id));
@@ -91,7 +104,7 @@ export class LmStudioProvider implements AiProvider {
         const res = await requestUrl({
           url: `${this.baseUrl}${path}`,
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...bearer(this.apiKey) },
           body: JSON.stringify({ model }),
           throw: false,
         });
@@ -116,7 +129,7 @@ export class LmStudioProvider implements AiProvider {
     const res = await requestUrl({
       url: `${this.baseUrl}/v1/chat/completions`,
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...bearer(this.apiKey) },
       body: JSON.stringify({
         model: resolvedModel,
         messages: [
@@ -138,7 +151,7 @@ export class LmStudioProvider implements AiProvider {
     const res = await requestUrl({
       url: `${this.baseUrl}/v1/chat/completions`,
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...bearer(this.apiKey) },
       body: JSON.stringify({
         model: resolvedModel,
         messages: msgs,
@@ -169,6 +182,6 @@ export class LmStudioProvider implements AiProvider {
     if (tools && tools.length) body.tools = tools;
     // CORS-proof transport chain (LM Studio ships with CORS disabled and
     // Obsidian's origin is app://obsidian.md): Node http → fetch → requestUrl.
-    return streamOpenAiCompatible(`${this.baseUrl}/v1/chat/completions`, body, signal);
+    return streamOpenAiCompatible(`${this.baseUrl}/v1/chat/completions`, body, signal, bearer(this.apiKey));
   }
 }

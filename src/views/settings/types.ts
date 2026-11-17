@@ -8,6 +8,10 @@ export type StringKey = {
   [K in keyof HormeSettings]: HormeSettings[K] extends string ? K : never;
 }[keyof HormeSettings];
 
+export type BooleanKey = {
+  [K in keyof HormeSettings]: HormeSettings[K] extends boolean ? K : never;
+}[keyof HormeSettings];
+
 /** What the settings helpers need from the settings tab. */
 export interface SettingsHost {
   app: App;

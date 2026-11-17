@@ -1,14 +1,6 @@
 import HormePlugin from "../../main";
 import { AiProvider, StreamOptions } from "./AiProvider";
-import { OllamaProvider } from "./OllamaProvider";
-import { LmStudioProvider } from "./LmStudioProvider";
-import { LlamaCppProvider } from "./LlamaCppProvider";
-import { ClaudeProvider } from "./ClaudeProvider";
-import { GeminiProvider } from "./GeminiProvider";
-import { OpenAIProvider } from "./OpenAIProvider";
-import { GroqProvider } from "./GroqProvider";
-import { OpenRouterProvider } from "./OpenRouterProvider";
-import { MistralProvider } from "./MistralProvider";
+import { createProvider } from "./createProvider";
 import { AiProvider as AiProviderId } from "../types";
 export class AiGateway {
   private plugin: HormePlugin;
@@ -18,29 +10,7 @@ export class AiGateway {
   }
 
   public getProvider(): AiProvider {
-    const settings = this.plugin.settings;
-    const provider = settings.aiProvider;
-    const apiKey = this.plugin.getApiKeyForProvider(provider);
-    switch (provider) {
-      case "claude":
-        return new ClaudeProvider(apiKey, settings.temperature, settings.maxTokens);
-      case "gemini":
-        return new GeminiProvider(apiKey, settings.temperature, settings.maxTokens);
-      case "openai":
-        return new OpenAIProvider(apiKey, settings.temperature, settings.maxTokens);
-      case "groq":
-        return new GroqProvider(apiKey, settings.temperature, settings.maxTokens);
-      case "openrouter":
-        return new OpenRouterProvider(apiKey, settings.temperature, settings.maxTokens);
-      case "mistral":
-        return new MistralProvider(apiKey, settings.temperature, settings.maxTokens);
-      case "lmstudio":
-        return new LmStudioProvider(settings.lmStudioUrl, settings.temperature, settings.maxTokens);
-      case "llamacpp":
-        return new LlamaCppProvider(settings.llamaCppUrl, settings.temperature, settings.maxTokens);
-      default:
-        return new OllamaProvider(settings.ollamaBaseUrl, settings.temperature, settings.maxTokens);
-    }
+    return createProvider(this.plugin, this.plugin.settings.aiProvider);
   }
 
   private getSystemPromptWithSkills(
@@ -189,6 +159,7 @@ export class AiGateway {
     if (p === "mistral") return settings.mistralModel;
     if (p === "lmstudio") return settings.lmStudioModel;
     if (p === "llamacpp") return settings.llamaCppModel;
+    if (p === "custom") return settings.customModel;
     return settings.defaultModel;
   }
 
@@ -203,37 +174,7 @@ export class AiGateway {
     providerName: string,
     model: string,
   ): Promise<string> {
-    const settings = this.plugin.settings;
-    let provider: AiProvider;
-    const apiKey = this.plugin.getApiKeyForProvider(providerName as AiProviderId);
-    switch (providerName) {
-      case "claude":
-        provider = new ClaudeProvider(apiKey, settings.temperature, settings.maxTokens);
-        break;
-      case "gemini":
-        provider = new GeminiProvider(apiKey, settings.temperature, settings.maxTokens);
-        break;
-      case "openai":
-        provider = new OpenAIProvider(apiKey, settings.temperature, settings.maxTokens);
-        break;
-      case "groq":
-        provider = new GroqProvider(apiKey, settings.temperature, settings.maxTokens);
-        break;
-      case "openrouter":
-        provider = new OpenRouterProvider(apiKey, settings.temperature, settings.maxTokens);
-        break;
-      case "mistral":
-        provider = new MistralProvider(apiKey, settings.temperature, settings.maxTokens);
-        break;
-      case "lmstudio":
-        provider = new LmStudioProvider(settings.lmStudioUrl, settings.temperature, settings.maxTokens);
-        break;
-      case "llamacpp":
-        provider = new LlamaCppProvider(settings.llamaCppUrl, settings.temperature, settings.maxTokens);
-        break;
-      default:
-        provider = new OllamaProvider(settings.ollamaBaseUrl, settings.temperature, settings.maxTokens);
-    }
+    const provider = createProvider(this.plugin, providerName as AiProviderId);
     try {
       return await provider.generate(prompt, system, model);
     } catch (e: unknown) {

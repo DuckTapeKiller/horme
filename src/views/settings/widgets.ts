@@ -3,7 +3,8 @@ import type HormePlugin from "../../../main";
 import { GenericConfirmModal } from "../../modals/GenericConfirmModal";
 import { markDestructive } from "../../utils/destructiveButton";
 import type { IndexHealth } from "../../services/DiagnosticService";
-import { isLocalProvider, providerInfo, providerModel } from "./providers";
+import { providerInfo, providerModel } from "./providers";
+import { keepsNotesPrivate } from "../../utils/providerAccess";
 import type { SettingsHost } from "./types";
 
 const KOFI_URL = "https://ko-fi.com/ducktapekiller";
@@ -72,10 +73,15 @@ export function connectionLabel(plugin: HormePlugin, state: ConnectionState): st
   if (state === "checking") return "Checking the connection…";
   if (state === "ok") return `Connected to ${p.name}.`;
   if (state === "fail") {
-    if (!p.local && !plugin.getApiKeyForProvider(p.id)) return `No API key for ${p.name} yet.`;
-    return p.local
-      ? `Could not reach ${p.name} at ${String(s[p.urlKey ?? "ollamaBaseUrl"])}. Is it running?`
-      : `${p.name} did not accept the API key.`;
+    if (p.keyRequired && !plugin.getApiKeyForProvider(p.id)) return `No API key for ${p.name} yet.`;
+    if (!p.urlKey) return `${p.name} did not accept the API key.`;
+    const address = String(s[p.urlKey]).trim();
+    if (!address) return `No server address for ${p.name} yet.`;
+    if (p.id === "custom")
+      return `${p.name} did not answer at ${address}/models. Check the address (it usually ends in /v1) and the API key.`;
+    return plugin.getApiKeyForProvider(p.id)
+      ? `Could not reach ${p.name} at ${address}, or it refused the API key.`
+      : `Could not reach ${p.name} at ${address}. Is it running? If it needs an API key, add it here.`;
   }
   return "Not checked yet.";
 }
@@ -154,7 +160,7 @@ export function heroItem(host: SettingsHost, checker: ConnectionChecker): Settin
       const vb = plugin.vaultIndexer;
       const brainChip = chips.createDiv({ cls: "horme-chip" });
       setIcon(brainChip.createSpan({ cls: "horme-chip-icon" }), "brain");
-      const blocked = !isLocalProvider(s.aiProvider) && !s.allowCloudRAG;
+      const blocked = !keepsNotesPrivate(s, s.aiProvider) && !s.allowCloudRAG;
       if (!s.vaultBrainEnabled) brainChip.createSpan({ text: "Vault Brain off" });
       else if (blocked) {
         brainChip.addClass("is-warn");
@@ -163,12 +169,15 @@ export function heroItem(host: SettingsHost, checker: ConnectionChecker): Settin
       else brainChip.createSpan({ text: `${vb.index.length.toLocaleString()} passages indexed` });
 
       const privacyChip = chips.createDiv({ cls: "horme-chip" });
-      if (!p.local || s.allowCloudRAG) {
+      if (!keepsNotesPrivate(s, p.id) || s.allowCloudRAG) {
         privacyChip.addClass("is-warn");
         setIcon(privacyChip.createSpan({ cls: "horme-chip-icon" }), "cloud");
         privacyChip.createSpan({
           text: s.allowCloudRAG ? "Notes may reach the cloud" : `Chat goes to ${p.name}`,
         });
+      } else if (!p.local) {
+        setIcon(privacyChip.createSpan({ cls: "horme-chip-icon" }), "shield-check");
+        privacyChip.createSpan({ text: "Chat stays on your own server" });
       } else {
         setIcon(privacyChip.createSpan({ cls: "horme-chip-icon" }), "shield-check");
         privacyChip.createSpan({ text: "Everything stays on this computer" });

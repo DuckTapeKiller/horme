@@ -3,6 +3,8 @@ import { AiProvider, StreamOptions } from "./AiProvider";
 import { getRecordProp, getStringProp } from "../utils/TypeGuards";
 import { fetchError, requestUrlError } from "../utils/apiError";
 import { normalizeBaseUrl } from "../utils/normalizeBaseUrl";
+import { bearer } from "../utils/providerAccess";
+import { streamWithNode } from "../utils/localStream";
 import { NativeTool } from "../skills/types";
 
 export class OllamaProvider implements AiProvider {
@@ -10,10 +12,14 @@ export class OllamaProvider implements AiProvider {
   private temperature: number;
   private maxTokens: number;
 
-  constructor(baseUrl: string, temperature: number, maxTokens: number) {
+  /** The server's API key, sent only when there is one. */
+  private apiKey: string;
+
+  constructor(baseUrl: string, temperature: number, maxTokens: number, apiKey = "") {
     this.baseUrl = normalizeBaseUrl(baseUrl);
     this.temperature = temperature;
     this.maxTokens = maxTokens;
+    this.apiKey = apiKey;
   }
 
   async generate(prompt: string, system: string, model: string): Promise<string> {
@@ -21,7 +27,7 @@ export class OllamaProvider implements AiProvider {
     const response = await requestUrl({
       url,
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...bearer(this.apiKey) },
       body: JSON.stringify({
         model,
         prompt,
@@ -45,7 +51,7 @@ export class OllamaProvider implements AiProvider {
     const response = await requestUrl({
       url,
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...bearer(this.apiKey) },
       body: JSON.stringify({
         model,
         messages: msgs,
@@ -82,9 +88,17 @@ export class OllamaProvider implements AiProvider {
     if (tools && tools.length) body.tools = tools;
     // Writing the reply from a skill result needs no second thinking phase.
     if (options?.noThinking) body.think = false;
+    // Ollama itself has no keys; a key means a proxy in front of it, which
+    // will not know Obsidian's app:// origin, so on a computer the request
+    // goes through Node, which no CORS rule blocks. Without a key the
+    // request is sent exactly as before.
+    if (this.apiKey.trim()) {
+      const viaNode = streamWithNode(`${this.baseUrl}/api/chat`, body, signal, bearer(this.apiKey));
+      if (viaNode) return viaNode;
+    }
     const res = await window.fetch(`${this.baseUrl}/api/chat`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...bearer(this.apiKey) },
       body: JSON.stringify(body),
       signal,
     });

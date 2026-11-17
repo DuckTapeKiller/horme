@@ -2,7 +2,8 @@ import { requestUrl } from "obsidian";
 import { asArray, getRecordProp, getStringProp } from "./TypeGuards";
 
 /**
- * CORS-proof streaming for local OpenAI-compatible servers (LM Studio).
+ * CORS-proof streaming for OpenAI-compatible servers (llama.cpp, LM Studio,
+ * and any server the user adds as OpenAI-compatible).
  *
  * Obsidian's renderer origin is app://obsidian.md, and LM Studio ships with
  * CORS disabled, so a plain `fetch` fails its preflight before the request
@@ -62,6 +63,7 @@ function nodeHttpStream(
   url: string,
   body: Record<string, unknown>,
   signal?: AbortSignal,
+  headers: Record<string, string> = {},
 ): Promise<ReadableStreamDefaultReader<Uint8Array>> {
   return new Promise((resolve, reject) => {
     const abortError = () => new DOMException("The operation was aborted.", "AbortError");
@@ -75,7 +77,7 @@ function nodeHttpStream(
     let controllerRef: ReadableStreamDefaultController<Uint8Array> | null = null;
     const req = httpModule.request(
       url,
-      { method: "POST", headers: { "Content-Type": "application/json" } },
+      { method: "POST", headers: { "Content-Type": "application/json", ...headers } },
       (res) => {
         response = res;
         const status = res.statusCode ?? 0;
@@ -86,7 +88,7 @@ function nodeHttpStream(
             errorBody += decoder.decode(chunk, { stream: true });
           });
           res.on("end", () => {
-            reject(new Error(`Local server error (${status}): ${errorBody.slice(0, 300)}`));
+            reject(new Error(`Server error (${status}): ${errorBody.slice(0, 300)}`));
           });
           return;
         }
@@ -152,17 +154,18 @@ function nodeHttpStream(
 async function requestUrlPseudoStream(
   url: string,
   body: Record<string, unknown>,
+  headers: Record<string, string> = {},
 ): Promise<ReadableStreamDefaultReader<Uint8Array>> {
   const res = await requestUrl({
     url,
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...headers },
     body: JSON.stringify({ ...body, stream: false }),
     throw: false,
   });
   if (res.status !== 200) {
     const detail = typeof res.text === "string" ? res.text.slice(0, 300) : "";
-    throw new Error(`Local server error (${res.status})${detail ? `: ${detail}` : ""}`);
+    throw new Error(`Server error (${res.status})${detail ? `: ${detail}` : ""}`);
   }
   const json: unknown = res.json;
   const choices = asArray(getRecordProp(json, "choices")) ?? [];
@@ -188,34 +191,49 @@ async function requestUrlPseudoStream(
   }).getReader();
 }
 
+/**
+ * Streams a POST through Node's http/https module (desktop only), which no
+ * CORS rule can block; null where Node is unavailable (phones and tablets).
+ * The body is passed through as it arrives, whatever its format.
+ */
+export function streamWithNode(
+  url: string,
+  body: Record<string, unknown>,
+  signal?: AbortSignal,
+  headers: Record<string, string> = {},
+): Promise<ReadableStreamDefaultReader<Uint8Array>> | null {
+  const httpModule = getNodeHttpModule(url);
+  return httpModule ? nodeHttpStream(httpModule, url, body, signal, headers) : null;
+}
+
 export async function streamOpenAiCompatible(
   url: string,
   body: Record<string, unknown>,
   signal?: AbortSignal,
+  /** Extra request headers, such as the server's API key. */
+  headers: Record<string, string> = {},
 ): Promise<ReadableStreamDefaultReader<Uint8Array>> {
-  const httpModule = getNodeHttpModule(url);
-  if (httpModule) {
-    return nodeHttpStream(httpModule, url, body, signal);
-  }
+  const viaNode = streamWithNode(url, body, signal, headers);
+  if (viaNode) return viaNode;
   try {
     const res = await window.fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...headers },
       body: JSON.stringify(body),
       signal,
     });
     if (!res.ok) {
       const detail = (await res.text().catch(() => "")).slice(0, 300);
-      throw new Error(`Local server error (${res.status})${detail ? `: ${detail}` : ""}`);
+      throw new Error(`Server error (${res.status})${detail ? `: ${detail}` : ""}`);
     }
-    if (!res.body) throw new Error("Local server returned no response body.");
+    if (!res.body) throw new Error("The server returned no response body.");
     return res.body.getReader();
   } catch (e: unknown) {
     if (e instanceof DOMException && e.name === "AbortError") throw e;
     // fetch throws TypeError on CORS/network-layer blocks before the request
     // reaches the server; requestUrl is CORS-exempt but cannot stream.
     if (e instanceof TypeError) {
-      return requestUrlPseudoStream(url, body);
+      return requestUrlPseudoStream(url, body, headers);
     }
     throw e;
   }

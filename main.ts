@@ -63,7 +63,8 @@ import {
   type MobileOverride,
   type PhoneChoice,
 } from "./src/utils/mobileOverride";
-import { isLocalProvider, providerInfo } from "./src/views/settings/providers";
+import { listModels, providerInfo } from "./src/views/settings/providers";
+import { bearer, compatBaseUrl, keepsNotesPrivate, type LocalServerId } from "./src/utils/providerAccess";
 
 /** Where a phone keeps the provider and model it chose for itself (device storage). */
 const PHONE_CHOICE_KEY = "horme-phone-choice";
@@ -109,14 +110,7 @@ export default class HormePlugin extends Plugin {
   }
 
   private isCloudProvider(p: AiProvider): boolean {
-    return (
-      p === "claude" ||
-      p === "gemini" ||
-      p === "openai" ||
-      p === "groq" ||
-      p === "openrouter" ||
-      p === "mistral"
-    );
+    return !keepsNotesPrivate(this.settings, p);
   }
 
   private getSecretIdForProvider(p: AiProvider): string | null {
@@ -127,7 +121,26 @@ export default class HormePlugin extends Plugin {
     if (p === "groq") return (s.groqSecretId || "").trim() || null;
     if (p === "openrouter") return (s.openRouterSecretId || "").trim() || null;
     if (p === "mistral") return (s.mistralSecretId || "").trim() || null;
+    // Local servers and the OpenAI-compatible server: an optional key.
+    if (p === "llamacpp") return (s.llamaCppSecretId || "").trim() || null;
+    if (p === "lmstudio") return (s.lmStudioSecretId || "").trim() || null;
+    if (p === "ollama") return (s.ollamaSecretId || "").trim() || null;
+    if (p === "custom") return (s.customSecretId || "").trim() || null;
     return null;
+  }
+
+  /**
+   * The Authorization header for a local server, or no header when it has no
+   * key. The llama.cpp embedding server uses its own key, else the chat
+   * server's (both are usually started with the same --api-key).
+   */
+  serverAuth(p: LocalServerId, purpose: "chat" | "embedding" = "chat"): Record<string, string> {
+    if (p === "llamacpp" && purpose === "embedding") {
+      return bearer(
+        this.getSecretValue(this.settings.llamaCppEmbeddingSecretId) || this.getApiKeyForProvider("llamacpp"),
+      );
+    }
+    return bearer(this.getApiKeyForProvider(p));
   }
 
   /** A key kept in Obsidian's keychain, by the name stored in the settings; "" when unset. */
@@ -209,7 +222,7 @@ export default class HormePlugin extends Plugin {
   private async fetchOllamaTagsModels(): Promise<OllamaTagsModel[]> {
     const url = `${normalizeBaseUrl(this.settings.ollamaBaseUrl)}/api/tags`;
     try {
-      const res = await requestUrl({ url, throw: false });
+      const res = await requestUrl({ url, headers: this.serverAuth("ollama"), throw: false });
       if (res.status !== 200) return [];
       const json: unknown = res.json;
       const modelsUnknown = getRecordProp(json, "models");
@@ -637,7 +650,8 @@ ${candidates.map((t) => `${t}`).join("\n")}`;
     try {
       // A cloud tag provider needs the same consent as any note content sent to the
       // cloud; without it, fall back to the chat provider path.
-      const tagsProviderAllowed = isLocalProvider(this.settings.tagsProvider) || this.settings.allowCloudRAG;
+      const tagsProviderAllowed =
+        keepsNotesPrivate(this.settings, this.settings.tagsProvider) || this.settings.allowCloudRAG;
       const tagsModel = tagsProviderAllowed ? this.settings.tagsModel.trim() : "";
       // Pass the complete 'context' string containing the file title to avoid context starvation
       const response = tagsModel
@@ -946,9 +960,13 @@ RULES:
     });
   }
 
+  /**
+   * True when the chat provider keeps what it is sent on the user's own
+   * machines: a local server, or the OpenAI-compatible server the user says
+   * is theirs. Every privacy check asks this.
+   */
   isLocalProviderActive(): boolean {
-    const p = this.settings.aiProvider;
-    return p === "ollama" || p === "lmstudio" || p === "llamacpp";
+    return keepsNotesPrivate(this.settings, this.settings.aiProvider);
   }
 
   /* ── Core ── */
@@ -1016,6 +1034,7 @@ RULES:
       } else if (provider === "lmstudio") {
         const res = await requestUrl({
           url: `${normalizeBaseUrl(this.settings.lmStudioUrl)}/v1/models`,
+          headers: this.serverAuth("lmstudio"),
           throw: false,
         });
         if (res.status === 200) {
@@ -1026,6 +1045,7 @@ RULES:
       } else if (provider === "llamacpp") {
         const res = await requestUrl({
           url: `${normalizeBaseUrl(this.settings.llamaCppUrl)}/v1/models`,
+          headers: this.serverAuth("llamacpp"),
           throw: false,
         });
         if (res.status === 200) {
@@ -1037,6 +1057,8 @@ RULES:
             // Embedding models can't chat; keep them out of the chat dropdown.
             .filter((m) => !/embed/i.test(m));
         }
+      } else if (provider === "custom") {
+        fetchedModels = (await listModels(this, "custom", "chat")).models;
       } else {
         fetchedModels = PROVIDER_MODELS[provider] || [];
       }
@@ -1056,19 +1078,28 @@ RULES:
     try {
       if (p === "ollama") {
         const url = `${normalizeBaseUrl(this.settings.ollamaBaseUrl)}/api/tags`;
-        const res = await requestUrl({ url, throw: false });
+        const res = await requestUrl({ url, headers: this.serverAuth("ollama"), throw: false });
         return res.status === 200;
       }
-      if (p === "lmstudio")
-        return (
-          (await requestUrl({ url: `${normalizeBaseUrl(this.settings.lmStudioUrl)}/v1/models` })).status ===
-          200
-        );
-      if (p === "llamacpp")
-        return (
-          (await requestUrl({ url: `${normalizeBaseUrl(this.settings.llamaCppUrl)}/v1/models` })).status ===
-          200
-        );
+      if (p === "lmstudio" || p === "llamacpp") {
+        const base = p === "lmstudio" ? this.settings.lmStudioUrl : this.settings.llamaCppUrl;
+        const res = await requestUrl({
+          url: `${normalizeBaseUrl(base)}/v1/models`,
+          headers: this.serverAuth(p),
+          throw: false,
+        });
+        return res.status === 200;
+      }
+      if (p === "custom") {
+        const base = compatBaseUrl(this.settings.customUrl);
+        if (!base) return false;
+        const res = await requestUrl({
+          url: `${base}/models`,
+          headers: bearer(this.getApiKeyForProvider("custom")),
+          throw: false,
+        });
+        return res.status === 200;
+      }
 
       // Live Cloud Provider Check
       const apiKey = this.getApiKeyForProvider(p);
@@ -1462,12 +1493,12 @@ RULES:
       s.customSkills = [];
       changed = true;
     }
-    if (!s.allowCloudRAG && !isLocalProvider(s.tagsProvider)) {
-      s.tagsProvider = isLocalProvider(s.aiProvider) ? s.aiProvider : "ollama";
+    if (!s.allowCloudRAG && !keepsNotesPrivate(s, s.tagsProvider)) {
+      s.tagsProvider = keepsNotesPrivate(s, s.aiProvider) ? s.aiProvider : "ollama";
       s.tagsModel = "";
       changed = true;
     }
-    if (!s.allowCloudTagTranslation && !isLocalProvider(s.tagTranslationProvider)) {
+    if (!s.allowCloudTagTranslation && !keepsNotesPrivate(s, s.tagTranslationProvider)) {
       s.tagTranslationProvider = s.tagTranslationFallbackProvider;
       changed = true;
     }

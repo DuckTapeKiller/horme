@@ -3,6 +3,7 @@ import { AiProvider, StreamOptions } from "./AiProvider";
 import { requestUrlError } from "../utils/apiError";
 import { asArray, getRecordProp, getStringProp } from "../utils/TypeGuards";
 import { normalizeBaseUrl } from "../utils/normalizeBaseUrl";
+import { bearer } from "../utils/providerAccess";
 import { streamOpenAiCompatible } from "../utils/localStream";
 import { NativeTool } from "../skills/types";
 
@@ -11,10 +12,14 @@ export class LlamaCppProvider implements AiProvider {
   private temperature: number;
   private maxTokens: number;
 
-  constructor(baseUrl: string, temperature: number, maxTokens: number) {
+  /** The server's API key, sent only when there is one. */
+  private apiKey: string;
+
+  constructor(baseUrl: string, temperature: number, maxTokens: number, apiKey = "") {
     this.baseUrl = normalizeBaseUrl(baseUrl);
     this.temperature = temperature;
     this.maxTokens = maxTokens;
+    this.apiKey = apiKey;
   }
 
   private extractContent(json: unknown): string {
@@ -36,7 +41,11 @@ export class LlamaCppProvider implements AiProvider {
    */
   private async listModels(): Promise<Array<{ id: string; state: string }>> {
     try {
-      const res = await requestUrl({ url: `${this.baseUrl}/v1/models`, throw: false });
+      const res = await requestUrl({
+        url: `${this.baseUrl}/v1/models`,
+        headers: bearer(this.apiKey),
+        throw: false,
+      });
       if (res.status === 200) {
         const dataArr = asArray(getRecordProp(res.json as unknown, "data")) ?? [];
         return dataArr
@@ -88,7 +97,7 @@ export class LlamaCppProvider implements AiProvider {
       await requestUrl({
         url: `${this.baseUrl}/models/load`,
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...bearer(this.apiKey) },
         body: JSON.stringify({ model }),
         throw: false,
       });
@@ -109,7 +118,7 @@ export class LlamaCppProvider implements AiProvider {
     const res = await requestUrl({
       url: `${this.baseUrl}/v1/chat/completions`,
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...bearer(this.apiKey) },
       body: JSON.stringify({
         model: resolvedModel,
         messages: [
@@ -135,7 +144,7 @@ export class LlamaCppProvider implements AiProvider {
     const res = await requestUrl({
       url: `${this.baseUrl}/v1/chat/completions`,
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...bearer(this.apiKey) },
       body: JSON.stringify({
         model: resolvedModel,
         messages: msgs,
@@ -173,6 +182,6 @@ export class LlamaCppProvider implements AiProvider {
     if (options?.noThinking) body.chat_template_kwargs = { enable_thinking: false };
     // CORS-proof transport chain (llama-server has no CORS allowance for
     // Obsidian's app://obsidian.md origin): Node http → fetch → requestUrl.
-    return streamOpenAiCompatible(`${this.baseUrl}/v1/chat/completions`, body, signal);
+    return streamOpenAiCompatible(`${this.baseUrl}/v1/chat/completions`, body, signal, bearer(this.apiKey));
   }
 }

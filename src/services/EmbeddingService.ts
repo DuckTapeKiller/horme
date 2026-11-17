@@ -145,7 +145,7 @@ export class EmbeddingService {
       const res = await requestUrl({
         url: `${normalizeBaseUrl(this.plugin.settings.ollamaBaseUrl)}/api/embed`,
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...this.plugin.serverAuth("ollama") },
         body: data,
         throw: false,
       });
@@ -221,7 +221,7 @@ export class EmbeddingService {
     const res = await requestUrl({
       url: `${normalizeBaseUrl(this.plugin.settings.ollamaBaseUrl)}/api/embed`,
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...this.plugin.serverAuth("ollama") },
       body: data,
       throw: false,
     });
@@ -243,7 +243,7 @@ export class EmbeddingService {
       const legacyRes = await requestUrl({
         url: `${normalizeBaseUrl(this.plugin.settings.ollamaBaseUrl)}/api/embeddings`,
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...this.plugin.serverAuth("ollama") },
         body: JSON.stringify({ model: defaultModel, prompt: text }),
         throw: false,
       });
@@ -274,6 +274,7 @@ export class EmbeddingService {
     if (this.lmStudioDetectedEmbeddingModel) return this.lmStudioDetectedEmbeddingModel;
     const res = await requestUrl({
       url: `${normalizeBaseUrl(this.plugin.settings.lmStudioUrl)}/v1/models`,
+      headers: this.plugin.serverAuth("lmstudio"),
       throw: false,
     });
     if (res.status === 200) {
@@ -285,6 +286,10 @@ export class EmbeddingService {
         return detected;
       }
     }
+    if (res.status === 401 || res.status === 403)
+      throw new Error(
+        "LM Studio refused the request: add its API token on the Models page, or check the one there.",
+      );
     throw new Error(
       "No LM Studio embedding model found. Load one (e.g. text-embedding-nomic-embed-text-v1.5) or set it in Horme settings.",
     );
@@ -296,7 +301,7 @@ export class EmbeddingService {
       const res = await requestUrl({
         url: `${normalizeBaseUrl(this.plugin.settings.lmStudioUrl)}/v1/embeddings`,
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...this.plugin.serverAuth("lmstudio") },
         body: JSON.stringify({
           model,
           input: inputs,
@@ -336,6 +341,7 @@ export class EmbeddingService {
     if (this.llamaCppDetectedEmbeddingModel) return this.llamaCppDetectedEmbeddingModel;
     const res = await requestUrl({
       url: `${normalizeBaseUrl(this.plugin.settings.llamaCppEmbeddingUrl)}/v1/models`,
+      headers: this.plugin.serverAuth("llamacpp", "embedding"),
       throw: false,
     });
     if (res.status === 200) {
@@ -349,6 +355,10 @@ export class EmbeddingService {
         return detected;
       }
     }
+    if (res.status === 401 || res.status === 403)
+      throw new Error(
+        "The llama.cpp embedding server refused the request: add its API key in Vault Brain settings, or check the one there.",
+      );
     throw new Error(
       "No llama.cpp embedding model found. Start a llama-server with --embedding on the embedding URL, or set the model in Horme settings.",
     );
@@ -360,7 +370,7 @@ export class EmbeddingService {
       const res = await requestUrl({
         url: `${normalizeBaseUrl(this.plugin.settings.llamaCppEmbeddingUrl)}/v1/embeddings`,
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...this.plugin.serverAuth("llamacpp", "embedding") },
         body: JSON.stringify({
           model,
           input: inputs,

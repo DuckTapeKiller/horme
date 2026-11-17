@@ -4,10 +4,11 @@ import { PROVIDER_MODELS } from "../../constants";
 import type { AiProvider, HormeSettings } from "../../types";
 import { asArray, getRecordProp, getStringProp } from "../../utils/TypeGuards";
 import { normalizeBaseUrl } from "../../utils/normalizeBaseUrl";
-import type { StringKey } from "./types";
+import { bearer, compatBaseUrl, isLocalServer, keepsNotesPrivate } from "../../utils/providerAccess";
+import type { BooleanKey, StringKey } from "./types";
 
 export type LocalProviderId = "llamacpp" | "ollama" | "lmstudio";
-export type CloudProviderId = Exclude<AiProvider, LocalProviderId>;
+export type CloudProviderId = Exclude<AiProvider, LocalProviderId | "custom">;
 
 export interface ProviderInfo {
   id: AiProvider;
@@ -18,6 +19,12 @@ export interface ProviderInfo {
   modelKey: StringKey;
   urlKey?: StringKey;
   secretKey?: StringKey;
+  /** The provider will not answer without a key (the cloud ones); local servers' keys are optional. */
+  keyRequired: boolean;
+  /** Example address shown in an empty address field, when the default is empty. */
+  urlPlaceholder?: string;
+  /** The switch that says this server is the user's own (the OpenAI-compatible server). */
+  privateKey?: BooleanKey;
 }
 
 export const PROVIDERS: ProviderInfo[] = [
@@ -28,6 +35,8 @@ export const PROVIDERS: ProviderInfo[] = [
     local: true,
     modelKey: "llamaCppModel",
     urlKey: "llamaCppUrl",
+    secretKey: "llamaCppSecretId",
+    keyRequired: false,
   },
   {
     id: "ollama",
@@ -36,6 +45,8 @@ export const PROVIDERS: ProviderInfo[] = [
     local: true,
     modelKey: "defaultModel",
     urlKey: "ollamaBaseUrl",
+    secretKey: "ollamaSecretId",
+    keyRequired: false,
   },
   {
     id: "lmstudio",
@@ -44,6 +55,8 @@ export const PROVIDERS: ProviderInfo[] = [
     local: true,
     modelKey: "lmStudioModel",
     urlKey: "lmStudioUrl",
+    secretKey: "lmStudioSecretId",
+    keyRequired: false,
   },
   {
     id: "claude",
@@ -52,6 +65,7 @@ export const PROVIDERS: ProviderInfo[] = [
     local: false,
     modelKey: "claudeModel",
     secretKey: "claudeSecretId",
+    keyRequired: true,
   },
   {
     id: "gemini",
@@ -60,6 +74,7 @@ export const PROVIDERS: ProviderInfo[] = [
     local: false,
     modelKey: "geminiModel",
     secretKey: "geminiSecretId",
+    keyRequired: true,
   },
   {
     id: "openai",
@@ -68,6 +83,7 @@ export const PROVIDERS: ProviderInfo[] = [
     local: false,
     modelKey: "openaiModel",
     secretKey: "openaiSecretId",
+    keyRequired: true,
   },
   {
     id: "groq",
@@ -76,6 +92,7 @@ export const PROVIDERS: ProviderInfo[] = [
     local: false,
     modelKey: "groqModel",
     secretKey: "groqSecretId",
+    keyRequired: true,
   },
   {
     id: "openrouter",
@@ -84,6 +101,7 @@ export const PROVIDERS: ProviderInfo[] = [
     local: false,
     modelKey: "openRouterModel",
     secretKey: "openRouterSecretId",
+    keyRequired: true,
   },
   {
     id: "mistral",
@@ -92,6 +110,19 @@ export const PROVIDERS: ProviderInfo[] = [
     local: false,
     modelKey: "mistralModel",
     secretKey: "mistralSecretId",
+    keyRequired: true,
+  },
+  {
+    id: "custom",
+    name: "OpenAI-compatible server",
+    blurb: "Any server or router with OpenAI's API: LiteLLM, vLLM, Open WebUI and others.",
+    local: false,
+    modelKey: "customModel",
+    urlKey: "customUrl",
+    urlPlaceholder: "http://localhost:4000/v1",
+    secretKey: "customSecretId",
+    keyRequired: false,
+    privateKey: "customIsLocal",
   },
 ];
 
@@ -100,19 +131,24 @@ export function providerInfo(id: AiProvider): ProviderInfo {
 }
 
 export function isLocalProvider(id: string): id is LocalProviderId {
-  return id === "llamacpp" || id === "ollama" || id === "lmstudio";
+  return isLocalServer(id);
 }
 
 export function isAiProvider(id: string): id is AiProvider {
   return PROVIDERS.some((p) => p.id === id);
 }
 
-/** Dropdown options for a provider picker: local ones first, then cloud ones when allowed. */
-export function providerOptions(includeCloud = true): Record<string, string> {
+/**
+ * Dropdown options for a provider picker: local ones first, then cloud ones
+ * when allowed. The OpenAI-compatible server is offered with the local ones
+ * once the user says it is theirs (pass the settings to know).
+ */
+export function providerOptions(includeCloud = true, s?: HormeSettings): Record<string, string> {
   const out: Record<string, string> = {};
   for (const p of PROVIDERS) {
-    if (!p.local && !includeCloud) continue;
-    out[p.id] = p.local ? `${p.name} (local)` : `${p.name} (cloud)`;
+    const mine = p.id === "custom" && s !== undefined && keepsNotesPrivate(s, p.id);
+    if (!p.local && !includeCloud && !mine) continue;
+    out[p.id] = p.id === "custom" ? p.name : p.local ? `${p.name} (local)` : `${p.name} (cloud)`;
   }
   return out;
 }
@@ -159,8 +195,8 @@ async function listOpenAiCompatible(baseUrl: string, headers?: Record<string, st
   return data.map((m) => getStringProp(m, "id") ?? getStringProp(m, "name")).filter((m): m is string => !!m);
 }
 
-async function listOllama(baseUrl: string): Promise<string[]> {
-  const json = await getJson(`${normalizeBaseUrl(baseUrl)}/api/tags`);
+async function listOllama(baseUrl: string, headers?: Record<string, string>): Promise<string[]> {
+  const json = await getJson(`${normalizeBaseUrl(baseUrl)}/api/tags`, headers);
   const models = asArray(getRecordProp(json, "models")) ?? [];
   return models.map((m) => getStringProp(m, "name")).filter((m): m is string => !!m);
 }
@@ -208,8 +244,18 @@ export interface ModelListResult {
   ok: boolean;
 }
 
-/** Where a local provider's server lives, for messages. */
-function serverLabel(s: HormeSettings, id: LocalProviderId, purpose: ModelPurpose): string {
+/** Lists an OpenAI-compatible server's models: its base address keeps its version, so /models follows it. */
+async function listCompatible(plugin: HormePlugin): Promise<string[]> {
+  const base = compatBaseUrl(plugin.settings.customUrl);
+  if (!base) throw new Error("no address");
+  const json = await getJson(`${base}/models`, bearer(plugin.getApiKeyForProvider("custom")));
+  const data = asArray(getRecordProp(json, "data")) ?? [];
+  return data.map((m) => getStringProp(m, "id") ?? getStringProp(m, "name")).filter((m): m is string => !!m);
+}
+
+/** Where a local provider's server, or the OpenAI-compatible server, lives, for messages. */
+function serverLabel(s: HormeSettings, id: LocalProviderId | "custom", purpose: ModelPurpose): string {
+  if (id === "custom") return s.customUrl.trim() || "no address yet";
   if (id === "llamacpp") return purpose === "embedding" ? s.llamaCppEmbeddingUrl : s.llamaCppUrl;
   if (id === "lmstudio") return s.lmStudioUrl;
   return s.ollamaBaseUrl;
@@ -228,10 +274,15 @@ export async function listModels(
   const name = providerInfo(id).name;
   try {
     let ids: string[];
-    if (id === "ollama") ids = await listOllama(s.ollamaBaseUrl);
-    else if (id === "lmstudio") ids = await listOpenAiCompatible(s.lmStudioUrl);
+    if (id === "ollama") ids = await listOllama(s.ollamaBaseUrl, plugin.serverAuth("ollama"));
+    else if (id === "lmstudio")
+      ids = await listOpenAiCompatible(s.lmStudioUrl, plugin.serverAuth("lmstudio"));
     else if (id === "llamacpp")
-      ids = await listOpenAiCompatible(purpose === "embedding" ? s.llamaCppEmbeddingUrl : s.llamaCppUrl);
+      ids = await listOpenAiCompatible(
+        purpose === "embedding" ? s.llamaCppEmbeddingUrl : s.llamaCppUrl,
+        plugin.serverAuth("llamacpp", purpose === "embedding" ? "embedding" : "chat"),
+      );
+    else if (id === "custom") ids = await listCompatible(plugin);
     else ids = await listCloud(plugin, id);
     const models = filterByPurpose(ids, purpose);
     const all = models.length > 0 ? models : ids;
@@ -245,11 +296,14 @@ export async function listModels(
           : `${all.length} ${what}${all.length === 1 ? "" : "s"} found on ${name}.`,
     };
   } catch (e: unknown) {
-    if (isLocalProvider(id)) {
+    if (isLocalProvider(id) || id === "custom") {
+      const refused = e instanceof Error && /HTTP 40[13]/.test(e.message);
       return {
         models: [],
         ok: false,
-        note: `Could not reach ${name} at ${serverLabel(s, id, purpose)}. You can still type a model name.`,
+        note: refused
+          ? `${name} at ${serverLabel(s, id, purpose)} refused the API key. You can still type a model name.`
+          : `Could not reach ${name} at ${serverLabel(s, id, purpose)}. You can still type a model name.`,
       };
     }
     const fallback = PROVIDER_MODELS[id] ?? [];

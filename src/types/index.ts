@@ -9,7 +9,8 @@ export type AiProvider =
   | "openai"
   | "groq"
   | "openrouter"
-  | "mistral";
+  | "mistral"
+  | "custom";
 
 export interface CustomSkillDefinition {
   id: string; // generated slug: "custom_" + sanitized name
@@ -25,16 +26,24 @@ export interface CustomSkillDefinition {
 export interface HormeSettings {
   aiProvider: AiProvider;
   ollamaBaseUrl: string;
+  /** Keychain name of the key for a server in front of Ollama ("" when it needs none). */
+  ollamaSecretId: string;
   defaultModel: string;
   lmStudioUrl: string;
+  /** Keychain name of LM Studio's API token ("" when it needs none). */
+  lmStudioSecretId: string;
   lmStudioModel: string;
   /** Embedding model id for LM Studio RAG (chat models cannot embed). */
   lmStudioEmbeddingModel: string;
   /** llama-server base URL (works with router mode and single-model servers). */
   llamaCppUrl: string;
+  /** Keychain name of the key llama-server was started with (--api-key); "" when it needs none. */
+  llamaCppSecretId: string;
   llamaCppModel: string;
   /** Separate llama-server for embeddings (llama.cpp needs --embedding; typically chat port + 1). */
   llamaCppEmbeddingUrl: string;
+  /** Keychain name of the embedding server's key; "" uses the chat server's key. */
+  llamaCppEmbeddingSecretId: string;
   /** Embedding model id for llama.cpp RAG (chat models cannot embed). */
   llamaCppEmbeddingModel: string;
   /** Offer skills as native OpenAI-schema tools on LM Studio/Ollama (XML stays the fallback). */
@@ -58,6 +67,13 @@ export interface HormeSettings {
   openRouterModel: string;
   mistralSecretId: string;
   mistralModel: string;
+  /** OpenAI-compatible server: its base address as its docs give it, usually ending in /v1. */
+  customUrl: string;
+  /** Keychain name of the OpenAI-compatible server's key ("" when it needs none). */
+  customSecretId: string;
+  customModel: string;
+  /** The user says the OpenAI-compatible server is theirs: notes may go to it as to a local provider. */
+  customIsLocal: boolean;
   systemPromptPath: string;
   presetsPaths: string[];
   temperature: number;

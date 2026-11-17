@@ -251,8 +251,13 @@ When you choose a cloud provider:
 | **Groq**       | Cloud         | Needs an API key from Groq.                                              |
 | **OpenRouter** | Cloud         | Needs an API key from OpenRouter.                                        |
 | **Mistral**    | Cloud         | Needs an API key from Mistral.                                           |
+| **OpenAI-compatible server** | Your server, or a cloud service behind it | Any server or router that speaks OpenAI's API: LiteLLM, vLLM, Open WebUI, LocalAI, DeepSeek and others. Enter its base address as its documentation gives it (usually ending in `/v1`), a key if it needs one, and a model. |
 
 With an API key set, the model field lists the provider's own models.
+
+**Keys for local servers.** llama.cpp, Ollama and LM Studio each take an optional API key on the Models page, for a server started with a key (`llama-server --api-key`) or behind a proxy that asks for one. The llama.cpp embedding server has its own key under Vault Brain; leave it empty to use the chat server's. With no key set, Horme sends exactly what it sent before.
+
+**The OpenAI-compatible server counts as cloud** until you turn on **This server is mine** on its page, because a router often passes requests on to cloud services. Turn it on only for a server you run yourself: Horme then sends it notes as it does llama.cpp, without the cloud questions. It is used for chat only; embeddings still come from Ollama on this computer.
 
 ---
 
@@ -302,7 +307,7 @@ Model fields offer the models your provider reports and accept any name you type
 
 | What you see                                    | What to do                                                                                                                                      |
 | ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| The **Connection** dot is red                   | Check that `llama-server` is running and that the address in **Models** matches its port.                                                       |
+| The **Connection** dot is red                   | Check that `llama-server` is running and that the address in **Models** matches its port. If the server was started with `--api-key`, add the key there. |
 | Vault Brain finds nothing                       | Check that the embedding server is running, then press **Rebuild** in **Vault Brain**.                                                          |
 | "Built with another embedding set-up"           | The embedding model or server changed. Switch back, or press **Rebuild** to index your notes with the new one.                                  |
 | Tags are not translated                         | Set a translation model in **Tags**, or use llama.cpp, which needs none.                                                                        |

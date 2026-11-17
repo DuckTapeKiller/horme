@@ -26,6 +26,7 @@ import {
   type ProviderInfo,
 } from "./settings/providers";
 import type { SettingKey, SettingsHost } from "./settings/types";
+import { keepsNotesPrivate } from "../utils/providerAccess";
 import {
   ConnectionChecker,
   ISSUES_URL,
@@ -73,6 +74,8 @@ const DEFAULT_WHEN_BLANK: Partial<Record<SettingKey, string>> = {
   summaryLanguage: DEFAULT_SETTINGS.summaryLanguage,
   conceptNoteSourceField: DEFAULT_SETTINGS.conceptNoteSourceField,
 };
+
+const KEYCHAIN = "Kept in Obsidian's keychain, never in Horme's settings file.";
 
 /** Settings whose change alters which options, pages or labels are drawn. */
 const STRUCTURAL_KEYS = new Set<SettingKey>([
@@ -132,6 +135,22 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
       return;
     }
 
+    // So does saying the OpenAI-compatible server is the user's own: from then
+    // on notes go to it without the cloud questions.
+    if (key === "customIsLocal" && value === true && !s.customIsLocal) {
+      new GenericConfirmModal(
+        this.app,
+        "Treat this server as yours? Horme will send it passages from your notes, the open note and documents without asking, as it does llama.cpp. Cancel if it passes requests on to a cloud service.",
+        () => {
+          s.customIsLocal = true;
+          this.saveSoon();
+          this.refresh(true, true);
+        },
+        () => this.refresh(true, true),
+      ).open();
+      return;
+    }
+
     if (typeof value === "string" && key in DEFAULT_WHEN_BLANK) {
       value = value.trim() || DEFAULT_WHEN_BLANK[key];
     } else if (typeof value === "string" && /Path$|Folder$|Url$|BaseUrl$/.test(key)) {
@@ -142,14 +161,27 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
 
     // Keep dependent choices valid.
     let changedOthers = false;
-    if (key === "allowCloudRAG" && value === false && !isLocalProvider(s.tagsProvider)) {
-      s.tagsProvider = isLocalProvider(s.aiProvider) ? s.aiProvider : "ollama";
+    const consentWithdrawn = key === "allowCloudRAG" || key === "customIsLocal";
+    if (consentWithdrawn && value === false && !s.allowCloudRAG && !keepsNotesPrivate(s, s.tagsProvider)) {
+      s.tagsProvider = keepsNotesPrivate(s, s.aiProvider) ? s.aiProvider : "ollama";
       s.tagsModel = "";
       changedOthers = true;
     }
-    if (key === "allowCloudTagTranslation" && value === false && !isLocalProvider(s.tagTranslationProvider)) {
+    if (
+      (key === "allowCloudTagTranslation" || key === "customIsLocal") &&
+      value === false &&
+      !s.allowCloudTagTranslation &&
+      !keepsNotesPrivate(s, s.tagTranslationProvider)
+    ) {
       s.tagTranslationProvider = s.tagTranslationFallbackProvider;
       changedOthers = true;
+    }
+    // The server is no longer the user's own: the cloud questions apply again.
+    if (key === "customIsLocal" && value === false && before === true) {
+      s.contextCloudWarningShown = false;
+      s.contextNotesCloudWarningShown = false;
+      s.contextFoldersCloudWarningShown = false;
+      s.documentCloudWarningShown = false;
     }
     if (key === "tagsProvider" && value !== before && s.tagsModel) {
       s.tagsModel = "";
@@ -263,16 +295,28 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
   }
 
   private vaultBrainAllowed(): boolean {
-    return isLocalProvider(this.s.aiProvider) || this.s.allowCloudRAG;
+    return keepsNotesPrivate(this.s, this.s.aiProvider) || this.s.allowCloudRAG;
   }
 
+  /** False only for a provider that will not answer without a key and has none. */
   private hasKey(p: ProviderInfo): boolean {
-    return p.local || Boolean(this.plugin.getApiKeyForProvider(p.id));
+    return !p.keyRequired || Boolean(this.plugin.getApiKeyForProvider(p.id));
   }
 
   private providerSummary(p: ProviderInfo): string {
     if (!this.hasKey(p)) return "No API key";
+    if (p.urlKey && !String(this.s[p.urlKey]).trim()) return "No address";
     return providerModel(this.s, p.id) || (p.local ? "Automatic" : "No model");
+  }
+
+  /** What the API key row says for each provider. */
+  private keyDesc(p: ProviderInfo): string {
+    if (p.id === "llamacpp") return `Optional. Only if llama-server was started with --api-key. ${KEYCHAIN}`;
+    if (p.id === "lmstudio") return `Optional. Only if LM Studio's server asks for an API token. ${KEYCHAIN}`;
+    if (p.id === "ollama")
+      return `Optional. Ollama has no keys of its own: add one only if a proxy in front of it asks for one. ${KEYCHAIN}`;
+    if (p.id === "custom") return `Optional. Leave it empty if the server needs none. ${KEYCHAIN}`;
+    return KEYCHAIN;
   }
 
   /* ── Models ──────────────────────────────────────────────────────────── */
@@ -280,13 +324,15 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
   private providerItems(p: ProviderInfo): GroupItem[] {
     const items: GroupItem[] = [];
     if (p.urlKey) {
-      const fallback = String(DEFAULT_SETTINGS[p.urlKey]);
+      const fallback = p.urlPlaceholder ?? String(DEFAULT_SETTINGS[p.urlKey]);
       items.push({
         name: "Server address",
         desc:
           p.id === "llamacpp"
             ? "Where llama-server answers chat requests. Router mode and single-model servers both work."
-            : `Where ${p.name}'s server answers.`,
+            : p.id === "custom"
+              ? "The base address the server's documentation gives for OpenAI's API, usually ending in /v1: http://localhost:4000/v1 for LiteLLM, http://localhost:8000/v1 for vLLM."
+              : `Where ${p.name}'s server answers.`,
         control: {
           type: "text",
           key: p.urlKey,
@@ -299,7 +345,7 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
     if (p.secretKey) {
       items.push({
         name: "API key",
-        desc: "Kept in Obsidian's keychain, never in Horme's settings file.",
+        desc: this.keyDesc(p),
         control: { type: "secret", key: p.secretKey },
       });
     }
@@ -317,9 +363,21 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
         placeholder: p.local ? "Automatic" : undefined,
         provider: () => p.id,
         purpose: "chat",
-        sourceKey: () => (p.urlKey ? String(this.s[p.urlKey]) : String(this.s[p.secretKey ?? "aiProvider"])),
+        // The key counts too: a list refused without it is fetched again once it is added.
+        sourceKey: () =>
+          [p.urlKey ? String(this.s[p.urlKey]) : "", p.secretKey ? String(this.s[p.secretKey]) : ""].join(
+            "|",
+          ),
       }),
     );
+    if (p.privateKey) {
+      items.push({
+        name: "This server is mine",
+        desc: "On: Horme treats it like llama.cpp and may send it passages from your notes, the open note and documents without asking. Leave it off for a router that passes requests on to cloud services.",
+        aliases: ["Treat as local", "private server"],
+        control: { type: "toggle", key: p.privateKey },
+      });
+    }
     return items;
   }
 
@@ -339,7 +397,18 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
             {
               name: "Provider",
               desc: "Chat, text actions and summaries use this. Local providers keep your notes on this computer.",
-              aliases: ["AI provider", "Ollama", "LM Studio", "llama.cpp", "Claude", "Gemini", "OpenAI"],
+              aliases: [
+                "AI provider",
+                "Ollama",
+                "LM Studio",
+                "llama.cpp",
+                "Claude",
+                "Gemini",
+                "OpenAI",
+                "OpenAI-compatible",
+                "LiteLLM",
+                "vLLM",
+              ],
               control: { type: "dropdown", key: "aiProvider", options: providerOptions() },
             },
             connectionItem(this, this.checker),
@@ -513,7 +582,9 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
       noteItem(() =>
         isLocalProvider(this.s.aiProvider)
           ? `Embeddings come from ${providerInfo(ep()).name}, your chat provider.`
-          : "Your chat provider is in the cloud, so embeddings come from Ollama on this computer.",
+          : this.s.aiProvider === "custom"
+            ? "The OpenAI-compatible server is used for chat only, so embeddings come from Ollama on this computer."
+            : "Your chat provider is in the cloud, so embeddings come from Ollama on this computer.",
       ),
       modelField(this, {
         name: "Embedding model",
@@ -522,7 +593,7 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
         listId: "horme-embed-models",
         provider: () => "ollama",
         purpose: "embedding",
-        sourceKey: () => this.s.ollamaBaseUrl,
+        sourceKey: () => `${this.s.ollamaBaseUrl}|${this.s.ollamaSecretId}`,
         visible: () => ep() === "ollama",
       }),
       modelField(this, {
@@ -532,7 +603,7 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
         listId: "horme-lmstudio-embedding-models",
         provider: () => "lmstudio",
         purpose: "embedding",
-        sourceKey: () => this.s.lmStudioUrl,
+        sourceKey: () => `${this.s.lmStudioUrl}|${this.s.lmStudioSecretId}`,
         visible: () => ep() === "lmstudio",
       }),
       {
@@ -549,6 +620,12 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
               : `Enter a full address, such as ${DEFAULT_SETTINGS.llamaCppEmbeddingUrl}`,
         },
       },
+      {
+        name: "Embedding server API key",
+        desc: `Optional. Only if the embedding server was started with --api-key; leave it empty to use the chat server's key. ${KEYCHAIN}`,
+        visible: () => ep() === "llamacpp",
+        control: { type: "secret", key: "llamaCppEmbeddingSecretId" },
+      },
       modelField(this, {
         name: "Embedding model",
         desc: "Leave empty to use the model the embedding server has loaded. Rebuild the index after changing it.",
@@ -556,7 +633,8 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
         listId: "horme-llamacpp-embedding-models",
         provider: () => "llamacpp",
         purpose: "embedding",
-        sourceKey: () => this.s.llamaCppEmbeddingUrl,
+        sourceKey: () =>
+          `${this.s.llamaCppEmbeddingUrl}|${this.s.llamaCppEmbeddingSecretId}|${this.s.llamaCppSecretId}`,
         visible: () => ep() === "llamacpp",
       }),
     ];
@@ -889,7 +967,10 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
       providerModel(this.s, localTranslator()) ||
       (localTranslator() === "llamacpp" ? "automatic" : "");
 
-    const translationOptions: Record<string, string> = providerOptions(this.s.allowCloudTagTranslation);
+    const translationOptions: Record<string, string> = providerOptions(
+      this.s.allowCloudTagTranslation,
+      this.s,
+    );
     return {
       type: "page",
       name: "Tags",
@@ -926,7 +1007,7 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
               control: {
                 type: "dropdown",
                 key: "tagsProvider",
-                options: providerOptions(this.s.allowCloudRAG),
+                options: providerOptions(this.s.allowCloudRAG, this.s),
               },
             },
             modelField(this, {
@@ -1384,7 +1465,11 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
             noteItem(
               "A phone cannot reach a server on this computer at 127.0.0.1 or localhost. Use a cloud provider, or a server address on your network.",
               "info",
-              () => on() && isLocalProvider(this.s.mobileProvider),
+              () =>
+                on() &&
+                (isLocalProvider(this.s.mobileProvider) ||
+                  (this.s.mobileProvider === "custom" &&
+                    /\/\/(?:127\.|localhost|\[::1\])/i.test(this.s.customUrl))),
             ),
           ],
         },

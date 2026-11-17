@@ -13,16 +13,9 @@ import {
   quantizeEmbeddingToInt8,
 } from "../utils/VectorUtils";
 import type { AiProvider as TagProviderId } from "../types";
-import { OllamaProvider } from "../providers/OllamaProvider";
-import { LmStudioProvider } from "../providers/LmStudioProvider";
-import { LlamaCppProvider } from "../providers/LlamaCppProvider";
 import type { AiProvider as AiProviderClient } from "../providers/AiProvider";
-import { ClaudeProvider } from "../providers/ClaudeProvider";
-import { GeminiProvider } from "../providers/GeminiProvider";
-import { OpenAIProvider } from "../providers/OpenAIProvider";
-import { GroqProvider } from "../providers/GroqProvider";
-import { OpenRouterProvider } from "../providers/OpenRouterProvider";
-import { MistralProvider } from "../providers/MistralProvider";
+import { createProvider } from "../providers/createProvider";
+import { isLocalServer, keepsNotesPrivate } from "../utils/providerAccess";
 import {
   asArray,
   asNumberArray,
@@ -1447,8 +1440,9 @@ t1 -> Translation`;
     return results;
   }
 
+  /** Not one of the local servers: when it fails, the local fallback translates. */
   private isCloudProvider(provider: TagProviderId): boolean {
-    return provider !== "ollama" && provider !== "lmstudio" && provider !== "llamacpp";
+    return !isLocalServer(provider);
   }
 
   private getTagTranslationModelFor(provider: TagProviderId): string {
@@ -1468,34 +1462,13 @@ t1 -> Translation`;
     if (provider === "groq") return (s.groqModel || "").trim();
     if (provider === "openrouter") return (s.openRouterModel || "").trim();
     if (provider === "mistral") return (s.mistralModel || "").trim();
+    if (provider === "custom") return (s.customModel || "").trim();
 
     return "";
   }
 
   private createProvider(provider: TagProviderId, maxTokens: number): AiProviderClient {
-    const s = this.plugin.settings;
-    const apiKey = this.plugin.getApiKeyForProvider(provider);
-
-    switch (provider) {
-      case "claude":
-        return new ClaudeProvider(apiKey, s.temperature, maxTokens);
-      case "gemini":
-        return new GeminiProvider(apiKey, s.temperature, maxTokens);
-      case "openai":
-        return new OpenAIProvider(apiKey, s.temperature, maxTokens);
-      case "groq":
-        return new GroqProvider(apiKey, s.temperature, maxTokens);
-      case "openrouter":
-        return new OpenRouterProvider(apiKey, s.temperature, maxTokens);
-      case "mistral":
-        return new MistralProvider(apiKey, s.temperature, maxTokens);
-      case "lmstudio":
-        return new LmStudioProvider(s.lmStudioUrl, s.temperature, maxTokens);
-      case "llamacpp":
-        return new LlamaCppProvider(s.llamaCppUrl, s.temperature, maxTokens);
-      default:
-        return new OllamaProvider(s.ollamaBaseUrl, s.temperature, maxTokens);
-    }
+    return createProvider(this.plugin, provider, maxTokens);
   }
 
   private getTagTranslationChain(maxTokens: number): Array<{
@@ -1508,7 +1481,9 @@ t1 -> Translation`;
     const fallback = s.tagTranslationFallbackProvider;
 
     const chainIds: TagProviderId[] = [];
-    if (!this.isCloudProvider(primary) || s.allowCloudTagTranslation) {
+    // Tag names reach a cloud provider only with consent; the OpenAI-compatible
+    // server the user says is theirs needs none, but still has the local fallback.
+    if (keepsNotesPrivate(s, primary) || s.allowCloudTagTranslation) {
       chainIds.push(primary);
     }
     if (this.isCloudProvider(primary)) {

@@ -507,7 +507,7 @@ export class HormeChatView extends ItemView {
             !this.plugin.isLocalProviderActive() &&
             !this.plugin.settings.contextCloudWarningShown
           ) {
-            const provider = this.plugin.settings.aiProvider.toUpperCase();
+            const provider = providerInfo(this.plugin.settings.aiProvider).name;
             new GenericConfirmModal(
               this.app,
               `Privacy notice: Your current note's full text will be sent to ${provider}, a cloud provider. The content will leave your device. Do you want to continue?`,
@@ -1291,7 +1291,7 @@ export class HormeChatView extends ItemView {
         const info = providerInfo(this.plugin.settings.aiProvider);
         const url = info.urlKey ? String(this.plugin.settings[info.urlKey] ?? "") : "";
         new Notice(
-          info.local
+          info.urlKey
             ? `Horme: No ${info.name} model chosen. If ${info.name} is running${url ? ` at ${url}` : ""}, pick a model in the chat's model menu; if not, start it or choose another provider.`
             : `Horme: No ${info.name} model chosen. Pick one in the chat's model menu.`,
           8000,
@@ -1317,7 +1317,7 @@ export class HormeChatView extends ItemView {
       if (effectivePrompt) systemParts.push(effectivePrompt);
 
       const providerIsLocal = this.plugin.isLocalProviderActive();
-      const providerLabel = this.plugin.settings.aiProvider.toUpperCase();
+      const providerLabel = providerInfo(this.plugin.settings.aiProvider).name;
       const folderContextActive = this.selectedContextFolders.length > 0;
       let folderContextWasTruncated = false;
 
