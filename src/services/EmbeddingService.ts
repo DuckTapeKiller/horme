@@ -2,18 +2,38 @@ import { requestUrl } from "obsidian";
 import HormePlugin from "../../main";
 import { asArray, asNumberArray, errorToMessage, getRecordProp, getStringProp } from "../utils/TypeGuards";
 import { normalizeBaseUrl } from "../utils/normalizeBaseUrl";
+import { bearer, compatBaseUrl, embeddingSourceAllowed, type EmbeddingSource } from "../utils/providerAccess";
 
 export class EmbeddingService {
+  /** Said when an index is to be built while the embedding server may not be sent notes. */
+  static readonly PAUSED_NOTICE =
+    "Vault Brain is paused: the OpenAI-compatible server is not marked as yours. Mark it as yours, or choose another embedding server.";
+
   private plugin: HormePlugin;
 
   constructor(plugin: HormePlugin) {
     this.plugin = plugin;
   }
 
-  /** The local server that makes embeddings: the chat provider when local, else Ollama. */
-  embeddingProvider(): "ollama" | "lmstudio" | "llamacpp" {
-    const p = this.plugin.settings.aiProvider;
-    return p === "ollama" || p === "lmstudio" || p === "llamacpp" ? p : "ollama";
+  /**
+   * The server that makes embeddings: the one chosen under Vault Brain,
+   * whatever answers the chat. (It used to follow the chat provider and fall
+   * back to Ollama for any other, which a llama.cpp user does not have.)
+   */
+  embeddingProvider(): EmbeddingSource {
+    return this.plugin.settings.embeddingSource;
+  }
+
+  /**
+   * Refuses, with the reason, when the chosen server may not be sent notes:
+   * the OpenAI-compatible server no longer marked as the user's own. Nothing
+   * is sent anywhere else instead.
+   */
+  private assertAllowed(): void {
+    if (embeddingSourceAllowed(this.plugin.settings)) return;
+    throw new Error(
+      'Vault Brain is paused: the OpenAI-compatible server is not marked as yours, so your notes are not sent to it. Turn on "This server is mine" on its page in Models, or choose another embedding server under Vault Brain.',
+    );
   }
 
   /**
@@ -26,6 +46,7 @@ export class EmbeddingService {
     const p = this.embeddingProvider();
     if (p === "lmstudio") return `lmstudio:${s.lmStudioEmbeddingModel.trim() || "auto"}`;
     if (p === "llamacpp") return `llamacpp:${s.llamaCppEmbeddingModel.trim() || "auto"}`;
+    if (p === "custom") return `custom:${s.customEmbeddingModel.trim() || "auto"}`;
     return `ollama:${s.ragEmbeddingModel.trim() || "nomic-embed-text"}`;
   }
 
@@ -42,7 +63,7 @@ export class EmbeddingService {
    * counts as built with another set-up.
    */
   upgradeLegacyLabel(stored: string): string {
-    if (!stored || /^(ollama|lmstudio|llamacpp):/.test(stored)) return stored;
+    if (!stored || /^(ollama|lmstudio|llamacpp|custom):/.test(stored)) return stored;
     return stored === this.plugin.settings.ragEmbeddingModel.trim() ? this.embeddingFingerprint() : stored;
   }
 
@@ -56,6 +77,7 @@ export class EmbeddingService {
     const p = this.embeddingProvider();
     if (p === "lmstudio") return s.lmStudioEmbeddingModel.trim() || this.lmStudioDetectedEmbeddingModel || "";
     if (p === "llamacpp") return s.llamaCppEmbeddingModel.trim() || this.llamaCppDetectedEmbeddingModel || "";
+    if (p === "custom") return s.customEmbeddingModel.trim() || this.customDetectedEmbeddingModel || "";
     return s.ragEmbeddingModel.trim() || "nomic-embed-text";
   }
 
@@ -64,6 +86,8 @@ export class EmbeddingService {
     try {
       if (p === "lmstudio") return await this.resolveLmStudioEmbeddingModel();
       if (p === "llamacpp") return await this.resolveLlamaCppEmbeddingModel();
+      if (p === "custom" && embeddingSourceAllowed(this.plugin.settings))
+        return await this.resolveCompatEmbeddingModel();
     } catch {
       // The embedding call itself reports the problem; the name only picks prefixes.
     }
@@ -82,6 +106,7 @@ export class EmbeddingService {
    * Generates embeddings for multiple text chunks in a single batch request.
    */
   async getEmbeddings(texts: string[]): Promise<number[][]> {
+    this.assertAllowed();
     const embedProvider = this.embeddingProvider();
 
     const BATCH_SIZE = 32;
@@ -104,12 +129,10 @@ export class EmbeddingService {
     return allEmbeddings;
   }
 
-  private async embedBatch(
-    provider: "ollama" | "lmstudio" | "llamacpp",
-    batch: string[],
-  ): Promise<number[][]> {
+  private async embedBatch(provider: EmbeddingSource, batch: string[]): Promise<number[][]> {
     if (provider === "ollama") return this.getOllamaEmbeddingsBatch(batch);
     if (provider === "lmstudio") return this.getLMStudioEmbeddingsBatch(batch);
+    if (provider === "custom") return this.getCompatEmbeddingsBatch(batch);
     return this.getLlamaCppEmbeddingsBatch(batch);
   }
 
@@ -117,10 +140,7 @@ export class EmbeddingService {
     return /too large|too long|exceed|context|maximum|token|413|physical batch/i.test(errorToMessage(e));
   }
 
-  private async embedOneShortening(
-    provider: "ollama" | "lmstudio" | "llamacpp",
-    text: string,
-  ): Promise<number[]> {
+  private async embedOneShortening(provider: EmbeddingSource, text: string): Promise<number[]> {
     let lastError: unknown = null;
     for (const share of [1, 0.75, 0.5, 0.3]) {
       const input = share === 1 ? text : text.slice(0, Math.max(50, Math.floor(text.length * share)));
@@ -393,6 +413,77 @@ export class EmbeddingService {
       return out;
     } catch (e: unknown) {
       throw new Error(`llama.cpp batch embedding failed: ${errorToMessage(e)}`);
+    }
+  }
+
+  /** Cached embedding-model detection on the OpenAI-compatible server for this session. */
+  private customDetectedEmbeddingModel: string | null = null;
+
+  /**
+   * The OpenAI-compatible server's embedding model: the setting first, then a
+   * model whose name says it embeds, from the server's own list. Never the
+   * chat model: a chat model cannot embed.
+   */
+  private async resolveCompatEmbeddingModel(): Promise<string> {
+    const s = this.plugin.settings;
+    const configured = s.customEmbeddingModel.trim();
+    if (configured) return configured;
+    if (this.customDetectedEmbeddingModel) return this.customDetectedEmbeddingModel;
+    const base = compatBaseUrl(s.customUrl);
+    if (!base) throw new Error("The OpenAI-compatible server has no address yet. Add it on the Models page.");
+    const res = await requestUrl({
+      url: `${base}/models`,
+      headers: bearer(this.plugin.getApiKeyForProvider("custom")),
+      throw: false,
+    });
+    if (res.status === 401 || res.status === 403)
+      throw new Error(
+        "The OpenAI-compatible server refused the request: add its API key on the Models page, or check the one there.",
+      );
+    if (res.status === 200) {
+      const dataArr = asArray(getRecordProp(res.json as unknown, "data")) ?? [];
+      const ids = dataArr.map((m) => getStringProp(m, "id")).filter((m): m is string => Boolean(m));
+      const detected = ids.find((id) => /embed/i.test(id));
+      if (detected) {
+        this.customDetectedEmbeddingModel = detected;
+        return detected;
+      }
+    }
+    throw new Error(
+      "No embedding model found on the OpenAI-compatible server. Set its embedding model under Vault Brain.",
+    );
+  }
+
+  private async getCompatEmbeddingsBatch(inputs: string[]): Promise<number[][]> {
+    try {
+      const model = await this.resolveCompatEmbeddingModel();
+      const res = await requestUrl({
+        url: `${compatBaseUrl(this.plugin.settings.customUrl)}/embeddings`,
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...bearer(this.plugin.getApiKeyForProvider("custom")),
+        },
+        body: JSON.stringify({ model, input: inputs }),
+        throw: false,
+      });
+      if (res.status !== 200) throw new Error(`${res.status} - ${String(res.text).slice(0, 300)}`);
+      const dataArr = asArray(getRecordProp(res.json as unknown, "data"));
+      if (!dataArr || dataArr.length !== inputs.length)
+        throw new Error("response data missing or length mismatch");
+      // OpenAI's API gives each vector its input's index; keep that order.
+      const ordered = [...dataArr].sort((a, b) => {
+        const ia = Number(getRecordProp(a, "index") ?? 0);
+        const ib = Number(getRecordProp(b, "index") ?? 0);
+        return ia - ib;
+      });
+      return ordered.map((item) => {
+        const embedding = asNumberArray(getRecordProp(item, "embedding"));
+        if (!embedding) throw new Error("item missing vector data");
+        return embedding;
+      });
+    } catch (e: unknown) {
+      throw new Error(`OpenAI-compatible server embedding failed: ${errorToMessage(e)}`);
     }
   }
 

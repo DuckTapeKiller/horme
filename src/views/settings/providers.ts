@@ -4,7 +4,13 @@ import { PROVIDER_MODELS } from "../../constants";
 import type { AiProvider, HormeSettings } from "../../types";
 import { asArray, getRecordProp, getStringProp } from "../../utils/TypeGuards";
 import { normalizeBaseUrl } from "../../utils/normalizeBaseUrl";
-import { bearer, compatBaseUrl, isLocalServer, keepsNotesPrivate } from "../../utils/providerAccess";
+import {
+  bearer,
+  compatBaseUrl,
+  isLocalServer,
+  keepsNotesPrivate,
+  type EmbeddingSource,
+} from "../../utils/providerAccess";
 import type { BooleanKey, StringKey } from "./types";
 
 export type LocalProviderId = "llamacpp" | "ollama" | "lmstudio";
@@ -158,12 +164,30 @@ export function providerModel(s: HormeSettings, id: AiProvider): string {
   return String(s[providerInfo(id).modelKey] ?? "").trim();
 }
 
+/** The embedding server chosen under Vault Brain, whatever answers the chat. */
+export function embeddingProvider(s: HormeSettings): EmbeddingSource {
+  return s.embeddingSource;
+}
+
 /**
- * Embeddings always come from a local server. The active chat provider is used
- * when it is local; with a cloud chat provider Horme falls back to Ollama.
+ * The servers that may make embeddings: only ones the user runs. The
+ * OpenAI-compatible server is offered once the user says it is theirs (and
+ * shown, marked paused, while it is chosen but no longer theirs).
  */
-export function embeddingProvider(s: HormeSettings): LocalProviderId {
-  return isLocalProvider(s.aiProvider) ? s.aiProvider : "ollama";
+export function embeddingOptions(s: HormeSettings): Record<string, string> {
+  const out: Record<string, string> = { llamacpp: "llama.cpp", lmstudio: "LM Studio", ollama: "Ollama" };
+  if (s.customIsLocal) out.custom = "OpenAI-compatible server";
+  else if (s.embeddingSource === "custom") out.custom = "OpenAI-compatible server (paused)";
+  return out;
+}
+
+/** Where the chosen embedding server lives. */
+export function embeddingAddress(s: HormeSettings): string {
+  const p = s.embeddingSource;
+  if (p === "llamacpp") return s.llamaCppEmbeddingUrl.trim();
+  if (p === "lmstudio") return s.lmStudioUrl.trim();
+  if (p === "custom") return s.customUrl.trim();
+  return s.ollamaBaseUrl.trim();
 }
 
 export type ModelPurpose = "chat" | "embedding" | "any";

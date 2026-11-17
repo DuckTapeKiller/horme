@@ -46,6 +46,12 @@ export interface HormeSettings {
   llamaCppEmbeddingSecretId: string;
   /** Embedding model id for llama.cpp RAG (chat models cannot embed). */
   llamaCppEmbeddingModel: string;
+  /**
+   * The server that makes embeddings for Vault Brain, the tag index, the
+   * grammar index and Deep Research, whatever answers the chat. Only servers
+   * the user runs: indexing sends the full text of every note.
+   */
+  embeddingSource: "llamacpp" | "lmstudio" | "ollama" | "custom";
   /** Offer skills as native OpenAI-schema tools on LM Studio/Ollama (XML stays the fallback). */
   nativeToolCalling: boolean;
   /** Agent mode: plan-first prompting and a larger tool budget for multi-step tasks. */
@@ -72,6 +78,8 @@ export interface HormeSettings {
   /** Keychain name of the OpenAI-compatible server's key ("" when it needs none). */
   customSecretId: string;
   customModel: string;
+  /** Embedding model on the OpenAI-compatible server; "" detects one whose name says "embed". */
+  customEmbeddingModel: string;
   /** The user says the OpenAI-compatible server is theirs: notes may go to it as to a local provider. */
   customIsLocal: boolean;
   systemPromptPath: string;

@@ -1,6 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert";
-import { bearer, compatBaseUrl, isLocalServer, keepsNotesPrivate } from "../src/utils/providerAccess";
+import {
+  bearer,
+  compatBaseUrl,
+  embeddingSourceAllowed,
+  initialEmbeddingSource,
+  isEmbeddingSource,
+  isLocalServer,
+  keepsNotesPrivate,
+} from "../src/utils/providerAccess";
 
 void test("bearer: no key sends no header at all", () => {
   assert.deepStrictEqual(bearer(""), {});
@@ -56,4 +64,51 @@ void test("keepsNotesPrivate: the OpenAI-compatible server counts as cloud until
   assert.strictEqual(keepsNotesPrivate({ customIsLocal: false }, "custom"), false);
   assert.strictEqual(keepsNotesPrivate({} as { customIsLocal: boolean }, "custom"), false);
   assert.strictEqual(keepsNotesPrivate({ customIsLocal: true }, "custom"), true);
+});
+
+void test("isEmbeddingSource accepts the four servers only", () => {
+  for (const v of ["llamacpp", "lmstudio", "ollama", "custom"])
+    assert.strictEqual(isEmbeddingSource(v), true, v);
+  for (const v of ["openai", "claude", "", undefined, null, 3])
+    assert.strictEqual(isEmbeddingSource(v), false);
+});
+
+void test("embeddingSourceAllowed: local servers always; the OpenAI-compatible server only while it is yours", () => {
+  for (const id of ["llamacpp", "lmstudio", "ollama"] as const) {
+    assert.strictEqual(embeddingSourceAllowed({ embeddingSource: id, customIsLocal: false }), true, id);
+  }
+  assert.strictEqual(embeddingSourceAllowed({ embeddingSource: "custom", customIsLocal: false }), false);
+  assert.strictEqual(embeddingSourceAllowed({ embeddingSource: "custom", customIsLocal: true }), true);
+});
+
+void test("initialEmbeddingSource keeps the server an existing index was built with", () => {
+  // Embeddings followed a local chat provider...
+  assert.strictEqual(initialEmbeddingSource({ aiProvider: "llamacpp" }, "llamacpp"), "llamacpp");
+  assert.strictEqual(initialEmbeddingSource({ aiProvider: "lmstudio" }, "llamacpp"), "lmstudio");
+  assert.strictEqual(initialEmbeddingSource({ aiProvider: "ollama" }, "llamacpp"), "ollama");
+  // ...and came from Ollama for every other one.
+  for (const p of ["claude", "gemini", "openai", "groq", "openrouter", "mistral", "custom"]) {
+    assert.strictEqual(initialEmbeddingSource({ aiProvider: p }, "llamacpp"), "ollama", p);
+  }
+});
+
+void test("initialEmbeddingSource leaves a saved choice and a new install alone", () => {
+  assert.strictEqual(
+    initialEmbeddingSource({ aiProvider: "gemini", embeddingSource: "llamacpp" }, "llamacpp"),
+    null,
+  );
+  assert.strictEqual(
+    initialEmbeddingSource({ aiProvider: "llamacpp", embeddingSource: "custom" }, "llamacpp"),
+    null,
+  );
+  assert.strictEqual(initialEmbeddingSource({}, "llamacpp"), null);
+});
+
+void test("initialEmbeddingSource repairs an unreadable choice, and uses the default chat provider when none is saved", () => {
+  assert.strictEqual(
+    initialEmbeddingSource({ aiProvider: "llamacpp", embeddingSource: "nonsense" }, "llamacpp"),
+    "llamacpp",
+  );
+  assert.strictEqual(initialEmbeddingSource({ temperature: 0.5 }, "llamacpp"), "llamacpp");
+  assert.strictEqual(initialEmbeddingSource({ temperature: 0.5 }, "ollama"), "ollama");
 });

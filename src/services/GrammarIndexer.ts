@@ -95,6 +95,12 @@ export class GrammarIndexer {
       new Notice("Horme Grammar Scholar: Indexing is already in progress.");
       return;
     }
+    // Nothing is sent to an embedding server that may not be sent notes; the
+    // index in place is kept.
+    if (!this.plugin.embeddingsAllowed()) {
+      new Notice(EmbeddingService.PAUSED_NOTICE, 10000);
+      return;
+    }
     this.isIndexing = true;
 
     try {

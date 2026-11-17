@@ -171,6 +171,69 @@ export class VaultIndexer {
     this.pathIndex.delete(path);
   }
 
+  private forgetSaveTimer: number | null = null;
+
+  /**
+   * A note was deleted or renamed: its passages leave the index on disk too.
+   * (They used to leave memory only, came back at the next start, and were
+   * offered as sources for notes that no longer exist.)
+   */
+  public forgetNote(path: string): void {
+    if (!this.pathIndex.get(path)?.length) return;
+    this.removeEntriesForPath(path);
+    // Several deletions at once (a folder) are saved together.
+    if (this.forgetSaveTimer !== null) window.clearTimeout(this.forgetSaveTimer);
+    this.forgetSaveTimer = window.setTimeout(() => {
+      this.forgetSaveTimer = null;
+      void this.saveIndex().catch((e: unknown) => {
+        this.plugin.diagnosticService.report(
+          "Vault Brain",
+          `Saving after a deletion failed: ${errorToMessage(e)}`,
+        );
+      });
+    }, 2000);
+  }
+
+  /**
+   * Drops the passages of notes that no longer exist, deleted or moved while
+   * Obsidian was closed (or while it was open, before forgetNote saved). Run
+   * once the vault has loaded. Changes nothing when more than half of the
+   * indexed notes look missing: a vault still loading or a folder offline.
+   * Returns how many notes were dropped.
+   */
+  async pruneVanishedNotes(): Promise<number> {
+    const deadline = Date.now() + 60_000;
+    while (!this.isLoaded && Date.now() < deadline) {
+      await new Promise<void>((r) => window.setTimeout(r, 200));
+    }
+    if (!this.isLoaded || this.loadWasPartial || this.isIndexing || this.pathIndex.size === 0) return 0;
+    const vault = this.plugin.app.vault;
+    const missing = [...this.pathIndex.keys()].filter(
+      (p) => !(vault.getAbstractFileByPath(p) instanceof TFile),
+    );
+    if (missing.length === 0) return 0;
+    if (missing.length > this.pathIndex.size / 2) {
+      this.plugin.diagnosticService.report(
+        "Vault Brain",
+        `${missing.length} of ${this.pathIndex.size} indexed notes were not found; the index was left as it is. Rebuild it if those notes are really gone.`,
+        "warning",
+      );
+      return 0;
+    }
+    let passages = 0;
+    for (const p of missing) {
+      passages += this.pathIndex.get(p)?.length ?? 0;
+      this.removeEntriesForPath(p);
+    }
+    await this.saveIndex();
+    this.plugin.diagnosticService.report(
+      "Vault Brain",
+      `Removed ${passages} passages of ${missing.length} notes that no longer exist.`,
+      "info",
+    );
+    return missing.length;
+  }
+
   /** Adds entries and updates the Map */
   private addEntries(entries: IndexEntry[]): void {
     for (const entry of entries) {
@@ -267,6 +330,7 @@ export class VaultIndexer {
     const p = this.plugin.embeddingService.embeddingProvider();
     if (p === "llamacpp") return `the llama.cpp embedding server at ${s.llamaCppEmbeddingUrl}`;
     if (p === "lmstudio") return `LM Studio at ${s.lmStudioUrl}`;
+    if (p === "custom") return `the OpenAI-compatible server at ${s.customUrl || "(no address)"}`;
     return `Ollama at ${s.ollamaBaseUrl} with "${s.ragEmbeddingModel || "nomic-embed-text"}"`;
   }
   private spaceMismatchNotified = false;
@@ -1602,9 +1666,14 @@ t1 -> Translation`;
     try {
       this.plugin.setIndexingStatus("Initializing Index Rebuild...");
 
-      // Decoupled Privacy Guard: Indexing is allowed if the embedding model is local (Ollama).
-      // Summaries are extracted via regex (local).
-      // Tag translation will be handled locally or reported as a warning if it fails.
+      // Privacy guard: indexing sends the full text of every note to the
+      // embedding server, so it runs only when that server is the user's own
+      // (whatever answers the chat). Summaries are extracted locally; tag
+      // translation has its own consent.
+      if (!this.plugin.embeddingsAllowed()) {
+        new Notice(EmbeddingService.PAUSED_NOTICE, 10000);
+        return;
+      }
       if (
         this.plugin.embeddingService.embeddingProvider() === "ollama" &&
         !this.plugin.settings.ragEmbeddingModel
@@ -1968,8 +2037,11 @@ t1 -> Translation`;
    * Enqueues a file for indexing.
    */
   async enqueueIndex(file: TFile) {
-    const canIndex = this.plugin.isLocalProviderActive() || this.plugin.settings.allowCloudRAG;
-    if (!canIndex || !this.plugin.settings.vaultBrainEnabled) {
+    // Indexing only reaches the embedding server, never the chat provider, so
+    // it is that server that must be the user's own; with a cloud chat the
+    // index still keeps up with edits (searching it for the chat is gated
+    // separately, in search()).
+    if (!this.plugin.embeddingsAllowed() || !this.plugin.settings.vaultBrainEnabled) {
       return;
     }
     // Incremental indexing is only allowed after at least one successful full build,
@@ -2043,10 +2115,11 @@ t1 -> Translation`;
       }
 
       while (this.indexingQueue.length > 0) {
-        // Re-check on every iteration — provider may have changed since enqueue
-        const canStillIndex = this.plugin.isLocalProviderActive() || this.plugin.settings.allowCloudRAG;
-        if (!canStillIndex || !this.plugin.settings.vaultBrainEnabled) {
-          this.plugin.debugLog("Horme Brain: Provider changed during queue processing. Clearing queue.");
+        // Re-check on every iteration: the embedding server may have stopped being allowed since enqueue.
+        if (!this.plugin.embeddingsAllowed() || !this.plugin.settings.vaultBrainEnabled) {
+          this.plugin.debugLog(
+            "Horme Brain: Embedding server no longer allowed during queue processing. Clearing queue.",
+          );
           this.indexingQueue = [];
           break;
         }

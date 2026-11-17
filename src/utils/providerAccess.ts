@@ -43,3 +43,37 @@ export function compatBaseUrl(raw: string): string {
 export function keepsNotesPrivate(s: Pick<HormeSettings, "customIsLocal">, id: AiProvider): boolean {
   return isLocalServer(id) || (id === "custom" && s.customIsLocal === true);
 }
+
+/** The servers that may make embeddings. */
+export type EmbeddingSource = HormeSettings["embeddingSource"];
+
+export function isEmbeddingSource(v: unknown): v is EmbeddingSource {
+  return v === "llamacpp" || v === "lmstudio" || v === "ollama" || v === "custom";
+}
+
+/**
+ * True when the chosen embedding server may be sent notes. Building the index
+ * sends the full text of every note, so only servers the user runs qualify:
+ * the local servers, and the OpenAI-compatible server only while the user
+ * says it is theirs. There is no fallback to another server.
+ */
+export function embeddingSourceAllowed(s: Pick<HormeSettings, "embeddingSource" | "customIsLocal">): boolean {
+  return isLocalServer(s.embeddingSource) || (s.embeddingSource === "custom" && s.customIsLocal === true);
+}
+
+/**
+ * The embedding server for settings saved before it could be chosen: the one
+ * their index was built with, so no index has to be rebuilt. That was the chat
+ * provider when it was a local server, and Ollama for every other provider.
+ * Returns null when nothing needs setting: a valid choice is already saved,
+ * or this is a new install (no saved settings), which takes the default.
+ */
+export function initialEmbeddingSource(
+  saved: Record<string, unknown>,
+  defaultChatProvider: string,
+): EmbeddingSource | null {
+  if (isEmbeddingSource(saved.embeddingSource)) return null;
+  if (Object.keys(saved).length === 0) return null;
+  const chat = typeof saved.aiProvider === "string" ? saved.aiProvider : defaultChatProvider;
+  return isLocalServer(chat) ? chat : "ollama";
+}

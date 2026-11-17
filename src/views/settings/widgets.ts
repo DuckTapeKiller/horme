@@ -160,7 +160,8 @@ export function heroItem(host: SettingsHost, checker: ConnectionChecker): Settin
       const vb = plugin.vaultIndexer;
       const brainChip = chips.createDiv({ cls: "horme-chip" });
       setIcon(brainChip.createSpan({ cls: "horme-chip-icon" }), "brain");
-      const blocked = !keepsNotesPrivate(s, s.aiProvider) && !s.allowCloudRAG;
+      const blocked =
+        (!keepsNotesPrivate(s, s.aiProvider) && !s.allowCloudRAG) || !plugin.embeddingsAllowed();
       if (!s.vaultBrainEnabled) brainChip.createSpan({ text: "Vault Brain off" });
       else if (blocked) {
         brainChip.addClass("is-warn");

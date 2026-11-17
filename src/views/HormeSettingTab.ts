@@ -1,5 +1,6 @@
 import {
   App,
+  Notice,
   Platform,
   PluginSettingTab,
   Setting,
@@ -18,6 +19,8 @@ import { CustomSkillModal } from "../modals/CustomSkillModal";
 import { modelField } from "./settings/modelField";
 import {
   PROVIDERS,
+  embeddingAddress,
+  embeddingOptions,
   embeddingProvider,
   isLocalProvider,
   providerInfo,
@@ -27,6 +30,7 @@ import {
 } from "./settings/providers";
 import type { SettingKey, SettingsHost } from "./settings/types";
 import { keepsNotesPrivate } from "../utils/providerAccess";
+import { isPublicHttpUrl } from "../utils/urlSafety";
 import {
   ConnectionChecker,
   ISSUES_URL,
@@ -85,6 +89,7 @@ const STRUCTURAL_KEYS = new Set<SettingKey>([
   "tagTranslationProvider",
   "tagTranslationFallbackProvider",
   "connectionsDisplayStyle",
+  "embeddingSource",
   "tagShadowingLanguage",
 ]);
 
@@ -176,7 +181,14 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
       s.tagTranslationProvider = s.tagTranslationFallbackProvider;
       changedOthers = true;
     }
-    // The server is no longer the user's own: the cloud questions apply again.
+    // The server is no longer the user's own: the cloud questions apply again,
+    // and embeddings from it stop (they never move to another server by themselves).
+    if (key === "customIsLocal" && value === false && before === true && s.embeddingSource === "custom") {
+      new Notice(
+        "Horme: Vault Brain is paused. Its embeddings come from the OpenAI-compatible server, which is no longer marked as yours.",
+        10000,
+      );
+    }
     if (key === "customIsLocal" && value === false && before === true) {
       s.contextCloudWarningShown = false;
       s.contextNotesCloudWarningShown = false;
@@ -377,6 +389,17 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
         aliases: ["Treat as local", "private server"],
         control: { type: "toggle", key: p.privateKey },
       });
+    }
+    if (p.urlKey) {
+      const urlKey = p.urlKey;
+      items.push(
+        noteItem(
+          () =>
+            `${String(this.s[urlKey]).trim()} is on the internet. Horme treats ${p.name} as yours and sends it your notes without asking: use it only if you run that server.`,
+          "warning",
+          () => keepsNotesPrivate(this.s, p.id) && isPublicHttpUrl(String(this.s[urlKey]).trim()),
+        ),
+      );
     }
     return items;
   }
@@ -579,13 +602,48 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
   private embeddingItems(): GroupItem[] {
     const ep = () => embeddingProvider(this.s);
     return [
-      noteItem(() =>
-        isLocalProvider(this.s.aiProvider)
-          ? `Embeddings come from ${providerInfo(ep()).name}, your chat provider.`
-          : this.s.aiProvider === "custom"
-            ? "The OpenAI-compatible server is used for chat only, so embeddings come from Ollama on this computer."
-            : "Your chat provider is in the cloud, so embeddings come from Ollama on this computer.",
+      {
+        name: "Embeddings from",
+        desc: "The server that turns your notes into vectors for Vault Brain, tag suggestions and grammar search, whatever answers the chat. Only servers you run are offered, because indexing sends the full text of every note. Rebuild the index after changing it.",
+        aliases: ["Embedding provider", "Embedding server"],
+        control: { type: "dropdown", key: "embeddingSource", options: embeddingOptions(this.s) },
+      },
+      noteItem(
+        'Paused: the OpenAI-compatible server is not marked as yours, so no notes are sent to it. Turn on "This server is mine" on its page in Models, or choose another server here.',
+        "warning",
+        () => !this.plugin.embeddingsAllowed(),
       ),
+      noteItem(
+        () =>
+          `${embeddingAddress(this.s)} is on the internet: indexing sends the full text of your notes there. Use it only if you run that server.`,
+        "warning",
+        () => this.plugin.embeddingsAllowed() && isPublicHttpUrl(embeddingAddress(this.s)),
+      ),
+      noteItem(
+        "Uses the server address and API key set for LM Studio in Models.",
+        "info",
+        () => ep() === "lmstudio",
+      ),
+      noteItem(
+        "Uses the server address and API key set for Ollama in Models.",
+        "info",
+        () => ep() === "ollama",
+      ),
+      noteItem(
+        "Uses the server address and API key set for the OpenAI-compatible server in Models.",
+        "info",
+        () => ep() === "custom",
+      ),
+      modelField(this, {
+        name: "Embedding model",
+        desc: 'Leave empty to use the first model whose name says "embed". Rebuild the index after changing it.',
+        key: "customEmbeddingModel",
+        listId: "horme-custom-embedding-models",
+        provider: () => "custom",
+        purpose: "embedding",
+        sourceKey: () => `${this.s.customUrl}|${this.s.customSecretId}`,
+        visible: () => ep() === "custom",
+      }),
       modelField(this, {
         name: "Embedding model",
         desc: "An embedding model in Ollama, such as nomic-embed-text. Rebuild the index after changing it.",
@@ -691,7 +749,9 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
             },
           ],
         },
-        { type: "group", heading: "Embeddings", visible: on, items: this.embeddingItems() },
+        // Tag suggestions and grammar search use the embedding server too, and
+        // it never depends on the chat provider, so it is always shown.
+        { type: "group", heading: "Embeddings", items: this.embeddingItems() },
         {
           type: "group",
           heading: "What to index",

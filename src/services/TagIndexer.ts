@@ -139,6 +139,12 @@ export class TagIndexer {
       new Notice("Horme: Tag indexing is already in progress.");
       return;
     }
+    // Nothing is sent to an embedding server that may not be sent notes; the
+    // index in place is kept.
+    if (!this.plugin.embeddingsAllowed()) {
+      new Notice(EmbeddingService.PAUSED_NOTICE, 10000);
+      return;
+    }
     this.isIndexing = true;
 
     try {
@@ -236,9 +242,9 @@ export class TagIndexer {
     }
 
     try {
-      // Note: No isLocalProviderActive() guard here because EmbeddingService
-      // always routes embeddings to Ollama, even when the chat provider is cloud.
-      // This ensures tag suggestions work without leaking data to the cloud.
+      // No chat-provider guard here: embeddings come from the embedding server
+      // chosen under Vault Brain, which is always the user's own (EmbeddingService
+      // refuses otherwise), so tag suggestions work with a cloud chat too.
       const queryEmbedding = await this.plugin.embeddingService.getEmbedding(text.slice(0, 1500));
 
       const scored = this.index.map((entry) => {

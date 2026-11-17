@@ -64,7 +64,14 @@ import {
   type PhoneChoice,
 } from "./src/utils/mobileOverride";
 import { listModels, providerInfo } from "./src/views/settings/providers";
-import { bearer, compatBaseUrl, keepsNotesPrivate, type LocalServerId } from "./src/utils/providerAccess";
+import {
+  bearer,
+  compatBaseUrl,
+  embeddingSourceAllowed,
+  initialEmbeddingSource,
+  keepsNotesPrivate,
+  type LocalServerId,
+} from "./src/utils/providerAccess";
 
 /** Where a phone keeps the provider and model it chose for itself (device storage). */
 const PHONE_CHOICE_KEY = "horme-phone-choice";
@@ -423,6 +430,16 @@ export default class HormePlugin extends Plugin {
     // Obsidian fires "create" for every file while the vault loads; registering
     // after the layout is ready means only notes created afterwards are queued.
     this.app.workspace.onLayoutReady(() => {
+      // Notes deleted or moved while Obsidian was closed leave the index.
+      void this.vaultIndexer
+        .pruneVanishedNotes()
+        .catch((e: unknown) =>
+          this.diagnosticService.report(
+            "Vault Brain",
+            `Start-up clean-up failed: ${errorToMessage(e)}`,
+            "warning",
+          ),
+        );
       this.registerEvent(
         this.app.vault.on("create", (file) => {
           if (file instanceof TFile && file.path.endsWith(".md")) {
@@ -442,7 +459,7 @@ export default class HormePlugin extends Plugin {
             this.indexDebounceMap.delete(file.path);
           }
         }
-        this.vaultIndexer.removeEntriesForPath(file.path);
+        this.vaultIndexer.forgetNote(file.path);
       }),
     );
 
@@ -454,7 +471,7 @@ export default class HormePlugin extends Plugin {
           window.clearTimeout(existing);
           this.indexDebounceMap.delete(oldPath);
         }
-        this.vaultIndexer.removeEntriesForPath(oldPath);
+        this.vaultIndexer.forgetNote(oldPath);
         if (file.path.endsWith(".md")) {
           void this.vaultIndexer.enqueueIndex(file).catch((e) => this.handleError(e));
         }
@@ -969,6 +986,15 @@ RULES:
     return keepsNotesPrivate(this.settings, this.settings.aiProvider);
   }
 
+  /**
+   * True when the chosen embedding server may be sent notes to index: a local
+   * server, or the OpenAI-compatible server while the user says it is theirs.
+   * It has nothing to do with the chat provider.
+   */
+  embeddingsAllowed(): boolean {
+    return embeddingSourceAllowed(this.settings);
+  }
+
   /* ── Core ── */
 
   async activateChat() {
@@ -1368,6 +1394,10 @@ RULES:
         : {};
 
     const migrated = this.migrateLegacyApiKeysToSecretStorage(loaded);
+    // Embeddings used to follow the chat provider; settings from before keep
+    // the server their index was built with.
+    const embeddingSource = initialEmbeddingSource(loaded, DEFAULT_SETTINGS.aiProvider);
+    if (embeddingSource) loaded.embeddingSource = embeddingSource;
     this.settings = Object.assign({}, DEFAULT_SETTINGS, loaded);
     const sanitized = this.sanitizeSettings();
     // A model its provider has retired can only fail: move it to the replacement.
@@ -1381,7 +1411,7 @@ RULES:
         10000,
       );
     }
-    if (migrated || sanitized || moved.length > 0) {
+    if (migrated || sanitized || moved.length > 0 || embeddingSource) {
       // Persist the sanitized settings immediately so API keys never remain in data.json.
       await this.saveData(this.settings);
     }
