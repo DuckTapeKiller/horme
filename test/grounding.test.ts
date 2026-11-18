@@ -1,6 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { factTokens, groundedShare, notesUsed } from "../src/utils/grounding";
+import {
+  factTokens,
+  groundedShare,
+  namesOutsideSource,
+  notesUsed,
+  titleNamesQuestion,
+} from "../src/utils/grounding";
 
 void test("facts are numbers and names, not sentence openers", () => {
   const f = factTokens("The Penny Black was issued on 1 May 1840 by Rowland Hill. It cost 1d.");
@@ -36,5 +42,33 @@ void test("only the notes holding the answer's facts are listed", () => {
   assert.deepEqual(notesUsed("The Peregrine was written by J A Baker and published in 1967.", notes, []), [
     "Library/The Peregrine.md",
   ]);
-  assert.deepEqual(notesUsed("Yes.", notes, ["a", "b"]), ["a", "b"]);
+  assert.deepEqual(notesUsed("Yes.", notes, ["a", "b"]), []);
+  assert.deepEqual(
+    notesUsed(
+      "No, «le vi ayer» no es correcto: se usa «lo».",
+      notes,
+      ["Wiki — Gramática castellana.md", "Wiki — Miguel de Cervantes.md", "Wiki — Garcilaso de la Vega.md"],
+      "Según mis notas de gramática, ¿es correcto decir «le vi ayer»?",
+    ),
+    ["Wiki — Gramática castellana.md"],
+  );
+});
+
+void test("a question that names an outside source is not told the vault had nothing", () => {
+  assert.equal(namesOutsideSource("What does Wikipedia say about Titivillus?"), true);
+  assert.equal(namesOutsideSource("Summarise https://en.wikipedia.org/wiki/Titivillus"), true);
+  assert.equal(namesOutsideSource("Busca en la web la última versión de Obsidian"), true);
+  assert.equal(namesOutsideSource("Research what a medieval scriptorium was. Cite your sources."), true);
+  assert.equal(namesOutsideSource("Investiga qué era un scriptorium"), true);
+  assert.equal(namesOutsideSource("What does my research note say about scribes?"), false);
+  assert.equal(namesOutsideSource("Who was Titivillus?"), false);
+  assert.equal(namesOutsideSource("Is my onlineness a word?"), false);
+});
+
+void test("a note named after the question's subject means the vault holds it, in any language", () => {
+  const sent = ["1 - Wiki/Wiki — Titivillus.md", "Notas/Copistas medievales.md"];
+  assert.equal(titleNamesQuestion("What did Titivillus do?", sent), true);
+  assert.equal(titleNamesQuestion("¿Qué hacían los copistas?", sent), true);
+  assert.equal(titleNamesQuestion("When did the Berlin Wall fall?", sent), false);
+  assert.equal(titleNamesQuestion("Tell me about something", ["Notes about cooking.md"]), false);
 });

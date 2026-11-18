@@ -7,12 +7,18 @@ import {
   WebHit,
   fetchPageText,
   mapLimit,
-  searchWeb,
+  webSearch,
+  WebSearch,
   searchWikipedia,
   splitPassages,
 } from "../utils/webResearch";
 
 const MAX_QUERIES = 6;
+
+/** A page title on one line: a <title> written over several lines broke the "[n] Title — URL" list. */
+function oneLine(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
 const MAX_PAGES = 12;
 const PAGE_CONCURRENCY = 4;
 const OVERALL_DEADLINE_MS = 60000;
@@ -72,7 +78,7 @@ export class DeepResearchSkill implements Skill {
   instructions =
     'To use this skill, output exactly: <call:deep_research>{"question": "the user\'s full question", "queries": ["short query", "another angle"]}</call>. ' +
     "Use it when the answer needs several sources, a list of examples, or facts you are not sure of. " +
-    "When the results come back, answer only from the passages, cite each fact with its source number like [2], and say what the passages do not cover.";
+    "When the results come back, answer only from them, cite each fact with its source number like [2], and say what the sources do not cover.";
 
   constructor(private plugin?: HormePlugin) {}
 
@@ -84,18 +90,26 @@ export class DeepResearchSkill implements Skill {
       const deadline = Date.now() + OVERALL_DEADLINE_MS;
 
       const queries = await this.buildQueries(question, given);
-      const candidates = await this.search(queries);
+      const { candidates, webBlocked } = await this.search(queries);
       if (!candidates.length) {
-        return `# Research results\n\nNo search results came back for: ${queries.join("; ")}. The search services may be unreachable. Answer from what you know and say that it could not be checked.`;
+        const why = webBlocked
+          ? "DuckDuckGo is turning away searches from this device for now and Wikipedia found nothing."
+          : "The search services may be unreachable.";
+        return `# Research results\n\nNo search results came back for: ${queries.join("; ")}. ${why} Answer from what you know and say that it could not be checked.`;
       }
 
       const pages = await this.readPages(candidates, deadline);
-      if (!pages.length) {
-        return this.snippetsOnly(question, candidates);
-      }
-
-      const passages = await this.rankPassages(question, queries, pages);
-      return this.format(question, queries, pages, passages);
+      const passages = pages.length ? await this.rankPassages(question, queries, pages) : [];
+      const result = pages.length
+        ? this.format(question, queries, pages, passages)
+        : this.snippetsOnly(question, candidates);
+      // Said once, at the top, so the answer does not claim the web was searched.
+      return webBlocked
+        ? result.replace(
+            "# Research results\n\n",
+            "# Research results\n\nDuckDuckGo turned the web searches away (a human check), so these sources come from Wikipedia only.\n\n",
+          )
+        : result;
     } catch (e: unknown) {
       console.error("Horme Deep Research Skill Error:", e);
       return `Error: Deep research failed. ${errorToMessage(e)}`;
@@ -149,15 +163,15 @@ export class DeepResearchSkill implements Skill {
   }
 
   /** Wikipedia for every query, the web for the first four; pages found by several searches rank first. */
-  private async search(queries: string[]): Promise<Candidate[]> {
+  private async search(queries: string[]): Promise<{ candidates: Candidate[]; webBlocked: boolean }> {
     const wiki = Promise.all(queries.map((q) => searchWikipedia(q, 5).catch((): WebHit[] => [])));
-    // DuckDuckGo turns away bursts, so its searches run one after another.
-    const web = (async () => {
-      const lists: WebHit[][] = [];
-      for (const q of queries.slice(0, 4)) lists.push(await searchWeb(q, 8).catch((): WebHit[] => []));
-      return lists;
-    })();
-    const lists = [...(await wiki), ...(await web)];
+    // webSearch spaces DuckDuckGo's searches out and stops after a human check.
+    const web = Promise.all(
+      queries.slice(0, 4).map((q) => webSearch(q, 8).catch((): WebSearch => ({ hits: [], blocked: false }))),
+    );
+    const searches = await web;
+    const webBlocked = searches.some((s) => s.blocked);
+    const lists = [...(await wiki), ...searches.map((s) => s.hits)];
     const byUrl = new Map<string, Candidate>();
     for (const hits of lists) {
       hits.forEach((hit, rank) => {
@@ -171,7 +185,7 @@ export class DeepResearchSkill implements Skill {
         else byUrl.set(key, { ...hit, score: gain + (/\/wiki\/Category:/.test(hit.url) ? 0.6 : 0) });
       });
     }
-    return Array.from(byUrl.values()).sort((a, b) => b.score - a.score);
+    return { candidates: Array.from(byUrl.values()).sort((a, b) => b.score - a.score), webBlocked };
   }
 
   private async readPages(candidates: Candidate[], deadline: number): Promise<PageText[]> {
@@ -290,12 +304,12 @@ export class DeepResearchSkill implements Skill {
 
     let out = `# Research results\n\n**Question:** ${question}\n**Searched:** ${queries.join(" · ")}\n\n`;
     out +=
-      "Answer the question from these passages only. Cite every fact with its source number, like [2]. " +
-      "If the passages do not answer part of the question, say so plainly instead of guessing.\n\n## Passages\n\n";
+      "Answer the question from these excerpts only. Cite every fact with its source number, like [2]. " +
+      'If they do not answer part of the question, say plainly which part the sources do not cover (say "the sources", not "the passages" or "the excerpts") instead of guessing.\n\n## Passages\n\n';
     for (const p of chosen) out += `[${number.get(p.source)}] ${p.text.replace(/\n+/g, " ")}\n\n`;
     out += "## Sources\n\n";
     for (const [source, n] of Array.from(number.entries()).sort((a, b) => a[1] - b[1])) {
-      out += `[${n}] ${pages[source].title} — ${pages[source].url}\n`;
+      out += `[${n}] ${oneLine(pages[source].title)} — ${pages[source].url}\n`;
     }
     return out.trim();
   }
@@ -303,7 +317,7 @@ export class DeepResearchSkill implements Skill {
   private snippetsOnly(question: string, candidates: Candidate[]): string {
     let out = `# Research results\n\n**Question:** ${question}\n\nNo page could be read in full; these are the search snippets. Cite them by number and say the pages were not read.\n\n`;
     candidates.slice(0, 12).forEach((c, i) => {
-      out += `[${i + 1}] ${c.title}: ${c.snippet}\n    ${c.url}\n`;
+      out += `[${i + 1}] ${oneLine(c.title)}: ${oneLine(c.snippet)}\n    ${c.url}\n`;
     });
     return out.trim();
   }

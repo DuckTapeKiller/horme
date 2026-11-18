@@ -22,9 +22,16 @@ export function parseResearchSources(text: string): Map<number, CitedSource> {
   const out = new Map<number, CitedSource>();
   const at = text.search(/^#{1,3}\s*Sources\s*$/m);
   if (at < 0) return out;
-  for (const line of text.slice(at).split("\n")) {
-    const m = /^\s*\[(\d+)\]\s+(.+?)\s+[—–-]\s+(https?:\/\/\S+)\s*$/.exec(line);
-    if (m) out.set(Number(m[1]), { n: Number(m[1]), title: m[2].trim(), url: m[3] });
+  // An entry whose title ran over several lines is joined back into one.
+  const entries: string[] = [];
+  for (const line of text.slice(at).split("\n").slice(1)) {
+    if (/^\s*\[\d+\]/.test(line)) entries.push(line.trim());
+    else if (/^#{1,3}\s/.test(line)) break;
+    else if (line.trim() && entries.length) entries[entries.length - 1] += ` ${line.trim()}`;
+  }
+  for (const entry of entries) {
+    const m = /^\[(\d+)\]\s+(.+?)\s+[—–-]\s+(https?:\/\/\S+)$/.exec(entry);
+    if (m) out.set(Number(m[1]), { n: Number(m[1]), title: m[2].replace(/\s+/g, " ").trim(), url: m[3] });
   }
   return out;
 }
@@ -62,6 +69,16 @@ export function linkCitations(answer: string, sources: Map<number, CitedSource>)
   // Odd pieces are code (fenced blocks or inline spans) and stay untouched.
   const pieces = answer.split(/(```[\s\S]*?```|`[^`\n]*`)/);
   for (let i = 0; i < pieces.length; i += 2) {
+    // A run of citations, [1][4][5], is one group: written as [1, 4, 5] here
+    // so the guard below (a bracket followed by "[" is a Markdown reference)
+    // does not leave all but the last unlinked.
+    pieces[i] = pieces[i].replace(
+      /\[(\d{1,3})\](?:\s?\[\d{1,3}\])+(?![([])/g,
+      (run: string, _first: string, offset: number, str: string) =>
+        ["[", "\\", "!"].includes(str[offset - 1] ?? "")
+          ? run
+          : `[${(run.match(/\d{1,3}/g) ?? []).join(", ")}]`,
+    );
     pieces[i] = pieces[i].replace(
       /\[([^\]\n]{1,40})\]/g,
       (whole, inner: string, offset: number, str: string) => {
@@ -69,6 +86,8 @@ export function linkCitations(answer: string, sources: Map<number, CitedSource>)
         const after = str[offset + whole.length];
         if (
           before === "[" ||
+          // Right after "]": the label of a Markdown reference link, [text][1].
+          before === "]" ||
           before === "\\" ||
           before === "!" ||
           after === "(" ||
@@ -85,6 +104,35 @@ export function linkCitations(answer: string, sources: Map<number, CitedSource>)
           urls.push(source.url);
         }
         return nums.map((n, k) => `[\\[${n}\\]](${markdownUrl(urls[k])})`).join("");
+      },
+    );
+  }
+  return pieces.join("");
+}
+
+/**
+ * Removes the [n] citations that cite none of the `known` source numbers, and
+ * the unknown numbers from a group ("[1, 7]" → "[1]"). Small models number
+ * facts with no numbered sources at all (Apple's model wrote [1] [2] under a
+ * Wikipedia lookup and a grammar answer), which left dead brackets in the
+ * text. Code and links are left as they are, as in linkCitations.
+ */
+export function dropDanglingCitations(answer: string, known: Set<number>): string {
+  if (!answer.trim()) return answer;
+  const pieces = answer.split(/(```[\s\S]*?```|`[^`\n]*`)/);
+  for (let i = 0; i < pieces.length; i += 2) {
+    pieces[i] = pieces[i].replace(
+      /( ?)\[([^\]\n]{1,40})\]/g,
+      (whole, space: string, inner: string, offset: number, str: string) => {
+        const before = str[offset - 1];
+        const after = str[offset + whole.length];
+        if (before === "[" || before === "]" || before === "\\" || before === "!" || after === "(")
+          return whole;
+        const nums = citationNumbers(inner.trim());
+        if (!nums) return whole;
+        const kept = nums.filter((n) => known.has(n));
+        if (kept.length === nums.length) return whole;
+        return kept.length ? `${space}[${kept.join(", ")}]` : "";
       },
     );
   }
@@ -128,7 +176,12 @@ export function sourceLabel(url: string, title?: string): string {
   }
   if (host === "britannica.com") {
     const last = u.pathname.split("/").filter(Boolean).pop();
-    const name = title?.trim() || (last ? titleFromPath(last).replace(/-/g, " ") : "");
+    // Page titles run "Scriptorium | Monastic, Illuminated Manuscripts, Medieval | Britannica": the name is the first part.
+    const name =
+      title
+        ?.split(/\s+\|\s+/)[0]
+        .replace(/\s+[–—-]\s+(?:Encyclopaedia\s+)?Britannica$/i, "")
+        .trim() || (last ? titleFromPath(last).replace(/-/g, " ") : "");
     return name ? `Britannica: ${name}` : "Britannica";
   }
   const clean = title
@@ -200,4 +253,35 @@ export function mergePills(into: SourcePill[], add: SourcePill[]): SourcePill[] 
   const rest = into.filter((p) => p.n === undefined);
   into.splice(0, into.length, ...numbered, ...rest);
   return into;
+}
+
+function foldWords(text: string): string[] {
+  return (
+    text
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .match(/\p{L}{5,}/gu) ?? []
+  );
+}
+
+/**
+ * The pills to list under an answer. Numbered research sources are listed
+ * only when the answer cites them; an answer that cites none keeps those whose
+ * name shares a word with it. (A search on "Obsidian" brought Minecraft,
+ * Plesk and Battle.net into the list of an answer that cited nothing.) Other
+ * pills, which come from the lookups that ran, are all kept.
+ */
+export function pillsForAnswer(pills: SourcePill[], answer: string): SourcePill[] {
+  if (!pills.some((p) => p.n !== undefined)) return pills;
+  const plain = answer.replace(/\\([[\]])/g, "$1");
+  const cited = new Set<number>();
+  for (const m of plain.matchAll(/\[(\d{1,3}(?:\s*[,;–-]\s*\d{1,3})*)\]/g))
+    for (const n of citationNumbers(m[1]) ?? []) cited.add(n);
+  const words = new Set(foldWords(plain));
+  return pills.filter((p) => {
+    if (p.n === undefined) return true;
+    if (cited.size) return cited.has(p.n);
+    return foldWords(p.label.replace(/^[^:]+:\s*/, "")).some((w) => words.has(w));
+  });
 }

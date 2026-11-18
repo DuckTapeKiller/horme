@@ -15,6 +15,9 @@ const OVERFLOW = /request \((\d+) tokens\) exceeds the available context size \(
  * "However, your messages resulted in 130000 tokens". These servers count the
  * room asked for the reply (max_tokens) as part of the request.
  */
+/** Apple's model server: "Provided 12,147 tokens, but the maximum allowed is 8192." */
+const PROVIDED_OVERFLOW = /Provided ([\d,]+) tokens, but the maximum allowed is ([\d,]+)/i;
+
 const OPENAI_OVERFLOW =
   /maximum context length is (\d+) tokens\.?\s*However,? (?:you requested|your messages resulted in) (\d+) tokens(?: \((\d+) in the messages, (\d+) in the completion\))?/i;
 
@@ -37,15 +40,22 @@ export function explainContextOverflow(
   provider: AiProvider,
   providerName: string,
 ): string | null {
+  // Apple's model says only that the request was too long for it.
+  if (provider === "apple" && /exceeded the model's context size/i.test(message))
+    return "This request is more than Apple's model can read at once (about 8,000 tokens). Turn off Vault Brain, the current note or the skills for this chat, or ask about less.";
   const fmt = (n: number) => n.toLocaleString("en-GB");
   let needed: number;
   let available: number;
   let reply = 0;
   const llama = OVERFLOW.exec(message);
   const openai = llama ? null : OPENAI_OVERFLOW.exec(message);
+  const provided = llama || openai ? null : PROVIDED_OVERFLOW.exec(message);
   if (llama) {
     needed = Number(llama[1]);
     available = Number(llama[2]);
+  } else if (provided) {
+    needed = Number(provided[1].replace(/,/g, ""));
+    available = Number(provided[2].replace(/,/g, ""));
   } else if (openai) {
     available = Number(openai[1]);
     needed = Number(openai[2]);
@@ -54,6 +64,14 @@ export function explainContextOverflow(
     return null;
   }
   const where = WHERE[provider] ?? "Give the model a larger context window";
+  const introFor = (n: number, of: number) =>
+    `This request (${fmt(n)} tokens) is bigger than the context window ${providerName} gave the model (${fmt(of)} tokens). `;
+  // Apple's model has a fixed window: the request itself must be smaller.
+  if (provider === "apple")
+    return (
+      introFor(needed, available) +
+      "Apple's model cannot read more at once: turn off Vault Brain, the current note or the folders for this chat, or ask about less."
+    );
   const intro = `This request (${fmt(needed)} tokens) is bigger than the context window ${providerName} gave the model (${fmt(available)} tokens). `;
   // The server counted the room kept for the reply, and that room alone takes
   // half the window or more: the prompt is not what is too long.

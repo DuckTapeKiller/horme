@@ -1,5 +1,6 @@
 import HormePlugin from "../../main";
 import { NativeTool, Skill, SkillCall } from "../skills/types";
+import { readableSkillNames } from "../utils/chatStream";
 import { WikipediaSkill } from "../skills/WikipediaSkill";
 import { VaultLinkSkill } from "../skills/VaultLinkSkill";
 import { GrammarScholarSkill } from "../skills/GrammarScholarSkill";
@@ -51,9 +52,32 @@ export class SkillManager {
     );
   }
 
-  private isSkillOffered(skill: Skill, suppressVaultSkill: boolean, targetSkillId?: string): boolean {
+  /**
+   * Skill ids in a reply written as the names the reader sees: qwen 3.5 2B
+   * offered to "consult the grammar_scholar tool". Only ids that look like ids
+   * (with an underscore) are changed; "wikipedia" in a sentence is a word.
+   * Code is left as it is.
+   */
+  readableSkillNames(text: string): string {
+    return readableSkillNames(text, [...this.skills.values()]);
+  }
+
+  /** Whether a skill with a `whenAsked` rule may run for this message (the menu always may). */
+  askedFor(skillId: string, question: string | undefined, targetSkillId?: string): boolean {
+    const rule = this.skills.get(skillId)?.whenAsked;
+    if (!rule || targetSkillId === skillId) return true;
+    return question !== undefined && rule.test(question);
+  }
+
+  private isSkillOffered(
+    skill: Skill,
+    suppressVaultSkill: boolean,
+    targetSkillId?: string,
+    question?: string,
+  ): boolean {
     // If a specific skill is targeted, skip all others
     if (targetSkillId && skill.id !== targetSkillId) return false;
+    if (!this.askedFor(skill.id, question, targetSkillId)) return false;
     // Suppress vault_links when RAG context has already been injected OR vault is privacy-locked
     if ((suppressVaultSkill || this.isVaultSkillLocked()) && skill.id === "vault_links") return false;
     // vault_query needs no vault index, but sends note names and text to the
@@ -88,7 +112,7 @@ export class SkillManager {
   getSkillInstructions(
     suppressVaultSkill = false,
     targetSkillId?: string,
-    options: { native?: boolean } = {},
+    options: { native?: boolean; question?: string } = {},
   ): string {
     // Native mode: the skill list (names, descriptions, JSON schemas) travels
     // in the request's `tools` array — the prompt only carries policy.
@@ -110,7 +134,7 @@ export class SkillManager {
       "Do not explain the skill call, just output the tag. You can think first, then call the skill.\n\n";
 
     for (const skill of this.skills.values()) {
-      if (!this.isSkillOffered(skill, suppressVaultSkill, targetSkillId)) continue;
+      if (!this.isSkillOffered(skill, suppressVaultSkill, targetSkillId, options.question)) continue;
       instructions += `### Skill: ${skill.name} (id: ${skill.id})\n`;
       instructions += `Description: ${skill.description}\n`;
       instructions += `Instructions: ${skill.instructions}\n`;
@@ -134,10 +158,10 @@ export class SkillManager {
    * XML call syntax embedded in each skill's prose instructions is stripped —
    * native callers must never see it.
    */
-  getNativeTools(suppressVaultSkill = false, targetSkillId?: string): NativeTool[] {
+  getNativeTools(suppressVaultSkill = false, targetSkillId?: string, question?: string): NativeTool[] {
     const tools: NativeTool[] = [];
     for (const skill of this.skills.values()) {
-      if (!this.isSkillOffered(skill, suppressVaultSkill, targetSkillId)) continue;
+      if (!this.isSkillOffered(skill, suppressVaultSkill, targetSkillId, question)) continue;
       const properties: Record<string, Record<string, unknown>> = {};
       const required: string[] = [];
       for (const param of skill.parameters) {
@@ -238,18 +262,11 @@ export class SkillManager {
 
       const paramsText = text.slice(jsonStart, jsonEnd + 1);
 
-      // Finds the </call> tag immediately after the closing '}'.
-      const afterJson = text.slice(jsonEnd + 1);
-      const closeTagMatch = /^\s*<\/call>/.exec(afterJson);
-      if (!closeTagMatch) {
-        const msg = `Failed to parse skill ${skillId}: missing or misplaced </call> closing tag.`;
-        this.plugin.diagnosticService.report("Skill Parser", msg, "warning");
-        continue;
-      }
-
-      // Update regex index to skip past the closing tag
-      const closeTagLength = closeTagMatch[0].length;
-      tagRegex.lastIndex = jsonEnd + 1 + closeTagLength;
+      // The </call> tag after the closing '}' is taken when present: small
+      // models often leave it out, and a complete JSON object already ends
+      // the call.
+      const closeTagMatch = /^\s*<\/call>/.exec(text.slice(jsonEnd + 1));
+      tagRegex.lastIndex = jsonEnd + 1 + (closeTagMatch ? closeTagMatch[0].length : 0);
 
       try {
         const parameters: unknown = JSON.parse(paramsText);

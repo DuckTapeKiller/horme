@@ -44,11 +44,13 @@ export function compatBaseUrl(raw: string): string {
 export function keepsNotesPrivate(s: PrivacySettings, id: AiProvider, model?: string): boolean {
   // Ollama runs its cloud models on its own servers: notes sent to one leave.
   if (id === "ollama") return !isOllamaCloudModel(model ?? s.defaultModel);
+  // Apple Intelligence runs on this Mac, except its Private Cloud Compute model.
+  if (id === "apple") return (model ?? s.appleModel ?? "system").trim() !== "pcc";
   return isLocalServer(id) || (id === "custom" && customServerIsMine(s));
 }
 
 /** What the privacy rule reads: the OpenAI-compatible server's trust, and Ollama's chat model. */
-export type PrivacySettings = CustomTrust & Partial<Pick<HormeSettings, "defaultModel">>;
+export type PrivacySettings = CustomTrust & Partial<Pick<HormeSettings, "defaultModel" | "appleModel">>;
 
 /**
  * Ollama's cloud models ("gpt-oss:120b-cloud", "glm-4.6:cloud"): Ollama on
@@ -65,10 +67,11 @@ export function isOllamaCloudModel(model: string | undefined): boolean {
  * asks again.
  */
 export function notesDestination(
-  s: Pick<HormeSettings, "customUrl"> & Partial<Pick<HormeSettings, "defaultModel">>,
+  s: Pick<HormeSettings, "customUrl"> & Partial<Pick<HormeSettings, "defaultModel" | "appleModel">>,
   id: AiProvider,
 ): string {
   if (id === "custom") return `custom@${compatBaseUrl(s.customUrl)}`;
+  if (id === "apple") return `apple:${(s.appleModel ?? "").trim()}`;
   if (id === "ollama") return `ollama:${(s.defaultModel ?? "").trim()}`;
   return id;
 }

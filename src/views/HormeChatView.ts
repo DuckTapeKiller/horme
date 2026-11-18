@@ -1,3 +1,25 @@
+import { ChatPictures } from "./chat/ChatPictures";
+import { replyLanguage } from "../utils/replyLanguage";
+import { VAULT_NOTHING, VAULT_NOTHING_ES, normaliseVaultNotice } from "../utils/vaultNotice";
+import { fitPassages, fitText, passageBudget, roundBudget } from "../utils/contextBudget";
+import { explainContextOverflow } from "../utils/contextOverflow";
+import { ChatContextSelection } from "./chat/ChatContextSelection";
+import {
+  ToolCallAssembler,
+  cleanAndConsolidateMsgs,
+  formatSkillSummary,
+  stepSummary,
+  pastCall,
+  repeatsEarlierCall,
+  repeatsEarlierResult,
+  unwrapQuotedAnswer,
+  type PastCall,
+  skillFailed,
+  processChunk,
+  streamError,
+  stripSkillCallXml,
+  throttledRender,
+} from "../utils/chatStream";
 import {
   ItemView,
   WorkspaceLeaf,
@@ -11,7 +33,7 @@ import {
   Menu,
 } from "obsidian";
 import HormePlugin from "../../main";
-import { providerInfo, providerModel } from "./settings/providers";
+import { providerInfo, providerModel } from "../providers/registry";
 import { VIEW_TYPE } from "../constants";
 import { ChatMessage, SavedConversation } from "../types";
 import { SkillCall } from "../skills/types";
@@ -20,30 +42,19 @@ import { FolderPickerModal } from "../modals/FolderPickerModal";
 import { GenericConfirmModal } from "../modals/GenericConfirmModal";
 import { ensureVaultFolder } from "../utils/vaultFolder";
 import { passageNotePath } from "../utils/passages";
-import { groundedShare, notesUsed } from "../utils/grounding";
+import { groundedShare, namesOutsideSource, notesUsed, titleNamesQuestion } from "../utils/grounding";
 import {
   CitedSource,
   SourcePill,
   linkCitations,
   mergePills,
   parseResearchSources,
+  dropDanglingCitations,
+  pillsForAnswer,
   pillsFromSkillResult,
 } from "../utils/citations";
-import {
-  FoundImage,
-  cardCredit,
-  imagesSummary,
-  imageFileName,
-  imagesToMarkdown,
-  imagesFromSkillResult,
-  isAllowedImageUrl,
-  extensionForType,
-  withoutImageData,
-} from "../utils/images";
-import { requestUrlWithTimeout } from "../utils/requestWithTimeout";
-import { WIKIMEDIA_HEADERS } from "../utils/webResearch";
-import { errorToMessage } from "../utils/TypeGuards";
-import { pingUnsplashDownload, sourceReady } from "../services/ImageSearch";
+import { imagesSummary, imagesToMarkdown, imagesFromSkillResult, withoutImageData } from "../utils/images";
+import { sourceReady } from "../services/ImageSearch";
 import { onlyAsksForPictures, pictureRequest } from "../utils/pictureRequest";
 
 const SKILL_PLACEHOLDERS: Record<string, string> = {
@@ -55,23 +66,19 @@ const SKILL_PLACEHOLDERS: Record<string, string> = {
   find_image: "Type what to show, e.g. Roman Colosseum...",
 };
 
-type ContextFolderSelection = { path: string; noteCount: number; totalChars: number };
-
-/** Opens an answer when Vault Brain searched and found nothing on the question. */
-const VAULT_NOTHING = "Nothing in your vault on this.";
-
-/** The model's own wording of the notice ("**Nothing in your vault on this**", …) becomes the exact line. */
-function normaliseVaultNotice(text: string): string {
-  const m =
-    /^\s*(?:\*\*|__|\*|_)?\s*nothing in (?:your|the) vault(?: on this)?\s*[.!:]?\s*(?:\*\*|__|\*|_)?[ \t]*\n*/i.exec(
-      text,
-    );
-  if (!m) return text;
-  const rest = text.slice(m[0].length).trim();
-  return rest ? `${VAULT_NOTHING}\n\n${rest}` : VAULT_NOTHING;
-}
+/**
+ * Skills that answer from the vault: their sources are notes, listed as such.
+ * An address inside a note they return (a JSTOR link in a property) is not a
+ * source of the answer, so it gives no pill.
+ */
+const VAULT_SKILLS = new Set(["vault_query", "vault_links", "grammar_scholar"]);
 
 export class HormeChatView extends ItemView {
+  /** Picture cards and saving pictures to the vault. */
+  private readonly pictures: ChatPictures;
+  /** Notes and folders picked to go with the next questions. */
+  private readonly context: ChatContextSelection;
+
   plugin: HormePlugin;
   private history: ChatMessage[] = [];
   private messagesEl!: HTMLElement;
@@ -126,11 +133,10 @@ export class HormeChatView extends ItemView {
   private rollingRAGContext: string[] = [];
   /** Exact RAG passages injected on the most recent turn (reused on Regenerate). */
   private lastInjectedPassages = "";
-  private selectedContextNotes: TFile[] = [];
-  private selectedContextFolders: ContextFolderSelection[] = [];
-  private folderContextTruncationNoticeShown = false;
   private contextNotesLabel!: HTMLElement;
   private vaultBrainToggle!: HTMLInputElement;
+  /** The user unticked "Use Vault Brain" themself; it stays off until they tick it again. */
+  private vaultBrainOffByUser = false;
   private vaultBrainLabel!: HTMLElement;
   private forcedSkillId: string | null = null;
   private skillsMenuEl: HTMLElement | null = null;
@@ -189,6 +195,8 @@ export class HormeChatView extends ItemView {
   constructor(leaf: WorkspaceLeaf, plugin: HormePlugin) {
     super(leaf);
     this.plugin = plugin;
+    this.pictures = new ChatPictures(plugin, () => this.scrollToBottom());
+    this.context = new ChatContextSelection(plugin.app, plugin);
   }
 
   private generateId(): string {
@@ -385,12 +393,16 @@ export class HormeChatView extends ItemView {
 
       const tagBtn = row1Left.createEl("button", { cls: "horme-header-btn", text: "Tags" });
       tagBtn.addEventListener("click", () => {
-        void this.plugin.suggestTagsForActiveNote().catch((e) => this.plugin.handleError(e, "Tags"));
+        void this.plugin.noteActions
+          .suggestTagsForActiveNote()
+          .catch((e) => this.plugin.handleError(e, "Tags"));
       });
 
       const summaryBtn = row1Left.createEl("button", { cls: "horme-header-btn", text: "Summary" });
       summaryBtn.addEventListener("click", () => {
-        void this.plugin.generateFrontmatterSummary().catch((e) => this.plugin.handleError(e, "Summary"));
+        void this.plugin.noteActions
+          .generateFrontmatterSummary()
+          .catch((e) => this.plugin.handleError(e, "Summary"));
       });
 
       // Skills dropdown trigger button
@@ -462,6 +474,9 @@ export class HormeChatView extends ItemView {
       const vbLabel = row2.createEl("label", { cls: "horme-context-toggle" });
       this.vaultBrainToggle = vbLabel.createEl("input", { type: "checkbox" });
       this.vaultBrainToggle.checked = true;
+      this.vaultBrainToggle.addEventListener("change", () => {
+        this.vaultBrainOffByUser = !this.vaultBrainToggle.checked;
+      });
       vbLabel.createSpan({ text: "Use Vault Brain" });
       this.vaultBrainLabel = vbLabel;
       await this.updateVaultBrainToggle();
@@ -472,20 +487,20 @@ export class HormeChatView extends ItemView {
       const row3 = header.createDiv("horme-header-row");
       const addNotesBtn = row3.createEl("button", { cls: "horme-header-btn", text: "+ Add notes" });
       addNotesBtn.addEventListener("click", () => {
-        if (this.selectedContextNotes.length >= 5) {
+        if (this.context.notes.length >= 5) {
           new Notice("Horme: Maximum 5 context notes.");
           return;
         }
         new NotePickerModal(this.app, (file) => {
-          if (this.selectedContextNotes.some((f) => f.path === file.path)) {
+          if (this.context.notes.some((f) => f.path === file.path)) {
             new Notice(`Already added: ${file.basename}`);
             return;
           }
-          if (this.selectedContextNotes.length >= 5) {
+          if (this.context.notes.length >= 5) {
             new Notice("Horme: Maximum 5 context notes.");
             return;
           }
-          this.selectedContextNotes.push(file);
+          this.context.notes.push(file);
           this.updateContextNotesLabel();
         }).open();
       });
@@ -689,24 +704,31 @@ export class HormeChatView extends ItemView {
     const hasIndex = canUseBySettings ? await this.plugin.vaultIndexer.hasBuiltIndex() : false;
     const canUse = canUseBySettings && hasIndex;
     this.vaultBrainLabel.setCssProps({ display: canUse ? "" : "none" });
-    if (!canUse) this.vaultBrainToggle.checked = false;
+    // Off while it cannot be used (a cloud provider without consent, no
+    // index); back on as soon as it can, unless the user turned it off.
+    this.vaultBrainToggle.checked = canUse && !this.vaultBrainOffByUser;
+  }
+
+  private addContextFolder(folder: TFolder): void {
+    this.context.addFolder(folder);
+    this.updateContextNotesLabel();
   }
 
   private updateContextNotesLabel() {
     this.contextNotesLabel.empty();
-    if (this.selectedContextNotes.length === 0 && this.selectedContextFolders.length === 0) {
+    if (this.context.notes.length === 0 && this.context.folders.length === 0) {
       this.contextNotesLabel.removeClass("horme-context-notes-shown");
       return;
     }
     this.contextNotesLabel.addClass("horme-context-notes-shown");
 
-    for (const folder of this.selectedContextFolders) {
+    for (const folder of this.context.folders) {
       const row = this.contextNotesLabel.createDiv("horme-context-notes-row");
 
       const removeBtn = row.createSpan({ text: "\u00d7", cls: "horme-context-notes-remove" });
       removeBtn.addEventListener("click", () => {
-        this.selectedContextFolders = this.selectedContextFolders.filter((f) => f.path !== folder.path);
-        this.folderContextTruncationNoticeShown = false;
+        this.context.folders = this.context.folders.filter((f) => f.path !== folder.path);
+        this.context.truncationNoticeShown = false;
         this.updateContextNotesLabel();
       });
 
@@ -715,148 +737,17 @@ export class HormeChatView extends ItemView {
       });
     }
 
-    for (const file of this.selectedContextNotes) {
+    for (const file of this.context.notes) {
       const row = this.contextNotesLabel.createDiv("horme-context-notes-row");
 
       const removeBtn = row.createSpan({ text: "\u00d7", cls: "horme-context-notes-remove" });
       removeBtn.addEventListener("click", () => {
-        this.selectedContextNotes = this.selectedContextNotes.filter((f) => f.path !== file.path);
+        this.context.notes = this.context.notes.filter((f) => f.path !== file.path);
         this.updateContextNotesLabel();
       });
 
       row.createSpan({ text: file.basename });
     }
-  }
-
-  private getMarkdownFilesUnderFolderPath(folderPath: string): TFile[] {
-    const normalized = folderPath === "/" ? "/" : folderPath.replace(/\/+$/, "");
-    const allMd = this.app.vault.getMarkdownFiles();
-    if (normalized === "/" || normalized === "") return allMd;
-    const prefix = normalized.endsWith("/") ? normalized : `${normalized}/`;
-    return allMd.filter((f) => f.path.startsWith(prefix));
-  }
-
-  private addContextFolder(folder: TFolder): void {
-    const folderPath = folder.path || "/";
-    const normalized = folderPath === "/" ? "/" : folderPath.replace(/\/+$/, "");
-
-    if (this.selectedContextFolders.some((f) => f.path === normalized)) {
-      new Notice(`Already added: ${normalized}`);
-      return;
-    }
-
-    const files = this.getMarkdownFilesUnderFolderPath(normalized);
-    if (files.length === 0) {
-      new Notice("Horme: No notes found in that folder.");
-      return;
-    }
-
-    const totalChars = files.reduce((sum, f) => sum + (f.stat?.size ?? 0), 0);
-    this.selectedContextFolders.push({ path: normalized, noteCount: files.length, totalChars });
-    this.selectedContextFolders.sort((a, b) => a.path.localeCompare(b.path));
-    this.folderContextTruncationNoticeShown = false;
-    this.updateContextNotesLabel();
-
-    const limit = Math.max(1000, this.plugin.settings.contextFoldersMaxChars || 0);
-    const totalSelectedChars = this.selectedContextFolders.reduce((sum, f) => sum + (f.totalChars || 0), 0);
-
-    if (totalSelectedChars > limit) {
-      new Notice(
-        `Horme: Selected folder context is ~${totalSelectedChars.toLocaleString()} chars. ` +
-          `Limit is ${limit.toLocaleString()} chars — context will be truncated. ` +
-          `Use "+ Add notes" for manual selection.`,
-      );
-    } else if (totalChars > limit) {
-      new Notice(
-        `Horme: Folder is ~${totalChars.toLocaleString()} chars across ${files.length} notes. ` +
-          `Limit is ${limit.toLocaleString()} chars — context will be truncated. ` +
-          `Use "+ Add notes" for manual selection.`,
-      );
-    }
-  }
-
-  private getUniqueMarkdownFilesInSelectedFolders(): TFile[] {
-    const folderPaths = this.selectedContextFolders.map((f) => f.path);
-    if (folderPaths.length === 0) return [];
-
-    // Fast path: root folder selected → include everything.
-    if (folderPaths.some((p) => p === "/" || p === "")) {
-      return this.app.vault
-        .getMarkdownFiles()
-        .slice()
-        .sort((a, b) => a.path.localeCompare(b.path));
-    }
-
-    const prefixes = folderPaths.map((p) => (p.endsWith("/") ? p : `${p}/`));
-    const matched = new Map<string, TFile>();
-    for (const f of this.app.vault.getMarkdownFiles()) {
-      for (const pref of prefixes) {
-        if (f.path.startsWith(pref)) {
-          matched.set(f.path, f);
-          break;
-        }
-      }
-    }
-    return Array.from(matched.values()).sort((a, b) => a.path.localeCompare(b.path));
-  }
-
-  private async buildFolderContextString(
-    limitChars: number,
-  ): Promise<{ text: string; truncated: boolean; included: number; total: number }> {
-    const files = this.getUniqueMarkdownFilesInSelectedFolders();
-    const total = files.length;
-    if (total === 0) return { text: "", truncated: false, included: 0, total: 0 };
-
-    const parts: string[] = [];
-    let used = 0;
-    let included = 0;
-    let truncated = false;
-
-    for (const file of files) {
-      const header = `--- Note: ${file.path} ---\n`;
-      let body = "";
-      try {
-        body = await this.app.vault.read(file);
-      } catch {
-        body = "[Error reading file]";
-      }
-
-      const piece = header + body + "\n\n";
-      if (used + piece.length > limitChars) {
-        truncated = true;
-        break;
-      }
-      parts.push(piece);
-      used += piece.length;
-      included++;
-    }
-
-    // Edge case: single note larger than budget — include a truncated excerpt of the first note.
-    if (included === 0 && files.length > 0 && limitChars > 0) {
-      truncated = true;
-      const file = files[0];
-      let body = "";
-      try {
-        body = await this.app.vault.read(file);
-      } catch {
-        body = "[Error reading file]";
-      }
-      const piece = `--- Note: ${file.path} (truncated) ---\n${body}`;
-      parts.push(piece.slice(0, limitChars));
-      included = 1;
-    }
-
-    if (truncated) {
-      const marker =
-        `\n[Folder context truncated: included ${included}/${total} notes ` +
-        `due to the ${limitChars.toLocaleString()} character limit. ` +
-        `Use "+ Add notes" to add specific files.]\n`;
-      const current = parts.join("");
-      const remaining = limitChars - current.length;
-      if (remaining > 0) parts.push(marker.slice(0, remaining));
-    }
-
-    return { text: parts.join(""), truncated, included, total };
   }
 
   // The model field of the active provider. llama.cpp was missing here, so the
@@ -1095,6 +986,258 @@ export class HormeChatView extends ItemView {
     }
   }
 
+  /**
+   * A skill armed from the Skills menu, or a picture request, runs on its own
+   * for this turn: the skill owns the context, so neither Vault Brain nor a
+   * model round comes before it, and the model then writes the reply from
+   * what the skill found.
+   */
+  private async runArmedSkill(quickParams: Record<string, string | number | boolean> | null): Promise<void> {
+    const skillId = this.forcedSkillId;
+    if (!skillId) return;
+    const query = this.inputEl.value.trim();
+    if (!query) return;
+
+    // Step 4.1: Lock the generation state at the start of forced execution
+    this.isGenerating = true;
+    this.sendBtn.addClass("horme-stop-btn");
+    setIcon(this.sendBtn, "horme-shell");
+
+    // Step 4.3: Store a new AbortController
+    this.activeAbortController = new AbortController();
+
+    // Disarm immediately — pill, flag, and placeholder cleared before any async work
+    this.forcedSkillId = null;
+    this.inputEl.placeholder = "Ask Horme…"; // Revert placeholder text
+    this.containerEl.querySelector(".horme-skill-pill")?.remove();
+
+    // Render the user's message in the chat; the first one replaces the empty-chat greeting.
+    if (!this.history.length) this.messagesEl.empty();
+    this.addMessageBubble("user", query);
+    this.addUserActions(query);
+    this.history.push({ role: "user", content: query });
+    this.inputEl.value = "";
+    this.autoGrow?.();
+
+    const loadingEl = this.showLoading(`Running skill...`);
+
+    try {
+      const skill = this.plugin.skillManager.getSkillById(skillId);
+      if (!skill) throw new Error(`Skill "${skillId}" not found.`);
+
+      // Map the user's raw input to the skill's primary parameter.
+      // All forced-execution skills have a single primary string param.
+      const primaryParam = skill.primaryParam ?? skill.parameters[0]?.name;
+      if (!primaryParam) {
+        this.plugin.diagnosticService.report(
+          "Skills",
+          `Skill configuration error: no primary parameter defined for skill "${skillId}".`,
+          "warning",
+        );
+        new Notice("Skill configuration error: no primary parameter defined.");
+        throw new Error("Skill configuration error: no primary parameter defined.");
+      }
+
+      const forcedParams: Record<string, string | number | boolean> = quickParams ?? {
+        [primaryParam]: query,
+      };
+
+      // Verify and inject required parameters that are not the primary one
+      for (const param of skill.parameters) {
+        if (param.required && !(param.name in forcedParams)) {
+          if (param.name === "language") {
+            const langSetting = (
+              this.plugin.settings.grammarLanguage ||
+              this.plugin.settings.summaryLanguage ||
+              "en"
+            ).toLowerCase();
+            forcedParams.language = langSetting.includes("es") || langSetting.includes("spa") ? "es" : "en";
+          } else {
+            if (param.type === "number") {
+              forcedParams[param.name] = 0;
+            } else if (param.type === "boolean") {
+              forcedParams[param.name] = false;
+            } else {
+              forcedParams[param.name] = "";
+            }
+          }
+        }
+      }
+
+      // TODO: For skills whose execute() does not accept a signal, the abort signal
+      // cannot cancel the underlying network request — document this limitation.
+      const result = await skill.execute(forcedParams);
+
+      if (this.activeAbortController?.signal.aborted) {
+        throw new DOMException("Generation stopped.", "AbortError");
+      }
+
+      loadingEl.remove();
+      await this.renderSkillResultBox(skill.id, skill.name, forcedParams, result);
+      const forcedSkillLinks = pillsFromSkillResult(result);
+      if (!this.contentEl.isConnected) return; // Connectivity guard from Fix 2
+      // Pictures stay with the skill result, which is drawn again when the chat is
+      // reopened; the reply carries only the text.
+      const pictures = skill.id === "find_image" ? imagesFromSkillResult(result) : [];
+      if (pictures.length) {
+        // The cards are the whole reply: each shows its title and credit and links
+        // to its page. The titles and credits are kept for the model and for notes.
+        this.history.push({ role: "tool_result", content: `[SKILL RESULT: ${skill.id}]\n\n${result}` });
+        this.history.push({ role: "assistant", content: imagesSummary(pictures), picturesOnly: true });
+        this.pillsUnderPictures(forcedSkillLinks);
+      } else {
+        const shownText = withoutImageData(result);
+        const resultBubble = this.addMessageBubble("assistant", "");
+        const contentArea = resultBubble.querySelector(".horme-content-area") as HTMLElement;
+        if (contentArea) {
+          contentArea.empty();
+          await MarkdownRenderer.render(this.app, shownText, contentArea, "", this);
+        }
+        this.addAssistantActions(resultBubble, shownText);
+        this.renderSkillSourceLinks(resultBubble, forcedSkillLinks);
+        if (shownText !== result) {
+          this.history.push({ role: "tool_result", content: `[SKILL RESULT: ${skill.id}]\n\n${result}` });
+        }
+        this.history.push({ role: "assistant", content: shownText });
+      }
+      // Regenerate would replay an older turn's request; a skill run is repeated by running it again.
+      this.lastMsgs = null;
+      this.plugin.historyManager.append({
+        id: this.conversationId,
+        title: this.history.find((m) => m.role === "user")?.content.slice(0, 60) || "Untitled chat",
+        timestamp: Date.now(),
+        messages: this.history,
+      });
+      this.scrollToBottom();
+    } catch (e: unknown) {
+      loadingEl.remove();
+      if (e instanceof DOMException && e.name === "AbortError") {
+        new Notice("Generation stopped.");
+      } else {
+        this.plugin.handleError(e);
+      }
+    } finally {
+      // Step 4.2 & 4.3: Reset generating state and controller inside finally block
+      this.isGenerating = false;
+      setIcon(this.sendBtn, "send");
+      this.sendBtn.classList.remove("horme-stop-btn");
+      this.activeAbortController = null;
+    }
+  }
+
+  /** The open note's text for the next question, after its privacy question; null when not sent. */
+  private async currentNoteContext(
+    mdLeaf: WorkspaceLeaf | null,
+    providerIsLocal: boolean,
+    providerLabel: string,
+  ): Promise<string | null> {
+    if (!this.contextToggle.checked) return null;
+    if (!providerIsLocal && !this.plugin.settings.contextCloudWarningShown) {
+      const ok = await this.confirmCloudSend(
+        `Privacy notice: Your current note's full text will be sent to ${providerLabel}, a cloud provider. The content will leave your device. Do you want to continue?`,
+      );
+      if (ok) {
+        this.plugin.settings.contextCloudWarningShown = true;
+        await this.plugin.saveSettings();
+      } else {
+        this.contextToggle.checked = false;
+        this.updateContextNoteLabel();
+        new Notice("Horme: Current note context not sent.");
+      }
+    }
+
+    if (this.contextToggle.checked && mdLeaf?.view instanceof MarkdownView) {
+      return `The user's current note:\n\n${mdLeaf.view.editor.getValue()}`;
+    }
+    return null;
+  }
+
+  /** The notes picked with "+ Add notes" (excerpts), after their privacy question; null when none are sent. */
+  private async pickedNotesContext(providerIsLocal: boolean, providerLabel: string): Promise<string | null> {
+    if (this.context.notes.length === 0) return null;
+    let includeContextNotes = true;
+
+    if (!providerIsLocal && !this.plugin.settings.contextNotesCloudWarningShown) {
+      const ok = await this.confirmCloudSend(
+        `Privacy notice: Up to 5 notes (excerpts) will be sent to ${providerLabel}, a cloud provider. The content will leave your device. Do you want to continue?`,
+      );
+      if (ok) {
+        this.plugin.settings.contextNotesCloudWarningShown = true;
+        await this.plugin.saveSettings();
+      } else {
+        includeContextNotes = false;
+        new Notice("Horme: Context notes not sent.");
+      }
+    }
+
+    if (includeContextNotes) {
+      const noteParts: string[] = [];
+      for (const file of this.context.notes) {
+        try {
+          const content = await this.app.vault.read(file);
+          noteParts.push(`--- Note: ${file.basename} ---\n${content.slice(0, 4000)}`);
+        } catch {
+          noteParts.push(`--- Note: ${file.basename} ---\n[Error reading file]`);
+        }
+      }
+      return `The user has provided the following notes as additional context:\n\n` + noteParts.join("\n\n");
+    }
+    return null;
+  }
+
+  /**
+   * The notes of the picked folders, up to the folder context limit, after
+   * their own privacy question; `truncated` when the limit cut them.
+   */
+  private async folderContext(
+    providerIsLocal: boolean,
+    providerLabel: string,
+  ): Promise<{ part: string | null; truncated: boolean }> {
+    let part: string | null = null;
+    let wasTruncated = false;
+    if (this.context.folders.length === 0) return { part, truncated: wasTruncated };
+    let includeFolderContext = true;
+
+    // Its own consent: agreeing to send up to five picked notes is not
+    // agreeing to send whole folders.
+    if (!providerIsLocal && !this.plugin.settings.contextFoldersCloudWarningShown) {
+      const ok = await this.confirmCloudSend(
+        `Privacy notice: Notes from your selected folders will be sent to ${providerLabel}, a cloud provider. The content will leave your device. Do you want to continue?`,
+      );
+      if (ok) {
+        this.plugin.settings.contextFoldersCloudWarningShown = true;
+        await this.plugin.saveSettings();
+      } else {
+        includeFolderContext = false;
+        new Notice("Horme: Folder context not sent.");
+      }
+    }
+
+    if (includeFolderContext) {
+      const limit = Math.max(1000, this.plugin.settings.contextFoldersMaxChars || 0);
+      const { text, truncated, included, total } = await this.context.buildFolderContext(limit);
+      wasTruncated = truncated;
+      if (text) {
+        const selectedFoldersLabel = this.context.folders.map((f) => f.path).join(", ");
+        part =
+          `FOLDER CONTEXT (highest priority): The user selected folder(s): ${selectedFoldersLabel}\n` +
+          `Use the notes inside this folder context to answer the user's next message. ` +
+          `Ignore the currently open note. ` +
+          `If any additional "LOCAL VAULT CONTEXT" is provided, it is scoped to these same folder(s).\n\n` +
+          `--- BEGIN FOLDER CONTEXT ---\n` +
+          text +
+          `\n--- END FOLDER CONTEXT ---`;
+      }
+      if (truncated && !this.context.truncationNoticeShown) {
+        this.context.truncationNoticeShown = true;
+        new Notice(
+          `Horme: Folder context truncated (${included}/${total} notes) due to the ${limit.toLocaleString()} character limit.`,
+        );
+      }
+    }
+    return { part, truncated: wasTruncated };
+  }
+
   private async sendMessageInner(regenerate: boolean) {
     if (this.isGenerating) return;
     this.followOutput = true;
@@ -1129,137 +1272,8 @@ export class HormeChatView extends ItemView {
     // When a skill is armed from the dropdown, we bypass both the normal
     // send flow AND Vault Brain RAG. The skill owns the context for this turn.
     if (this.forcedSkillId) {
-      const skillId = this.forcedSkillId;
-      const query = this.inputEl.value.trim();
-      if (!query) return;
-
-      // Step 4.1: Lock the generation state at the start of forced execution
-      this.isGenerating = true;
-      this.sendBtn.addClass("horme-stop-btn");
-      setIcon(this.sendBtn, "horme-shell");
-
-      // Step 4.3: Store a new AbortController
-      this.activeAbortController = new AbortController();
-
-      // Disarm immediately — pill, flag, and placeholder cleared before any async work
-      this.forcedSkillId = null;
-      this.inputEl.placeholder = "Ask Horme…"; // Revert placeholder text
-      this.containerEl.querySelector(".horme-skill-pill")?.remove();
-
-      // Render the user's message in the chat; the first one replaces the empty-chat greeting.
-      if (!this.history.length) this.messagesEl.empty();
-      this.addMessageBubble("user", query);
-      this.addUserActions(query);
-      this.history.push({ role: "user", content: query });
-      this.inputEl.value = "";
-      this.autoGrow?.();
-
-      const loadingEl = this.showLoading(`Running skill...`);
-
-      try {
-        const skill = this.plugin.skillManager.getSkillById(skillId);
-        if (!skill) throw new Error(`Skill "${skillId}" not found.`);
-
-        // Map the user's raw input to the skill's primary parameter.
-        // All forced-execution skills have a single primary string param.
-        const primaryParam = skill.primaryParam ?? skill.parameters[0]?.name;
-        if (!primaryParam) {
-          this.plugin.diagnosticService.report(
-            "Skills",
-            `Skill configuration error: no primary parameter defined for skill "${skillId}".`,
-            "warning",
-          );
-          new Notice("Skill configuration error: no primary parameter defined.");
-          throw new Error("Skill configuration error: no primary parameter defined.");
-        }
-
-        const forcedParams: Record<string, string | number | boolean> = quickParams ?? {
-          [primaryParam]: query,
-        };
-
-        // Verify and inject required parameters that are not the primary one
-        for (const param of skill.parameters) {
-          if (param.required && !(param.name in forcedParams)) {
-            if (param.name === "language") {
-              const langSetting = (
-                this.plugin.settings.grammarLanguage ||
-                this.plugin.settings.summaryLanguage ||
-                "en"
-              ).toLowerCase();
-              forcedParams.language = langSetting.includes("es") || langSetting.includes("spa") ? "es" : "en";
-            } else {
-              if (param.type === "number") {
-                forcedParams[param.name] = 0;
-              } else if (param.type === "boolean") {
-                forcedParams[param.name] = false;
-              } else {
-                forcedParams[param.name] = "";
-              }
-            }
-          }
-        }
-
-        // TODO: For skills whose execute() does not accept a signal, the abort signal
-        // cannot cancel the underlying network request — document this limitation.
-        const result = await skill.execute(forcedParams);
-
-        if (this.activeAbortController?.signal.aborted) {
-          throw new DOMException("Generation stopped.", "AbortError");
-        }
-
-        loadingEl.remove();
-        await this.renderSkillResultBox(skill.id, skill.name, forcedParams, result);
-        const forcedSkillLinks = pillsFromSkillResult(result);
-        if (!this.contentEl.isConnected) return; // Connectivity guard from Fix 2
-        // Pictures stay with the skill result, which is drawn again when the chat is
-        // reopened; the reply carries only the text.
-        const pictures = skill.id === "find_image" ? imagesFromSkillResult(result) : [];
-        if (pictures.length) {
-          // The cards are the whole reply: each shows its title and credit and links
-          // to its page. The titles and credits are kept for the model and for notes.
-          this.history.push({ role: "tool_result", content: `[SKILL RESULT: ${skill.id}]\n\n${result}` });
-          this.history.push({ role: "assistant", content: imagesSummary(pictures), picturesOnly: true });
-          this.pillsUnderPictures(forcedSkillLinks);
-        } else {
-          const shownText = withoutImageData(result);
-          const resultBubble = this.addMessageBubble("assistant", "");
-          const contentArea = resultBubble.querySelector(".horme-content-area") as HTMLElement;
-          if (contentArea) {
-            contentArea.empty();
-            await MarkdownRenderer.render(this.app, shownText, contentArea, "", this);
-          }
-          this.addAssistantActions(resultBubble, shownText);
-          this.renderSkillSourceLinks(resultBubble, forcedSkillLinks);
-          if (shownText !== result) {
-            this.history.push({ role: "tool_result", content: `[SKILL RESULT: ${skill.id}]\n\n${result}` });
-          }
-          this.history.push({ role: "assistant", content: shownText });
-        }
-        // Regenerate would replay an older turn's request; a skill run is repeated by running it again.
-        this.lastMsgs = null;
-        this.plugin.historyManager.append({
-          id: this.conversationId,
-          title: this.history.find((m) => m.role === "user")?.content.slice(0, 60) || "Untitled chat",
-          timestamp: Date.now(),
-          messages: this.history,
-        });
-        this.scrollToBottom();
-      } catch (e: unknown) {
-        loadingEl.remove();
-        if (e instanceof DOMException && e.name === "AbortError") {
-          new Notice("Generation stopped.");
-        } else {
-          this.plugin.handleError(e);
-        }
-      } finally {
-        // Step 4.2 & 4.3: Reset generating state and controller inside finally block
-        this.isGenerating = false;
-        setIcon(this.sendBtn, "send");
-        this.sendBtn.classList.remove("horme-stop-btn");
-        this.activeAbortController = null;
-      }
-
-      return; // Skip the rest of sendMessage()
+      await this.runArmedSkill(quickParams);
+      return;
     }
     // ── End forced skill execution ───────────────────────────────────────────
 
@@ -1326,108 +1340,20 @@ export class HormeChatView extends ItemView {
 
       const providerIsLocal = this.plugin.isLocalProviderActive();
       const providerLabel = providerInfo(this.plugin.settings.aiProvider).name;
-      const folderContextActive = this.selectedContextFolders.length > 0;
+      const folderContextActive = this.context.folders.length > 0;
       let folderContextWasTruncated = false;
 
-      // --- Current Note Context (privacy guarded) ---
-      // Folder context should be isolated from the currently-open note.
-      // If the user wants a specific extra note, they can add it explicitly via "+ Add notes".
-      if (!folderContextActive && this.contextToggle.checked) {
-        if (!providerIsLocal && !this.plugin.settings.contextCloudWarningShown) {
-          const ok = await this.confirmCloudSend(
-            `Privacy notice: Your current note's full text will be sent to ${providerLabel}, a cloud provider. The content will leave your device. Do you want to continue?`,
-          );
-          if (ok) {
-            this.plugin.settings.contextCloudWarningShown = true;
-            await this.plugin.saveSettings();
-          } else {
-            this.contextToggle.checked = false;
-            this.updateContextNoteLabel();
-            new Notice("Horme: Current note context not sent.");
-          }
-        }
-
-        if (this.contextToggle.checked && mdLeaf?.view instanceof MarkdownView) {
-          systemParts.push(`The user's current note:\n\n${mdLeaf.view.editor.getValue()}`);
-        }
+      // The open note, with its privacy question. Folder context leaves it out:
+      // a note wanted besides a folder is added with "+ Add notes".
+      if (!folderContextActive) {
+        const note = await this.currentNoteContext(mdLeaf, providerIsLocal, providerLabel);
+        if (note) systemParts.push(note);
       }
-
-      // --- Multi-Note Context Injection ---
-      if (this.selectedContextNotes.length > 0) {
-        let includeContextNotes = true;
-
-        if (!providerIsLocal && !this.plugin.settings.contextNotesCloudWarningShown) {
-          const ok = await this.confirmCloudSend(
-            `Privacy notice: Up to 5 notes (excerpts) will be sent to ${providerLabel}, a cloud provider. The content will leave your device. Do you want to continue?`,
-          );
-          if (ok) {
-            this.plugin.settings.contextNotesCloudWarningShown = true;
-            await this.plugin.saveSettings();
-          } else {
-            includeContextNotes = false;
-            new Notice("Horme: Context notes not sent.");
-          }
-        }
-
-        if (includeContextNotes) {
-          const noteParts: string[] = [];
-          for (const file of this.selectedContextNotes) {
-            try {
-              const content = await this.app.vault.read(file);
-              noteParts.push(`--- Note: ${file.basename} ---\n${content.slice(0, 4000)}`);
-            } catch {
-              noteParts.push(`--- Note: ${file.basename} ---\n[Error reading file]`);
-            }
-          }
-          systemParts.push(
-            `The user has provided the following notes as additional context:\n\n` + noteParts.join("\n\n"),
-          );
-        }
-      }
-
-      // --- Folder Context Injection ---
-      if (this.selectedContextFolders.length > 0) {
-        let includeFolderContext = true;
-
-        // Its own consent: agreeing to send up to five picked notes is not
-        // agreeing to send whole folders.
-        if (!providerIsLocal && !this.plugin.settings.contextFoldersCloudWarningShown) {
-          const ok = await this.confirmCloudSend(
-            `Privacy notice: Notes from your selected folders will be sent to ${providerLabel}, a cloud provider. The content will leave your device. Do you want to continue?`,
-          );
-          if (ok) {
-            this.plugin.settings.contextFoldersCloudWarningShown = true;
-            await this.plugin.saveSettings();
-          } else {
-            includeFolderContext = false;
-            new Notice("Horme: Folder context not sent.");
-          }
-        }
-
-        if (includeFolderContext) {
-          const limit = Math.max(1000, this.plugin.settings.contextFoldersMaxChars || 0);
-          const { text, truncated, included, total } = await this.buildFolderContextString(limit);
-          folderContextWasTruncated = truncated;
-          if (text) {
-            const selectedFoldersLabel = this.selectedContextFolders.map((f) => f.path).join(", ");
-            systemParts.push(
-              `FOLDER CONTEXT (highest priority): The user selected folder(s): ${selectedFoldersLabel}\n` +
-                `Use the notes inside this folder context to answer the user's next message. ` +
-                `Ignore the currently open note. ` +
-                `If any additional "LOCAL VAULT CONTEXT" is provided, it is scoped to these same folder(s).\n\n` +
-                `--- BEGIN FOLDER CONTEXT ---\n` +
-                text +
-                `\n--- END FOLDER CONTEXT ---`,
-            );
-          }
-          if (truncated && !this.folderContextTruncationNoticeShown) {
-            this.folderContextTruncationNoticeShown = true;
-            new Notice(
-              `Horme: Folder context truncated (${included}/${total} notes) due to the ${limit.toLocaleString()} character limit.`,
-            );
-          }
-        }
-      }
+      const pickedNotes = await this.pickedNotesContext(providerIsLocal, providerLabel);
+      if (pickedNotes) systemParts.push(pickedNotes);
+      const folders = await this.folderContext(providerIsLocal, providerLabel);
+      if (folders.part) systemParts.push(folders.part);
+      folderContextWasTruncated = folders.truncated;
 
       // --- Vault Brain (RAG) Injection ---
       const canUseRAG = this.plugin.isLocalProviderActive() || this.plugin.settings.allowCloudRAG;
@@ -1447,10 +1373,10 @@ export class HormeChatView extends ItemView {
         this.plugin.setIndexingStatus("Searching vault brain...");
         try {
           const scope =
-            this.selectedContextFolders.length > 0
-              ? { folders: this.selectedContextFolders.map((f) => f.path) }
+            this.context.folders.length > 0
+              ? { folders: this.context.folders.map((f) => f.path) }
               : undefined;
-          relevantChunks = await this.plugin.vaultIndexer.search(text, 20, scope ? { scope } : undefined);
+          relevantChunks = await this.plugin.vaultSearch.search(text, 20, scope ? { scope } : undefined);
         } finally {
           this.plugin.setIndexingStatus(null);
         }
@@ -1477,9 +1403,25 @@ export class HormeChatView extends ItemView {
           this.turnSources = currentSources;
         }
 
-        if (this.rollingRAGContext.length > 0) {
+        // As many of the best passages as fit the model's window beside the
+        // rest of the request, when its provider knows the window (Apple's is
+        // 8,192 tokens; twenty passages alone took about 5,000).
+        let fitted = this.rollingRAGContext;
+        const window = fitted.length ? await this.plugin.aiGateway.contextWindow(model) : null;
+        if (window) {
+          const rest =
+            systemParts.join("\n\n").length +
+            this.history.reduce((n, m) => n + m.content.length, 0) +
+            text.length +
+            (this.uploadedDocContent?.length ?? 0) +
+            this.plugin.aiGateway.skillsChars(true, text) +
+            2500; // the vault rules around the passages and the language line
+          fitted = fitPassages(fitted, passageBudget(window, rest));
+        }
+
+        if (fitted.length > 0) {
           ragWasInjected = true;
-          injectedPassages = this.rollingRAGContext.join("\n\n---\n\n");
+          injectedPassages = fitted.join("\n\n---\n\n");
           this.lastInjectedPassages = injectedPassages;
           this.turnPassages = injectedPassages;
           if (relevantChunks.length > 0) {
@@ -1503,7 +1445,7 @@ export class HormeChatView extends ItemView {
               `QUESTIONS ABOUT THE VAULT ITSELF — how many notes, which notes, notes in a folder, with a tag or a property, ` +
               `or from a period, or reading a whole note — cannot be answered from these passages: call vault_query for them, ` +
               `and do not begin that answer with "${VAULT_NOTHING}"\n\n` +
-              this.rollingRAGContext.join("\n\n---\n\n"),
+              injectedPassages,
           );
         }
       }
@@ -1550,6 +1492,13 @@ export class HormeChatView extends ItemView {
         currentMsg.audio = this.uploadedAudio;
         this.uploadedAudio = null;
       }
+
+      // Last, where a small model weighs it most: the language to answer in.
+      const language = replyLanguage(text);
+      if (language)
+        systemParts.push(
+          `Reply in ${language}, the language of the user's message, whatever the language of the notes, passages or skill results.`,
+        );
 
       if (isFirstMessage) {
         if (systemParts.length) msgs.push({ role: "system", content: systemParts.join("\n\n") });
@@ -1598,7 +1547,7 @@ export class HormeChatView extends ItemView {
         }
 
         // Consolidate consecutive roles to prevent API errors
-        msgs = this.cleanAndConsolidateMsgs(msgs);
+        msgs = cleanAndConsolidateMsgs(msgs);
 
         // Attach media to the latest user message in the payload
         const lastMsg = msgs[msgs.length - 1];
@@ -1645,11 +1594,13 @@ export class HormeChatView extends ItemView {
     epoch: number,
     extras: {
       /** Repeated-call guard shared across the whole skill chain. */
-      seenSkillCalls?: Set<string>;
+      pastCalls?: PastCall[];
       /** Step timeline element shared across the whole skill chain. */
       timelineEl?: HTMLElement | null;
       /** Final budget-exhausted round: no skills offered or parsed. */
       skillsSuppressed?: boolean;
+      /** This round already asks again for an answer that came back empty. */
+      answerRetried?: boolean;
     } = {},
   ) {
     if (this.generationEpoch !== epoch || !this.contentEl.isConnected) {
@@ -1687,80 +1638,20 @@ export class HormeChatView extends ItemView {
     let fullContent = "";
     let fullReasoning = "";
     let reasoningEl: HTMLDetailsElement | null = null;
-    const seenSkillCalls = extras.seenSkillCalls ?? new Set<string>();
+    const pastCalls = extras.pastCalls ?? [];
     let timelineEl = extras.timelineEl ?? null;
     const skillsSuppressed = extras.skillsSuppressed === true;
-    // Native tool-call fragments (OpenAI delta shape indexes fragments; the
-    // Ollama shape sends whole calls) assembled across the stream.
-    const nativeCallParts = new Map<number, { name: string; args: string; argsObj?: unknown }>();
-    let nativeCallCursor = 0;
-    const collectToolCallFragments = (fragments: unknown[]) => {
-      for (const fragment of fragments) {
-        if (!fragment || typeof fragment !== "object") continue;
-        const record = fragment as Record<string, unknown>;
-        const index = typeof record.index === "number" ? record.index : nativeCallCursor;
-        let part = nativeCallParts.get(index);
-        if (!part) {
-          part = { name: "", args: "" };
-          nativeCallParts.set(index, part);
-        }
-        nativeCallCursor = Math.max(nativeCallCursor, index + 1);
-        const fn = record.function;
-        if (fn && typeof fn === "object") {
-          const fnRecord = fn as Record<string, unknown>;
-          if (typeof fnRecord.name === "string" && fnRecord.name && !part.name) {
-            part.name = fnRecord.name;
-          }
-          if (typeof fnRecord.arguments === "string") {
-            part.args += fnRecord.arguments;
-          } else if (fnRecord.arguments && typeof fnRecord.arguments === "object") {
-            part.argsObj = fnRecord.arguments;
-          }
-        }
-      }
-    };
+    // Native tool calls, assembled from the fragments the stream sends.
+    const nativeCalls = new ToolCallAssembler();
 
     this.activeAbortController = new AbortController();
 
-    const renderProgressiveMarkdown = (() => {
-      let lastRender = 0;
-      let renderTask: Promise<void> | null = null;
-      return (text: string, target: HTMLElement): void => {
-        const now = Date.now();
-        if (now - lastRender < 200) return; // Throttle 200ms
-        if (renderTask) return; // Skip if busy
-        lastRender = now;
-        renderTask = (async () => {
-          try {
-            await this.renderMarkdownInto(target, text, initialSourcePath || "");
-            this.scrollToBottom();
-          } finally {
-            renderTask = null;
-          }
-        })();
-      };
-    })();
-
-    // Separate throttle for the reasoning bubble so it renders as formatted
-    // Markdown while streaming (never bare), independent of the content render.
-    const renderProgressiveReasoning = (() => {
-      let lastRender = 0;
-      let renderTask: Promise<void> | null = null;
-      return (text: string, target: HTMLElement): void => {
-        const now = Date.now();
-        if (now - lastRender < 200) return; // Throttle 200ms
-        if (renderTask) return; // Skip if busy
-        lastRender = now;
-        renderTask = (async () => {
-          try {
-            await this.renderMarkdownInto(target, text, initialSourcePath || "");
-            this.scrollToBottom();
-          } finally {
-            renderTask = null;
-          }
-        })();
-      };
-    })();
+    // Content and reasoning render as formatted Markdown while they stream,
+    // at most every 200 ms each, never bare.
+    const renderMarkdown = (text: string, target: HTMLElement) =>
+      this.renderMarkdownInto(target, text, initialSourcePath || "").then(() => this.scrollToBottom());
+    const renderProgressiveMarkdown = throttledRender(renderMarkdown);
+    const renderProgressiveReasoning = throttledRender(renderMarkdown);
 
     try {
       // The rounds after a skill only write the reply from text already found;
@@ -1772,6 +1663,7 @@ export class HormeChatView extends ItemView {
         suppressVaultSkill,
         skillsSuppressed,
         skillDepth > 0 && !this.plugin.settings.thinkAfterSkills ? { noThinking: true } : undefined,
+        this.lastUserText(),
       );
       if (!this.contentEl.isConnected) return;
       this.activeReader = reader;
@@ -1813,51 +1705,58 @@ export class HormeChatView extends ItemView {
               braceCount--;
               if (braceCount === 0) {
                 const jsonStr = buffer.slice(start, i + 1);
-                this.processChunk(jsonStr, collectToolCallFragments, (content, reasoning) => {
-                  if (!hasReceivedFirstChunk && (content || reasoning)) {
-                    hasReceivedFirstChunk = true;
-                    if (loadingEl) {
-                      loadingEl.remove();
-                      loadingEl = null;
+                // A failure the server reports inside the stream ends the reply with that error.
+                const failed = streamError(jsonStr);
+                if (failed) throw new Error(failed);
+                processChunk(
+                  jsonStr,
+                  (fragments) => nativeCalls.add(fragments),
+                  (content, reasoning) => {
+                    if (!hasReceivedFirstChunk && (content || reasoning)) {
+                      hasReceivedFirstChunk = true;
+                      if (loadingEl) {
+                        loadingEl.remove();
+                        loadingEl = null;
+                      }
+                      if (!this.contentEl.isConnected) return;
+                      bubbleEl = this.addMessageBubble("assistant", "");
                     }
-                    if (!this.contentEl.isConnected) return;
-                    bubbleEl = this.addMessageBubble("assistant", "");
-                  }
 
-                  // Capture in a local const so TypeScript's narrowing works correctly
-                  // across the closure boundary. Without this, TypeScript cannot track
-                  // that bubbleEl was assigned above and types it as `never` after the guard.
-                  const el = bubbleEl;
-                  if (!el) return;
+                    // Capture in a local const so TypeScript's narrowing works correctly
+                    // across the closure boundary. Without this, TypeScript cannot track
+                    // that bubbleEl was assigned above and types it as `never` after the guard.
+                    const el = bubbleEl;
+                    if (!el) return;
 
-                  if (reasoning) {
-                    if (!reasoningEl) {
-                      reasoningEl = el.createEl("details", {
-                        cls: "horme-thinking-details horme-thinking-active",
-                      });
-                      reasoningEl.createEl("summary", {
-                        text: "Reasoning process",
-                        cls: "horme-thinking-summary",
-                      });
-                      // Pin the thinking bubble to the top of the response.
-                      const contentArea = el.querySelector(".horme-content-area");
-                      if (contentArea) el.insertBefore(reasoningEl, contentArea);
+                    if (reasoning) {
+                      if (!reasoningEl) {
+                        reasoningEl = el.createEl("details", {
+                          cls: "horme-thinking-details horme-thinking-active",
+                        });
+                        reasoningEl.createEl("summary", {
+                          text: "Reasoning process",
+                          cls: "horme-thinking-summary",
+                        });
+                        // Pin the thinking bubble to the top of the response.
+                        const contentArea = el.querySelector(".horme-content-area");
+                        if (contentArea) el.insertBefore(reasoningEl, contentArea);
+                      }
+                      fullReasoning += reasoning;
+                      let reasoningBody = reasoningEl.querySelector(".horme-thinking-body");
+                      if (!reasoningBody) reasoningBody = reasoningEl.createDiv("horme-thinking-body");
+                      renderProgressiveReasoning(fullReasoning, reasoningBody as HTMLElement);
                     }
-                    fullReasoning += reasoning;
-                    let reasoningBody = reasoningEl.querySelector(".horme-thinking-body");
-                    if (!reasoningBody) reasoningBody = reasoningEl.createDiv("horme-thinking-body");
-                    renderProgressiveReasoning(fullReasoning, reasoningBody as HTMLElement);
-                  }
 
-                  if (content) {
-                    fullContent += content;
-                    // If there was reasoning, ensure the content is outside/after it
-                    let contentArea = el.querySelector(".horme-content-area") as HTMLElement;
-                    if (!contentArea) contentArea = el.createDiv("horme-content-area");
-                    renderProgressiveMarkdown(this.withVaultNotice(fullContent), contentArea);
-                  }
-                  this.scrollToBottom();
-                });
+                    if (content) {
+                      fullContent += content;
+                      // If there was reasoning, ensure the content is outside/after it
+                      let contentArea = el.querySelector(".horme-content-area") as HTMLElement;
+                      if (!contentArea) contentArea = el.createDiv("horme-content-area");
+                      renderProgressiveMarkdown(this.withVaultNotice(fullContent), contentArea);
+                    }
+                    this.scrollToBottom();
+                  },
+                );
                 start = i + 1;
               }
             }
@@ -1867,6 +1766,13 @@ export class HormeChatView extends ItemView {
       }
 
       this.activeReader = null;
+      // This round has finished arriving. A round that only called a skill
+      // never showed text, so its "Thinking" row was left running beside the
+      // next round's until the whole turn ended.
+      if (loadingEl) {
+        loadingEl.remove();
+        loadingEl = null;
+      }
 
       if (this.generationEpoch !== epoch) {
         // Stopped, or overtaken by Clear or another chat: run no skills.
@@ -1877,9 +1783,34 @@ export class HormeChatView extends ItemView {
       // The final answer of a turn that ran Deep Research: its [n] citations
       // become links to the sources, which are listed at the end, in the chat
       // and in what is saved.
-      if (fullContent && nativeCallParts.size === 0 && !/<call:/.test(fullContent)) {
+      if (fullContent && nativeCalls.isEmpty && !/<call:/.test(fullContent)) {
+        // The answer is always in the language of the question: one written in
+        // the language of the notes or results instead is rewritten.
+        fullContent = this.plugin.skillManager.readableSkillNames(unwrapQuotedAnswer(fullContent));
+        const asked = replyLanguage(this.lastUserText());
+        const written = replyLanguage(fullContent);
+        if (asked && written && asked !== written)
+          fullContent = await this.inLanguage(fullContent, asked, model);
+        // A note made this turn is always named in the answer: qwen 3.5 2B
+        // wrote about the subject and never said the note existed.
+        for (const title of this.notesCreatedThisTurn()) {
+          if (!fullContent.includes(`[[${title}`))
+            fullContent = `${asked === "Spanish" ? `Nota creada: [[${title}]].` : `Created the note [[${title}]].`}\n\n${fullContent}`;
+        }
+        // Every [n] links to its source; one that cites nothing is removed.
+        // Without a numbered research list, [n] is the n-th source listed under
+        // the answer. Only after a skill ran: "[1]" in other answers is text.
         const research = this.researchSourcesForTurn();
-        if (research.size) fullContent = linkCitations(fullContent, research);
+        if (research.size) {
+          fullContent = linkCitations(dropDanglingCitations(fullContent, new Set(research.keys())), research);
+        } else if (this.skillsThisTurn().length) {
+          const listed = new Map<number, CitedSource>(
+            skillSourceLinks
+              .filter((p) => p.n === undefined)
+              .map((p, i) => [i + 1, { n: i + 1, title: p.label, url: p.url }]),
+          );
+          fullContent = linkCitations(dropDanglingCitations(fullContent, new Set(listed.keys())), listed);
+        }
         // Notes were sent but the answer came from an outside skill and few of
         // its facts are in them: the vault did not answer. (Small models rarely
         // say so themselves; tested on 48 questions with gemma E2B.)
@@ -1894,15 +1825,79 @@ export class HormeChatView extends ItemView {
         // A count or list from vault_query is the vault answering: no notice, even
         // when the passages sent with the message held nothing on it (they cannot
         // hold a count) and the model wrote the line before calling the skill.
-        if (this.vaultQueryThisTurn()) {
+        // Nor when the user named an outside source (the notice is clutter) or a
+        // note sent with the question is named after its subject (it is false).
+        // Nor after a skill that does something rather than answer (a note made,
+        // a picture found), or one that answered from the vault itself (the
+        // grammar notes, related notes).
+        // A vault skill that found nothing does not count: the notice is then
+        // the honest answer (qwen searched a tag that does not exist and said
+        // so, and removing the line left the answer empty).
+        const question = this.lastUserText();
+        if (
+          this.vaultSkillFound(["vault_query", "vault_links", "grammar_scholar"]) ||
+          this.skillsThisTurn().some((id) => id === "create_concept_note" || id === "find_image") ||
+          namesOutsideSource(question) ||
+          titleNamesQuestion(question, this.turnSources)
+        ) {
           this.turnVaultNothing = false;
           fullContent = normaliseVaultNotice(fullContent).replace(/^Nothing in your vault on this\.\s*/, "");
         }
         fullContent = this.withVaultNotice(normaliseVaultNotice(fullContent));
+        if (asked === "Spanish" && fullContent.startsWith(VAULT_NOTHING))
+          fullContent = VAULT_NOTHING_ES + fullContent.slice(VAULT_NOTHING.length);
+      }
+
+      // A round after a skill that wrote nothing (qwen 3.5 2B did once its tools
+      // were taken away), or only the vault notice that a vault_query answer
+      // drops, never ends the turn with an empty bubble: the model is asked
+      // once more, then the reader is told plainly.
+      if (skillDepth > 0 && !fullContent.trim() && nativeCalls.isEmpty) {
+        if (!extras.answerRetried) {
+          (bubbleEl as HTMLElement | null)?.remove();
+          const nextLoading = this.showLoading();
+          await this.handleStreamingResponse(
+            [
+              ...msgs,
+              {
+                role: "user",
+                content:
+                  "Write your answer to the user's question now, in plain text, from the results above.",
+              },
+            ],
+            model,
+            nextLoading,
+            initialSourcePath,
+            suppressVaultSkill,
+            skillDepth + 1,
+            sources,
+            skillSourceLinks,
+            passages,
+            epoch,
+            { pastCalls, timelineEl, skillsSuppressed: true, answerRetried: true },
+          );
+          return;
+        }
+        // The notes Vault Brain found named after the question's subject are
+        // listed: a true answer, where the model's own was a wrong "nothing".
+        const spanish = replyLanguage(this.lastUserText()) === "Spanish";
+        const named = this.turnSources
+          .filter((path) => titleNamesQuestion(this.lastUserText(), [path]))
+          .slice(0, 5)
+          .map((path) => {
+            const link = path.replace(/\.md$/i, "");
+            return `- [[${link}|${link.split("/").pop() ?? link}]]`;
+          });
+        fullContent = named.length
+          ? `${spanish ? "El modelo no ha escrito ninguna respuesta. Notas de tu bóveda sobre esto:" : "The model wrote no answer. Notes in your vault on this:"}\n\n${named.join("\n")}`
+          : spanish
+            ? "El modelo no ha escrito ninguna respuesta. Los resultados están en los recuadros de arriba."
+            : "The model wrote no answer. The results are in the boxes above.";
+        if (!bubbleEl) bubbleEl = this.addMessageBubble("assistant", "");
       }
 
       if (bubbleEl) {
-        const el = bubbleEl as HTMLElement;
+        const el = bubbleEl;
         // Re-render the final content with Markdown
         const contentArea = el.querySelector(".horme-content-area") as HTMLElement;
         if (contentArea) {
@@ -1927,7 +1922,7 @@ export class HormeChatView extends ItemView {
         }
         // A thinking model can spend the whole answer budget reasoning and never
         // answer; say so instead of leaving an empty bubble.
-        if (!fullContent.trim() && fullReasoning.trim() && nativeCallParts.size === 0) {
+        if (!fullContent.trim() && fullReasoning.trim() && nativeCalls.isEmpty) {
           const area =
             el.querySelector<HTMLElement>(".horme-content-area") ?? el.createDiv("horme-content-area");
           area.empty();
@@ -1939,15 +1934,16 @@ export class HormeChatView extends ItemView {
         // Passages bubble: exactly what RAG context was sent to the model this turn.
         await this.appendPassagesBubble(el, passages, initialSourcePath || "");
         this.addAssistantActions(el, fullContent);
-        // Notes the answer says it could not use are not listed as its sources.
-        const noteSources = this.notesBehind(fullContent, sources.length ? sources : this.turnSources);
-        this.renderSources(el, fullContent.startsWith(VAULT_NOTHING) ? [] : noteSources);
+        // Notes the answer says it could not use, or that a skill's answer does
+        // not draw on, are not listed as its sources.
+        const noteSources = this.vaultSourcesOf(fullContent, sources.length ? sources : this.turnSources);
+        this.renderSources(el, noteSources);
       }
 
       // Assemble native tool calls (if any) from the streamed fragments.
       const nativeSkillCalls: SkillCall[] = [];
       if (!skillsSuppressed) {
-        for (const part of nativeCallParts.values()) {
+        for (const part of nativeCalls.calls()) {
           if (!part.name) continue;
           let parameters: unknown = part.argsObj ?? {};
           if (part.argsObj === undefined && part.args) {
@@ -1975,12 +1971,12 @@ export class HormeChatView extends ItemView {
           // Clean the assistant bubble: strip raw <call:...> XML and leave
           // only the model's natural language text (if any).
           if (bubbleEl) {
-            const bEl = bubbleEl as HTMLElement;
+            const bEl = bubbleEl;
             const contentArea = bEl.querySelector(".horme-content-area") as HTMLElement;
             if (contentArea) {
               // Text written in a round that ended in tool calls is interim
               // (plan, notes) — it never belongs in the reply bubble.
-              const cleanedContent = nativeSkillCalls.length ? "" : this.stripSkillCallXml(fullContent);
+              const cleanedContent = nativeSkillCalls.length ? "" : stripSkillCallXml(fullContent);
               contentArea.empty();
               if (cleanedContent) {
                 await MarkdownRenderer.render(
@@ -2002,10 +1998,29 @@ export class HormeChatView extends ItemView {
 
           const aggregatedSkillLinks = [...skillSourceLinks];
           const roundResults: string[] = [];
+          const question = this.lastUserText();
+          let ranSomething = false;
           for (const call of skillCalls) {
             const skillName = call.skillId;
             const skill = this.plugin.skillManager.getSkillById(skillName);
             const displayName = skill?.name || skillName;
+            // A repeated call (the same skill on the same words, reworded or not;
+            // a common small-model failure), or a vault-changing skill the user
+            // did not ask for: the model is told why, and the reader sees no new box.
+            const refusal = repeatsEarlierCall(skillName, call.parameters, pastCalls)
+              ? `You already ran ${skillName} for this and have its results above. Do not call it again. Answer the user's question now using what you already found.`
+              : !this.plugin.skillManager.askedFor(skillName, question)
+                ? `${skillName} was not run: it writes in the user's vault, and the user did not ask for that. Answer the question with the other skills or what you already found.`
+                : null;
+            if (refusal) {
+              this.history.push({
+                role: "tool_result",
+                // Its own label: a refusal is not a result (the citation links,
+                // sources and vault notice read "[SKILL RESULT: …]" as a run).
+                content: `[SKILL NOT RUN: ${skillName}]\n\n${refusal}`,
+              });
+              continue;
+            }
 
             const skillLoading = this.showLoading(displayName);
             const loadingSpan = skillLoading.querySelector("span");
@@ -2017,11 +2032,6 @@ export class HormeChatView extends ItemView {
             }
             timelineEl = this.ensureAgentTimeline(timelineEl);
             const stepRow = this.addTimelineStep(timelineEl, displayName, call.parameters);
-            // Repeated-call guard: a model that re-issues the exact same call
-            // (a common small-model failure) gets told to answer instead.
-            const callKey = `${skillName}:${JSON.stringify(call.parameters ?? {})
-              .replace(/\s+/g, "")
-              .toLowerCase()}`;
             // Stop pressed (or another chat opened) while earlier skills ran:
             // run no more of them and record nothing.
             if (this.generationEpoch !== epoch) {
@@ -2030,18 +2040,27 @@ export class HormeChatView extends ItemView {
             }
             // "With every lookup": a picture of the subject is fetched while the lookup runs.
             const pictureTask = this.pictureAlongside(call);
-            let result: string;
-            if (seenSkillCalls.has(callKey)) {
-              result = `You already ran ${skillName} with these exact arguments and have the results above. Do not repeat this call. Answer the user's question now using what you already found.`;
-            } else {
-              seenSkillCalls.add(callKey);
-              result = await this.plugin.skillManager.executeSkill(call);
+            const result = await this.plugin.skillManager.executeSkill(call);
+            // Asked in other words but brought back the same: no second box,
+            // and the model is told it already has this.
+            if (repeatsEarlierResult(skillName, result, pastCalls)) {
+              pastCalls.push(pastCall(skillName, call.parameters, result));
+              stepRow.remove();
+              skillLoading.remove();
+              pictureTask?.catch(() => null);
+              this.history.push({
+                role: "tool_result",
+                content: `[SKILL NOT RUN: ${skillName}]\n\nThis call brought back the same as your earlier ${skillName} call, whose results are above. Do not call it again. Answer the user's question now.`,
+              });
+              continue;
             }
+            ranSomething = true;
+            pastCalls.push(pastCall(skillName, call.parameters, result));
             this.completeTimelineStep(stepRow, /^Error:/i.test(result));
             if (!this.contentEl.isConnected) return;
             skillLoading.remove();
             if (this.generationEpoch !== epoch) return;
-            mergePills(aggregatedSkillLinks, pillsFromSkillResult(result));
+            if (!VAULT_SKILLS.has(skillName)) mergePills(aggregatedSkillLinks, pillsFromSkillResult(result));
 
             this.history.push({
               role: "tool_result",
@@ -2093,11 +2112,38 @@ export class HormeChatView extends ItemView {
           // noise: they cannot hold a count, and in a vault with notes in another
           // language they pulled a small model into that language. They also make
           // the round slower.
-          if (turnSystem && this.turnPassages && this.vaultQueryThisTurn())
+          if (turnSystem && this.turnPassages && this.vaultSkillFound(["vault_query"]))
             turnSystem = turnSystem.replace(
               this.turnPassages,
               "(The passages are left out here: vault_query has answered from the whole vault.)",
             );
+          // The round must fit the model's window with the skill results in it:
+          // the passages make way first (the results answer now), then the
+          // results are cut. (Apple's 8,192 tokens overflowed after a page fetch.)
+          const window = await this.plugin.aiGateway.contextWindow(model);
+          let resultsRoom = Infinity;
+          if (window) {
+            const question = this.lastUserText();
+            const resultsChars = this.history
+              .filter((m) => m.role === "tool_result")
+              .reduce((n, m) => n + withoutImageData(m.content).length, 0);
+            const others = this.history
+              .filter((m) => m.role !== "tool_result")
+              .reduce((n, m) => n + m.content.length, 0);
+            const skillsChars = this.plugin.aiGateway.skillsChars(suppressVaultSkill, question) + 600;
+            const total = () => (turnSystem?.length ?? 0) + others + resultsChars + skillsChars;
+            if (
+              turnSystem &&
+              this.turnPassages &&
+              turnSystem.includes(this.turnPassages) &&
+              total() > roundBudget(window)
+            )
+              turnSystem = turnSystem.replace(
+                this.turnPassages,
+                "(The passages are left out here to make room for the skill results.)",
+              );
+            resultsRoom = roundBudget(window) - (total() - resultsChars);
+          }
           const effectivePrompt =
             turnSystem ?? this.sessionSystemPromptOverride ?? (await this.plugin.getEffectiveSystemPrompt());
           if (effectivePrompt) nextMsgs.push({ role: "system", content: effectivePrompt });
@@ -2117,21 +2163,30 @@ export class HormeChatView extends ItemView {
           }
 
           if (toolResults.length > 0) {
-            const consolidated = toolResults.map((r) => withoutImageData(r.content)).join("\n\n---\n\n");
+            const consolidated = fitText(
+              toolResults.map((r) => withoutImageData(r.content)).join("\n\n---\n\n"),
+              Math.max(1500, resultsRoom),
+            );
             // These results arrive as a message of their own, so "the user's last
             // message" no longer named the question. (Quoting the question instead
             // made a small model repeat it as its answer.)
+            // The language named, last thing before the answer: "the user's
+            // language" alone let qwen 3.5 2B answer an English question in the
+            // Spanish of the notes.
+            const language = replyLanguage(this.lastUserText());
             nextMsgs.push({
               role: "user",
               content:
                 consolidated +
                 "\n\n[SKILL RESULTS ABOVE] If the user's request is fully answered, write your final answer now, " +
-                "in the same language as the user's question, whatever the language of the results or the notes. " +
+                (language
+                  ? `in ${language}, the language of the user's question, whatever the language of the results or the notes. `
+                  : "in the same language as the user's question, whatever the language of the results or the notes. ") +
                 "If you still need more information, call the next skill immediately — do not narrate or explain, just call it.",
             });
           }
 
-          nextMsgs = this.cleanAndConsolidateMsgs(nextMsgs);
+          nextMsgs = cleanAndConsolidateMsgs(nextMsgs);
 
           const maxDepth = this.plugin.settings.agentMode
             ? Math.min(50, Math.max(1, this.plugin.settings.agentMaxRounds))
@@ -2154,22 +2209,27 @@ export class HormeChatView extends ItemView {
               aggregatedSkillLinks,
               "",
               epoch,
-              { seenSkillCalls, timelineEl, skillsSuppressed: true },
+              { pastCalls, timelineEl, skillsSuppressed: true },
             );
           } else {
             const nextLoading = this.showLoading();
+            // The same tools as the first round: a tool list that changes between
+            // rounds changes the top of the prompt, and the server then reads the
+            // whole prompt again instead of reusing its cache (a minute on Ollama).
             await this.handleStreamingResponse(
               nextMsgs,
               model,
               nextLoading,
               initialSourcePath,
-              false,
+              suppressVaultSkill,
               skillDepth + 1,
               [],
               aggregatedSkillLinks,
               "",
               epoch,
-              { seenSkillCalls, timelineEl },
+              // Nothing new ran (every call repeated or was refused): no more
+              // tools, so the model answers instead of calling again.
+              { pastCalls, timelineEl, skillsSuppressed: !ranSomething },
             );
           }
           return;
@@ -2181,13 +2241,11 @@ export class HormeChatView extends ItemView {
             content: fullContent,
             reasoning: fullReasoning || undefined,
             context: passages || undefined,
-            sources: fullContent.startsWith(VAULT_NOTHING)
-              ? undefined
-              : this.notesBehind(fullContent, sources.length ? sources : this.turnSources),
+            sources: this.vaultSourcesOf(fullContent, sources.length ? sources : this.turnSources),
           });
         }
         if (bubbleEl && skillSourceLinks.length > 0) {
-          this.renderSkillSourceLinks(bubbleEl as HTMLElement, skillSourceLinks);
+          this.renderSkillSourceLinks(bubbleEl, pillsForAnswer(skillSourceLinks, fullContent));
         }
 
         if (!this.contentEl.isConnected) return;
@@ -2211,7 +2269,14 @@ export class HormeChatView extends ItemView {
       } else if (e instanceof DOMException && e.name === "AbortError") {
         new Notice("Generation stopped.");
       } else {
-        this.plugin.handleError(e);
+        // A request too long for the model is explained, with what to do.
+        const provider = this.plugin.settings.aiProvider;
+        const explained = explainContextOverflow(
+          e instanceof Error ? e.message : String(e),
+          provider,
+          providerInfo(provider).name,
+        );
+        this.plugin.handleError(explained ? new Error(explained) : e);
       }
     } finally {
       if (loadingEl) loadingEl.remove();
@@ -2344,7 +2409,7 @@ export class HormeChatView extends ItemView {
   }
 
   private async renderSkillResultBox(skillId: string, displayName: string, params: unknown, result: string) {
-    const summaryText = this.formatSkillSummary(displayName, params);
+    const summaryText = formatSkillSummary(displayName, params);
     const resultBubble = this.messagesEl.createDiv("horme-msg horme-msg-assistant horme-skill-only");
     const details = resultBubble.createEl("details", { cls: "horme-reasoning-details" });
     const summaryEl = details.createEl("summary", { cls: "horme-reasoning-summary" });
@@ -2356,7 +2421,7 @@ export class HormeChatView extends ItemView {
     // A picture already shown for this message (say by a Wikipedia lookup) is not repeated.
     const images = imagesFromSkillResult(result).filter((img) => !this.shownImageUrls.has(img.thumbUrl));
     for (const img of images) this.shownImageUrls.add(img.thumbUrl);
-    if (images.length > 0) this.renderImageGallery(resultBubble, images);
+    if (images.length > 0) this.pictures.renderImageGallery(resultBubble, images);
     this.scrollToBottom();
   }
 
@@ -2427,111 +2492,6 @@ export class HormeChatView extends ItemView {
       messages: this.history,
     });
     this.followAndScroll();
-  }
-
-  /** Image cards: the picture (opening its Wikimedia page), its title and credit, and Save to vault. */
-  private renderImageGallery(container: HTMLElement, images: FoundImage[]): void {
-    const gallery = container.createDiv({
-      cls: images.length > 1 ? "horme-image-gallery is-multiple" : "horme-image-gallery",
-    });
-    for (const img of images) {
-      const card = gallery.createEl("figure", { cls: "horme-image-card" });
-      const link = card.createEl("a", {
-        cls: "horme-image-link",
-        href: img.pageUrl || img.thumbUrl,
-        attr: {
-          target: "_blank",
-          rel: "noopener noreferrer",
-          "aria-label": `Open “${img.title}” at ${img.source}`,
-        },
-      });
-      const picture = link.createEl("img", {
-        cls: "horme-image",
-        attr: { src: img.thumbUrl, alt: img.description || img.title, loading: "lazy", decoding: "async" },
-      });
-      // The real proportions keep the space reserved while the picture loads.
-      if (img.width > 0 && img.height > 0) {
-        picture.setAttr("width", String(img.width));
-        picture.setAttr("height", String(img.height));
-      }
-      picture.addEventListener("load", () => this.scrollToBottom());
-      picture.addEventListener("error", () => {
-        link.empty();
-        link.addClass("is-broken");
-        link.createSpan({ text: `The picture could not be loaded. Open its page at ${img.source}.` });
-      });
-
-      const caption = card.createEl("figcaption", { cls: "horme-image-caption" });
-      const text = caption.createDiv({ cls: "horme-image-text" });
-      text.createDiv({ cls: "horme-image-title", text: img.title });
-      // Credit and where it is from ("Diliff · CC BY-SA 4.0 · Wikimedia Commons"), once.
-      const credit = cardCredit(img);
-      if (credit) text.createDiv({ cls: "horme-image-credit", text: credit });
-      const save = caption.createEl("button", {
-        cls: "horme-save-btn horme-image-save",
-        attr: { "aria-label": "Save to vault" },
-      });
-      setIcon(save, "download");
-      save.addEventListener("click", () => {
-        void this.saveImageToVault(img, save);
-      });
-    }
-  }
-
-  /** "Name.jpg" in a folder, or "Name 1.jpg", "Name 2.jpg"… when that is taken. */
-  private async freePath(folder: string, fileName: string): Promise<string> {
-    const dot = fileName.lastIndexOf(".");
-    const base = dot > 0 ? fileName.slice(0, dot) : fileName;
-    const ext = dot > 0 ? fileName.slice(dot) : "";
-    const inFolder = (n: string) => normalizePath(folder === "/" ? n : `${folder}/${n}`);
-    let candidate = inFolder(fileName);
-    for (let i = 1; await this.app.vault.adapter.exists(candidate); i++)
-      candidate = inFolder(`${base} ${i}${ext}`);
-    return candidate;
-  }
-
-  /** Downloads the picture (a large copy, never a huge original) into the chosen folder. */
-  private async saveImageToVault(img: FoundImage, button: HTMLElement): Promise<void> {
-    if (button.hasClass("is-busy")) return;
-    button.addClass("is-busy");
-    try {
-      const urls = [img.saveUrl, img.thumbUrl].filter(
-        (u, i, all) => isAllowedImageUrl(u) && all.indexOf(u) === i,
-      );
-      // Unsplash's guidelines ask for this call whenever one of its pictures is downloaded.
-      if (img.downloadPing) await pingUnsplashDownload(this.plugin, img.downloadPing);
-      let data: ArrayBuffer | null = null;
-      let ext: string | undefined;
-      for (const url of urls) {
-        const res = await requestUrlWithTimeout({ url, headers: WIKIMEDIA_HEADERS, throw: false }, 30000);
-        const type = (res.headers["content-type"] ?? res.headers["Content-Type"] ?? "").toLowerCase();
-        // Only a picture is written to the vault, never an error page.
-        if (res.status === 200 && res.arrayBuffer.byteLength > 0 && (!type || type.startsWith("image/"))) {
-          data = res.arrayBuffer;
-          ext = extensionForType(type);
-          break;
-        }
-      }
-      if (!data) throw new Error(`${img.source} did not send the picture.`);
-      const view = this.plugin.lastActiveMarkdownLeaf?.view;
-      const sourcePath =
-        (view instanceof MarkdownView ? view.file?.path : undefined) ??
-        this.app.workspace.getActiveFile()?.path ??
-        "";
-      const name = imageFileName(img, ext);
-      const folder = this.plugin.settings.imageSaveFolder.trim();
-      const path = folder
-        ? await this.freePath(await ensureVaultFolder(this.app, folder), name)
-        : await this.app.fileManager.getAvailablePathForAttachment(name, sourcePath);
-      const file = await this.app.vault.createBinary(path, data);
-      setIcon(button, "check");
-      button.setAttr("aria-label", `Saved to ${file.path}`);
-      new Notice(`Horme: Picture saved to ${file.path}.`);
-    } catch (e: unknown) {
-      new Notice(`Horme: Could not save the picture. ${errorToMessage(e)}`);
-    } finally {
-      button.removeClass("is-busy");
-    }
   }
 
   private shouldPromoteSkillFailure(result: string): boolean {
@@ -2717,9 +2677,7 @@ export class HormeChatView extends ItemView {
     this.lastProvider = null;
     this.rollingRAGContext = [];
     this.lastInjectedPassages = "";
-    this.selectedContextNotes = [];
-    this.selectedContextFolders = [];
-    this.folderContextTruncationNoticeShown = false;
+    this.context.clear();
     this.updateContextNotesLabel();
   }
 
@@ -2752,7 +2710,7 @@ export class HormeChatView extends ItemView {
         if (match) {
           const skill = this.plugin.skillManager.getSkillById(match[1]);
           await this.renderSkillResultBox(match[1], skill?.name ?? match[1], {}, match[2]);
-          mergePills(aggregatedSkillLinks, pillsFromSkillResult(match[2]));
+          if (!VAULT_SKILLS.has(match[1])) mergePills(aggregatedSkillLinks, pillsFromSkillResult(match[2]));
         }
         continue;
       }
@@ -2764,7 +2722,7 @@ export class HormeChatView extends ItemView {
       if (m.role === "user" || m.role === "assistant") {
         const bubble = this.addMessageBubble(m.role, "", m.images);
         if (m.role === "assistant") {
-          const displayContent = this.stripSkillCallXml(m.content);
+          const displayContent = stripSkillCallXml(m.content);
           const contentArea = bubble.querySelector(".horme-content-area") as HTMLElement;
           if (contentArea) {
             contentArea.empty();
@@ -2779,7 +2737,7 @@ export class HormeChatView extends ItemView {
           this.addAssistantActions(bubble, m.content);
           this.renderSources(bubble, m.sources ?? []);
           if (aggregatedSkillLinks.length > 0) {
-            this.renderSkillSourceLinks(bubble, aggregatedSkillLinks);
+            this.renderSkillSourceLinks(bubble, pillsForAnswer(aggregatedSkillLinks, m.content));
             aggregatedSkillLinks.length = 0;
           }
         } else {
@@ -2877,9 +2835,36 @@ export class HormeChatView extends ItemView {
     this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
   }
 
+  /**
+   * The answer rewritten in the question's language by the same model, links,
+   * citations and note links kept. Kept only when it came back in that
+   * language; otherwise the answer stays as written.
+   */
+  private async inLanguage(text: string, language: "English" | "Spanish", model: string): Promise<string> {
+    try {
+      const out = await this.plugin.aiGateway.generate(
+        text,
+        `Rewrite the user's text in ${language}. Translate the prose only: keep the Markdown, every link, ` +
+          `every [n] citation, every [[note link]], names, numbers and quotations from sources exactly as they are. ` +
+          `Reply with the rewritten text and nothing else.`,
+        model,
+        true,
+      );
+      const clean = out.trim();
+      return clean && replyLanguage(clean) === language ? clean : text;
+    } catch {
+      return text;
+    }
+  }
+
   /** "Nothing in your vault on this." first, when this message's vault search found nothing. */
   private withVaultNotice(text: string): string {
-    if (!this.turnVaultNothing || !text || text.startsWith(VAULT_NOTHING) || this.vaultQueryThisTurn())
+    if (
+      !this.turnVaultNothing ||
+      !text ||
+      text.startsWith(VAULT_NOTHING) ||
+      this.vaultSkillFound(["vault_query", "vault_links", "grammar_scholar"])
+    )
       return text;
     return `${VAULT_NOTHING}\n\n${text}`;
   }
@@ -2892,21 +2877,66 @@ export class HormeChatView extends ItemView {
       const path = passageNotePath(chunk);
       if (path && sent.includes(path)) byNote.set(path, `${byNote.get(path) ?? ""}\n${chunk}`);
     }
-    return notesUsed(answer, byNote, sent);
+    return notesUsed(answer, byNote, sent, this.lastUserText());
   }
 
-  /** Whether vault_query answered since the user's last message: the vault did answer, whatever the passages held. */
-  private vaultQueryThisTurn(): boolean {
+  /** Whether one of these skills ran since the user's last message and found something. */
+  private vaultSkillFound(ids: string[]): boolean {
     for (let i = this.history.length - 1; i >= 0; i--) {
       const m = this.history[i];
       if (m.role === "user") break;
-      if (
-        (m.role === "tool_result" || m.role === "system") &&
-        m.content.startsWith("[SKILL RESULT: vault_query]")
-      )
-        return true;
+      if (m.role !== "tool_result" && m.role !== "system") continue;
+      const hit = /^\[SKILL RESULT: ([a-zA-Z0-9_]+)\]\n\n([\s\S]*)$/.exec(m.content);
+      if (hit && ids.includes(hit[1]) && !skillFailed(hit[2])) return true;
     }
     return false;
+  }
+
+  /** Titles of the notes Create Concept Note made since the user's last message. */
+  private notesCreatedThisTurn(): string[] {
+    const titles: string[] = [];
+    for (let i = this.history.length - 1; i >= 0; i--) {
+      const m = this.history[i];
+      if (m.role === "user") break;
+      if (m.role !== "tool_result" || !m.content.startsWith("[SKILL RESULT: create_concept_note]")) continue;
+      const title = /Created concept note \[\[([^\]|]+)\]\]/.exec(m.content)?.[1];
+      if (title && !titles.includes(title)) titles.push(title);
+    }
+    return titles;
+  }
+
+  /** The skills that ran since the user's last message. */
+  private skillsThisTurn(): string[] {
+    const ids: string[] = [];
+    for (let i = this.history.length - 1; i >= 0; i--) {
+      const m = this.history[i];
+      if (m.role === "user") break;
+      const id = /^\[SKILL RESULT: ([a-zA-Z0-9_]+)\]/.exec(m.content)?.[1];
+      if ((m.role === "tool_result" || m.role === "system") && id) ids.push(id);
+    }
+    return ids;
+  }
+
+  /**
+   * The vault notes to list under an answer as its sources: none when the
+   * answer says the vault had nothing, and none when a skill other than the
+   * vault's own answered (the date calculator, grammar notes, the web): that
+   * answer lists the skill's own sources. (A grounding score let a date
+   * answer list unrelated notes that happen to mention 1914.)
+   */
+  private vaultSourcesOf(answer: string, candidates: string[]): string[] {
+    if (answer.startsWith(VAULT_NOTHING) || answer.startsWith(VAULT_NOTHING_ES)) return [];
+    const skills = this.skillsThisTurn();
+    if (skills.some((id) => id !== "vault_links" && id !== "vault_query")) return [];
+    const notes = this.notesBehind(answer, candidates);
+    // The vault's own skills answer with notes they name: of the passages sent
+    // with the question, only the notes the answer names are its sources.
+    if (skills.length === 0) return notes;
+    const said = answer.toLowerCase();
+    return notes.filter((path) => {
+      const title = (path.split("/").pop() ?? path).replace(/\.md$/i, "").toLowerCase();
+      return title.length > 2 && said.includes(title);
+    });
   }
 
   /** Whether a skill that looks outside the vault (web, encyclopaedias…) ran since the user's last message. */
@@ -2930,7 +2960,8 @@ export class HormeChatView extends ItemView {
         (m.role === "tool_result" || m.role === "system") &&
         m.content.includes("[SKILL RESULT: deep_research]")
       ) {
-        return parseResearchSources(m.content);
+        const found = parseResearchSources(m.content);
+        if (found.size) return found;
       }
     }
     return new Map();
@@ -2953,6 +2984,11 @@ export class HormeChatView extends ItemView {
     const staging = createDiv();
     await MarkdownRenderer.render(this.app, text, staging, sourcePath, this);
     if (this.renderSeq.get(target) !== seq) return;
+    // Citation numbers read as footnote markers, [3][4], without Obsidian's
+    // external-link arrow after each one.
+    staging.querySelectorAll("a.external-link").forEach((a) => {
+      if (/^\[\d{1,3}\]$/.test(a.textContent ?? "")) a.addClass("horme-citation");
+    });
     target.replaceChildren(...Array.from(staging.childNodes));
   }
   private autoGrow() {
@@ -2960,147 +2996,6 @@ export class HormeChatView extends ItemView {
     // one), so its scrollHeight is the height its text needs.
     this.inputEl.setCssProps({ height: "" });
     this.inputEl.setCssProps({ height: `${Math.min(this.inputEl.scrollHeight, 140)}px` });
-  }
-
-  /**
-   * Strips raw skill call XML (e.g. `<call:wikipedia>{...}</call>`) from content
-   * so the user sees clean text instead of the model's internal tool invocations.
-   */
-  private stripSkillCallXml(content: string): string {
-    const tagRegex = /<call:([a-zA-Z0-9_]+)>/g;
-    let match;
-
-    const isEscaped = (str: string, index: number): boolean => {
-      let count = 0;
-      for (let i = index - 1; i >= 0; i--) {
-        if (str[i] === "\\") count++;
-        else break;
-      }
-      return count % 2 !== 0;
-    };
-
-    let cleanText = "";
-    let lastIndex = 0;
-    tagRegex.lastIndex = 0;
-
-    while ((match = tagRegex.exec(content)) !== null) {
-      const startTagIdx = match.index;
-      const startIdx = startTagIdx + match[0].length;
-
-      // Find the opening '{' that begins the JSON parameter object.
-      let jsonStart = -1;
-      for (let i = startIdx; i < content.length; i++) {
-        const char = content[i];
-        if (char === "{") {
-          jsonStart = i;
-          break;
-        }
-        if (char === "<") {
-          break;
-        }
-      }
-
-      if (jsonStart === -1) {
-        continue;
-      }
-
-      // Use the brace-counting parser to extract the balanced JSON object.
-      let braceCount = 0;
-      let inString = false;
-      let jsonEnd = -1;
-
-      for (let i = jsonStart; i < content.length; i++) {
-        const char = content[i];
-        if (char === '"' && !isEscaped(content, i)) {
-          inString = !inString;
-        }
-        if (!inString) {
-          if (char === "{") {
-            braceCount++;
-          } else if (char === "}") {
-            braceCount--;
-            if (braceCount === 0) {
-              jsonEnd = i;
-              break;
-            }
-          }
-        }
-      }
-
-      if (jsonEnd === -1) {
-        continue;
-      }
-
-      // Find the </call> tag immediately after the closing '}'.
-      const afterJson = content.slice(jsonEnd + 1);
-      const closeTagMatch = /^\s*<\/call>/.exec(afterJson);
-      if (!closeTagMatch) {
-        continue;
-      }
-
-      const endTagIdx = jsonEnd + 1 + closeTagMatch[0].length;
-
-      // Add preceding non-tag text to cleanText
-      cleanText += content.slice(lastIndex, startTagIdx);
-      lastIndex = endTagIdx;
-
-      // Update regex index to skip past the closing tag
-      tagRegex.lastIndex = endTagIdx;
-    }
-
-    cleanText += content.slice(lastIndex);
-    return cleanText.trim();
-  }
-
-  /**
-   * Builds a human-readable summary for the skill result box.
-   * Adds contextual details like language names where applicable.
-   */
-  private static readonly LANG_NAMES: Record<string, string> = {
-    en: "English",
-    es: "Spanish",
-    fr: "French",
-    de: "German",
-    it: "Italian",
-    pt: "Portuguese",
-    zh: "Chinese",
-    ja: "Japanese",
-    ko: "Korean",
-    ru: "Russian",
-    nl: "Dutch",
-    ar: "Arabic",
-    tr: "Turkish",
-    hi: "Hindi",
-    pl: "Polish",
-    sv: "Swedish",
-    da: "Danish",
-    fi: "Finnish",
-    no: "Norwegian",
-    cs: "Czech",
-    el: "Greek",
-    he: "Hebrew",
-    th: "Thai",
-    vi: "Vietnamese",
-    uk: "Ukrainian",
-    ro: "Romanian",
-    hu: "Hungarian",
-    ca: "Catalan",
-  };
-
-  private formatSkillSummary(skillName: string, params: unknown): string {
-    // Add language detail for skills that use it (Wikipedia, Wiktionary)
-    const language =
-      typeof params === "object" &&
-      params !== null &&
-      typeof (params as Record<string, unknown>)["language"] === "string"
-        ? ((params as Record<string, unknown>)["language"] as string)
-        : null;
-    if (language) {
-      const code = language.toLowerCase().slice(0, 2);
-      const langName = HormeChatView.LANG_NAMES[code] || language.toUpperCase();
-      return `Skill used: ${skillName} (${langName})`;
-    }
-    return `Skill used: ${skillName}`;
   }
 
   /**
@@ -3119,17 +3014,14 @@ export class HormeChatView extends ItemView {
     const stepNumber = timelineEl.querySelectorAll(".horme-agent-step").length + 1;
     const row = timelineEl.createDiv("horme-agent-step horme-agent-step-pending");
     row.createSpan({ cls: "horme-agent-step-num", text: `${stepNumber}.` });
-    let summary = "";
-    if (params && typeof params === "object") {
-      const values = Object.values(params as Record<string, unknown>);
-      const firstString = values.find((v) => typeof v === "string" && v.trim());
-      if (typeof firstString === "string") summary = firstString;
-    }
+    const summary = stepSummary(params);
     const label = row.createSpan({
       cls: "horme-agent-step-label",
       text: summary ? `${displayName} — ${summary}` : displayName,
     });
-    label.title = label.textContent ?? "";
+    const full =
+      params && typeof params === "object" ? Object.values(params).find((v) => typeof v === "string") : "";
+    label.title = typeof full === "string" && full ? `${displayName} — ${full}` : displayName;
     row.createSpan({ cls: "horme-agent-step-status", text: "…" });
     this.scrollToBottom();
     return row;
@@ -3140,91 +3032,5 @@ export class HormeChatView extends ItemView {
     stepRow.addClass(isError ? "horme-agent-step-fail" : "horme-agent-step-ok");
     const status = stepRow.querySelector(".horme-agent-step-status");
     if (status) status.textContent = isError ? "✗" : "✓";
-  }
-
-  private processChunk(
-    line: string,
-    onToolCalls: (fragments: unknown[]) => void,
-    onContent: (c: string, r?: string) => void,
-  ) {
-    const raw = line.trim();
-    if (!raw || raw === "data: [DONE]") return;
-    try {
-      // The upstream brace-counting parser already extracts clean JSON objects,
-      // so no SSE "data: " prefix stripping is needed here.
-      const data: unknown = JSON.parse(raw);
-
-      // Native tool calls: OpenAI streams indexed fragments in
-      // choices[0].delta.tool_calls; Ollama sends whole calls in
-      // message.tool_calls.
-      const toolCallFragments =
-        this.getArrayAtPath(data, ["choices", 0, "delta", "tool_calls"]) ??
-        this.getArrayAtPath(data, ["message", "tool_calls"]);
-      if (toolCallFragments && toolCallFragments.length) onToolCalls(toolCallFragments);
-
-      const content =
-        this.getStringAtPath(data, ["message", "content"]) ??
-        this.getStringAtPath(data, ["choices", 0, "delta", "content"]) ??
-        this.getStringAtPath(data, ["delta", "text"]) ??
-        this.getStringAtPath(data, ["candidates", 0, "content", "parts", 0, "text"]) ??
-        "";
-
-      const reasoning =
-        this.getStringAtPath(data, ["choices", 0, "delta", "reasoning_content"]) ??
-        this.getStringAtPath(data, ["choices", 0, "delta", "reasoning"]) ??
-        this.getStringAtPath(data, ["message", "reasoning"]) ??
-        this.getStringAtPath(data, ["message", "thinking"]) ??
-        "";
-
-      if (content || reasoning) onContent(content, reasoning);
-    } catch {
-      // Ignore malformed partial chunks.
-    }
-  }
-
-  private getArrayAtPath(obj: unknown, path: Array<string | number>): unknown[] | undefined {
-    let cur: unknown = obj;
-    for (const key of path) {
-      if (typeof key === "number") {
-        if (!Array.isArray(cur)) return undefined;
-        cur = cur[key];
-        continue;
-      }
-      if (typeof cur !== "object" || cur === null) return undefined;
-      cur = (cur as Record<string, unknown>)[key];
-    }
-    return Array.isArray(cur) ? cur : undefined;
-  }
-
-  private getStringAtPath(obj: unknown, path: Array<string | number>): string | undefined {
-    let cur: unknown = obj;
-    for (const key of path) {
-      if (typeof key === "number") {
-        if (!Array.isArray(cur)) return undefined;
-        cur = cur[key];
-        continue;
-      }
-      if (typeof cur !== "object" || cur === null) return undefined;
-      cur = (cur as Record<string, unknown>)[key];
-    }
-    return typeof cur === "string" ? cur : undefined;
-  }
-
-  private cleanAndConsolidateMsgs(rawMsgs: ChatMessage[]): ChatMessage[] {
-    const consolidated: ChatMessage[] = [];
-    for (const m of rawMsgs) {
-      if (consolidated.length > 0 && consolidated[consolidated.length - 1].role === m.role) {
-        consolidated[consolidated.length - 1].content += "\n\n" + m.content;
-        if (m.images) {
-          consolidated[consolidated.length - 1].images = [
-            ...(consolidated[consolidated.length - 1].images || []),
-            ...m.images,
-          ];
-        }
-      } else {
-        consolidated.push({ ...m });
-      }
-    }
-    return consolidated;
   }
 }

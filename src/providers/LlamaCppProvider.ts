@@ -1,33 +1,15 @@
 import { requestUrl } from "obsidian";
-import { AiProvider, StreamOptions } from "./AiProvider";
-import { requestUrlError } from "../utils/apiError";
 import { asArray, getRecordProp, getStringProp } from "../utils/TypeGuards";
-import { normalizeBaseUrl } from "../utils/normalizeBaseUrl";
 import { bearer } from "../utils/providerAccess";
-import { streamOpenAiCompatible } from "../utils/localStream";
-import { NativeTool } from "../skills/types";
+import { LocalServerProvider } from "./LocalServerProvider";
+import { requestUrlWithTimeout } from "../utils/requestWithTimeout";
+import { thinkingSwitchAtTop } from "../utils/chatTemplate";
 
-export class LlamaCppProvider implements AiProvider {
-  private baseUrl: string;
-  private temperature: number;
-  private maxTokens: number;
+/** Per server and model: does turning thinking off keep the prompt's start? Asked once. */
+const prefixKept = new Map<string, Promise<boolean>>();
 
-  /** The server's API key, sent only when there is one. */
-  private apiKey: string;
-
-  constructor(baseUrl: string, temperature: number, maxTokens: number, apiKey = "") {
-    this.baseUrl = normalizeBaseUrl(baseUrl);
-    this.temperature = temperature;
-    this.maxTokens = maxTokens;
-    this.apiKey = apiKey;
-  }
-
-  private extractContent(json: unknown): string {
-    const choices = asArray(getRecordProp(json, "choices")) ?? [];
-    const first = choices[0];
-    const message = getRecordProp(first, "message");
-    return getStringProp(message, "content") ?? "";
-  }
+export class LlamaCppProvider extends LocalServerProvider {
+  protected readonly label = "llama.cpp";
 
   private isEmbeddingModel(id: string): boolean {
     return /embed/i.test(id);
@@ -106,82 +88,77 @@ export class LlamaCppProvider implements AiProvider {
     }
   }
 
-  /** Resolve "Automatic" to a concrete model and ensure it is loaded. */
-  private async prepareModel(model: string): Promise<string> {
+  protected async prepareModel(model: string): Promise<string> {
     const resolved = await this.resolveModel(model);
     await this.ensureModelLoaded(resolved);
     return resolved;
   }
 
-  async generate(prompt: string, system: string, model: string): Promise<string> {
-    const resolvedModel = await this.prepareModel(model);
-    const res = await requestUrl({
-      url: `${this.baseUrl}/v1/chat/completions`,
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...bearer(this.apiKey) },
-      body: JSON.stringify({
-        model: resolvedModel,
-        messages: [
-          { role: "system", content: system },
-          { role: "user", content: prompt },
-        ],
-        temperature: this.temperature,
-        max_tokens: this.maxTokens,
-        stream: false,
-        // One-shot jobs (translating tags, writing search queries, text actions)
-        // need no reasoning; a thinking model spent the whole budget on it and
-        // returned nothing (tag translation came back empty with gemma 4).
-        chat_template_kwargs: { enable_thinking: false },
-      }),
-      throw: false,
-    });
-    if (res.status !== 200) throw new Error(`llama.cpp error: ${requestUrlError(res)}`);
-    return this.extractContent(res.json as unknown);
+  /**
+   * Asks the server to render a two-line conversation with thinking on and
+   * off (`/apply-template`) and compares where they differ. An older server
+   * without the endpoint is taken at its word.
+   */
+  protected thinkingOffKeepsPrefix(model: string): Promise<boolean> {
+    const key = `${this.baseUrl}|${model}`;
+    let known = prefixKept.get(key);
+    if (!known) {
+      const user = "Horme template probe question";
+      const render = async (thinking: boolean): Promise<string> => {
+        const res = await requestUrlWithTimeout(
+          {
+            url: `${this.baseUrl}/apply-template`,
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...bearer(this.apiKey) },
+            body: JSON.stringify({
+              model,
+              messages: [
+                { role: "system", content: "Horme template probe" },
+                { role: "user", content: user },
+              ],
+              chat_template_kwargs: { enable_thinking: thinking },
+            }),
+            throw: false,
+          },
+          8000,
+        );
+        const prompt = res.status === 200 ? getStringProp(res.json as unknown, "prompt") : undefined;
+        if (prompt === undefined) throw new Error("no rendered prompt");
+        return prompt;
+      };
+      known = Promise.all([render(true), render(false)])
+        .then(([on, off]) => !thinkingSwitchAtTop(on, off, user))
+        .catch(() => {
+          prefixKept.delete(key); // asked again next time
+          return true;
+        });
+      prefixKept.set(key, known);
+    }
+    return known;
   }
 
-  async generateChat(msgs: Array<{ role: string; content: string }>, model: string): Promise<string> {
-    const resolvedModel = await this.prepareModel(model);
-    const res = await requestUrl({
-      url: `${this.baseUrl}/v1/chat/completions`,
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...bearer(this.apiKey) },
-      body: JSON.stringify({
-        model: resolvedModel,
-        messages: msgs,
-        temperature: this.temperature,
-        max_tokens: this.maxTokens,
-        stream: false,
-        // One-shot jobs (translating tags, writing search queries, text actions)
-        // need no reasoning; a thinking model spent the whole budget on it and
-        // returned nothing (tag translation came back empty with gemma 4).
-        chat_template_kwargs: { enable_thinking: false },
-      }),
-      throw: false,
-    });
-    if (res.status !== 200) throw new Error(`llama.cpp error: ${requestUrlError(res)}`);
-    return this.extractContent(res.json as unknown);
+  /** The window of each slot the server gives the model (`/props`), or null when it will not say. */
+  async contextWindow(model: string): Promise<number | null> {
+    try {
+      const resolved = await this.resolveModel(model);
+      const res = await requestUrlWithTimeout(
+        {
+          url: `${this.baseUrl}/props${resolved ? `?model=${encodeURIComponent(resolved)}` : ""}`,
+          headers: bearer(this.apiKey),
+          throw: false,
+        },
+        5000,
+      );
+      if (res.status !== 200) return null;
+      const nCtx = getRecordProp(getRecordProp(res.json as unknown, "default_generation_settings"), "n_ctx");
+      return typeof nCtx === "number" && nCtx > 0 ? nCtx : null;
+    } catch {
+      return null;
+    }
   }
 
-  async stream(
-    msgs: Array<{ role: string; content: string }>,
-    model: string,
-    signal?: AbortSignal,
-    tools?: NativeTool[],
-    options?: StreamOptions,
-  ): Promise<ReadableStreamDefaultReader<Uint8Array>> {
-    const resolvedModel = await this.prepareModel(model);
-    const body: Record<string, unknown> = {
-      model: resolvedModel,
-      messages: msgs,
-      temperature: this.temperature,
-      max_tokens: this.maxTokens,
-      stream: true,
-    };
-    if (tools && tools.length) body.tools = tools;
-    // Writing the reply from a skill result needs no second thinking phase.
-    if (options?.noThinking) body.chat_template_kwargs = { enable_thinking: false };
-    // CORS-proof transport chain (llama-server has no CORS allowance for
-    // Obsidian's app://obsidian.md origin): Node http → fetch → requestUrl.
-    return streamOpenAiCompatible(`${this.baseUrl}/v1/chat/completions`, body, signal, bearer(this.apiKey));
+  /** llama.cpp's chat templates take a switch that turns thinking off. */
+  protected thinkingOff(): Record<string, unknown> {
+    return { chat_template_kwargs: { enable_thinking: false } };
   }
 }

@@ -1,6 +1,6 @@
 import { AbstractInputSuggest, App, Setting, type SettingDefinitionRender } from "obsidian";
 import type { AiProvider } from "../../types";
-import { listModels, type ModelListResult, type ModelPurpose } from "./providers";
+import { listModels, type ModelListResult, type ModelPurpose } from "../../providers/catalog";
 import type { SettingsHost, StringKey } from "./types";
 
 /** Suggestion popover for a free-text model field. */

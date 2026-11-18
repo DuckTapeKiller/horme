@@ -249,6 +249,7 @@ When you choose a cloud provider:
 | **llama.cpp**  | Your computer | Recommended, and selected on a new install. Leave the model empty to use the one the server has loaded. |
 | **Ollama**     | Your computer | Picks an installed chat model if none is set. Asks Ollama for a 16,384-token context window (**Context window** on its page in Models; 0 leaves it to Ollama), or keeps the larger window a model is already loaded with. |
 | **LM Studio**  | Your computer | Uses LM Studio's local server.                                           |
+| **Apple Intelligence** | Your Mac | Apple's own model, run by macOS (macOS 27 or later, Apple silicon, Apple Intelligence on). Horme starts Apple's model server by itself. See below. |
 | **Claude**     | Cloud         | Needs an API key from Anthropic.                                         |
 | **Gemini**     | Cloud         | Needs an API key from Google.                                            |
 | **OpenAI**     | Cloud         | Needs an API key from OpenAI.                                            |
@@ -258,6 +259,14 @@ When you choose a cloud provider:
 | **OpenAI-compatible server** | Your server, or a cloud service behind it | Any server or router that speaks OpenAI's API: LiteLLM, vLLM, Open WebUI, LocalAI, DeepSeek and others. Enter its base address as its documentation gives it (usually ending in `/v1`), a key if it needs one, and a model. |
 
 With an API key set, the model field lists the provider's own models.
+
+**Apple Intelligence.** On a Mac with Apple silicon and macOS 27 or later, with Apple Intelligence turned on in System Settings, Horme can use Apple's own model. Before the first use, accept Apple's terms for its model tool once, in Terminal:
+
+```
+sudo fm license
+```
+
+Horme then starts Apple's model server (`fm serve`) when it is first needed and stops it when Obsidian closes. The `system` model runs on your Mac, so your notes stay there. The `pcc` model runs on Apple's Private Cloud Compute: Horme treats it as a cloud provider and asks before sending notes, and macOS currently offers it only to apps started from Terminal. Apple's model reads about 8,000 tokens at a time, so a chat with Vault Brain, folders or long notes may not fit: Horme then says how much it was given and what to turn off. It is a small model: it suits text actions, tags and summaries better than long research.
 
 **Keys for local servers.** llama.cpp, Ollama and LM Studio each take an optional API key on the Models page, for a server started with a key (`llama-server --api-key`) or behind a proxy that asks for one. The llama.cpp embedding server has its own key under Vault Brain; leave it empty to use the chat server's. With no key set, Horme sends exactly what it sent before.
 

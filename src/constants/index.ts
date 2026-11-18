@@ -57,6 +57,7 @@ export const DEFAULT_SETTINGS: HormeSettings = {
   customEmbeddingModel: "",
   customIsLocal: false,
   customTrustedUrl: "",
+  appleModel: "system",
   systemPromptPath: "",
   presetsPaths: [],
   temperature: 0.3,

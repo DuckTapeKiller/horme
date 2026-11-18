@@ -168,6 +168,15 @@ export class OllamaProvider implements AiProvider {
     return options;
   }
 
+  /** The window chats with this model get: the one Horme asks for, or the one it is loaded with. */
+  async contextWindow(model: string): Promise<number | null> {
+    if (this.contextLength > 0) {
+      const [facts, loaded] = await Promise.all([this.facts(model), this.loadedContext(model)]);
+      return ollamaNumCtx(this.contextLength, facts?.contextLength ?? null, loaded) || null;
+    }
+    return this.loadedContext(model);
+  }
+
   /**
    * The window the model is loaded with now (/api/ps), or null when it is not
    * loaded or Ollama would not say. Asked on every request: another app may

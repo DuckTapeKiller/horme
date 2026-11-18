@@ -2278,3 +2278,28 @@ textarea.horme-fallback-wide {
   width: 100%;
   min-height: 4em;
 }
+
+/* A command to run in Terminal, inside a settings note. */
+.horme-note-command {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2);
+  margin: var(--size-4-2) 0;
+}
+
+.horme-note-command code {
+  padding: var(--size-2-1) var(--size-4-2);
+  border-radius: var(--radius-s);
+  background: var(--background-modifier-hover);
+  font-family: var(--font-monospace);
+  user-select: text;
+}
+
+/* [n] citations in an answer: footnote markers, without the external-link arrow. */
+.horme-messages a.external-link.horme-citation {
+  background-image: none;
+  padding-inline-end: 0;
+  text-decoration: none;
+  font-size: var(--font-smaller);
+  vertical-align: baseline;
+}

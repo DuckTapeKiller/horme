@@ -8,6 +8,15 @@ export function decodeDuckDuckGoLink(href: string): string {
 }
 
 /**
+ * DuckDuckGo answers a burst of automated searches with a "human check" page
+ * (HTTP 202 and a picture puzzle) instead of results, for every query, for a
+ * few minutes. Reading it as "no results" made answers say nothing was found.
+ */
+export function isSearchChallenge(status: number, body: string): boolean {
+  return status === 202 || /anomaly-modal|challenge-form|\/anomaly\.js/.test(body);
+}
+
+/**
  * Splits text into passages of about `size` characters on line breaks,
  * each prefixed with the section heading it sits under.
  */

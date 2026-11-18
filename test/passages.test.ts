@@ -1,6 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { decodeDuckDuckGoLink, splitPassages, mapLimit, passageNotePath } from "../src/utils/passages";
+import {
+  decodeDuckDuckGoLink,
+  isSearchChallenge,
+  splitPassages,
+  mapLimit,
+  passageNotePath,
+} from "../src/utils/passages";
 
 void test("DuckDuckGo result links are unwrapped to the real address", () => {
   assert.equal(
@@ -57,4 +63,15 @@ void test("passage labels give the whole note path, brackets in the name include
   );
   assert.equal(passageNotePath("[From Papers/Report (draft).pdf]:\nx"), "Papers/Report (draft).pdf");
   assert.equal(passageNotePath("no label"), "");
+});
+
+void test("isSearchChallenge: DuckDuckGo's human check is not an empty result page", () => {
+  assert.equal(isSearchChallenge(202, "<html></html>"), true);
+  assert.equal(
+    isSearchChallenge(200, '<form id="challenge-form" action="//duckduckgo.com/anomaly.js?sv=html">'),
+    true,
+  );
+  assert.equal(isSearchChallenge(200, '<div class="anomaly-modal__title">'), true);
+  assert.equal(isSearchChallenge(200, '<a class="result__a" href="x">Anomaly (physics)</a>'), false);
+  assert.equal(isSearchChallenge(200, '<div class="no-results">No results.</div>'), false);
 });

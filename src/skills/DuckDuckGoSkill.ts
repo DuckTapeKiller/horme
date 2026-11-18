@@ -1,7 +1,10 @@
 import { requestUrlWithTimeout } from "../utils/requestWithTimeout";
-import { searchWeb, WebHit } from "../utils/webResearch";
+import { webSearch, WebSearch } from "../utils/webResearch";
 import { Skill, SkillParameter } from "./types";
 import { asArray, errorToMessage, getRecordProp, getStringProp } from "../utils/TypeGuards";
+
+const BLOCKED =
+  "DuckDuckGo is turning away searches from this device for now (it asks for a human check after many searches), so no web results could be read.";
 
 export class DuckDuckGoSkill implements Skill {
   id = "ddg_search";
@@ -30,10 +33,10 @@ export class DuckDuckGoSkill implements Skill {
       // Real web results first. The Instant Answer API below only knows topics
       // with an abstract (mostly Wikipedia's), so on its own it found nothing for
       // most searches.
-      const web = await searchWeb(query, 8).catch((): WebHit[] => []);
-      if (web.length) {
+      const web = await webSearch(query, 8).catch((): WebSearch => ({ hits: [], blocked: false }));
+      if (web.hits.length) {
         let out = `## DuckDuckGo: "${query}"\n\n`;
-        web.forEach((h, i) => {
+        web.hits.forEach((h, i) => {
           out += `${i + 1}. **[${h.title.replace(/[[\]]/g, "")}](${h.url})**${h.snippet ? `: ${h.snippet}` : ""}\n`;
         });
         return out.trim();
@@ -44,6 +47,7 @@ export class DuckDuckGoSkill implements Skill {
       const data: unknown = res.json;
 
       let output = `## DuckDuckGo: "${query}"\n\n`;
+      if (web.blocked) output += `${BLOCKED} Only DuckDuckGo's short instant answer could be read.\n\n`;
       let hasContent = false;
 
       // Abstract (main answer)
@@ -100,7 +104,9 @@ export class DuckDuckGoSkill implements Skill {
       }
 
       if (!hasContent) {
-        return `DuckDuckGo returned no instant answer for "${query}". Try a more specific query or use the wikipedia skill instead.`;
+        return web.blocked
+          ? `${BLOCKED} Nothing was read for "${query}". Tell the user that web search is unavailable for a few minutes; the wikipedia skill still works.`
+          : `DuckDuckGo found nothing for "${query}". Try a shorter query of two or three key words, or the wikipedia skill.`;
       }
 
       // Cap output

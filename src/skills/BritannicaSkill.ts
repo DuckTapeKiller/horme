@@ -1,5 +1,5 @@
 import { requestUrlWithTimeout } from "../utils/requestWithTimeout";
-import { searchWeb, WebHit } from "../utils/webResearch";
+import { WIKIMEDIA_HEADERS, searchWeb, WebHit } from "../utils/webResearch";
 import { Skill, SkillParameter } from "./types";
 import { errorToMessage, asArray, getStringProp } from "../utils/TypeGuards";
 
@@ -23,6 +23,31 @@ export class BritannicaSkill implements Skill {
   instructions =
     'To use this skill, output exactly: <call:britannica>{"query": "your search term"}</call>. ' +
     "Use this for academic-grade encyclopaedic lookups, or to cross-reference Wikipedia with a second authoritative source.";
+
+  /**
+   * Britannica sometimes puts its pages behind a browser check ("Just a
+   * moment…") that only a person can pass. Wikipedia's article is read instead
+   * and named as such: told only "Britannica could not be read", qwen 3.5 2B
+   * wrote "what Britannica says" from memory.
+   */
+  private async wikipediaInstead(query: string): Promise<string> {
+    const blocked =
+      "Britannica could not be read: it is asking for a browser check right now. Nothing below comes from Britannica; do not say what Britannica says.";
+    const res = await requestUrlWithTimeout(
+      {
+        url: `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(query.trim().replace(/\s+/g, "_"))}`,
+        headers: WIKIMEDIA_HEADERS,
+        throw: false,
+      },
+      12000,
+    ).catch(() => null);
+    const data: unknown = res && res.status === 200 ? res.json : null;
+    const extract = getStringProp(data, "extract")?.trim();
+    if (!extract) return `${blocked} Tell the user so plainly.`;
+    const title = getStringProp(data, "title") ?? query;
+    const url = `https://en.wikipedia.org/wiki/${encodeURIComponent(title.replace(/ /g, "_"))}`;
+    return `${blocked} Tell the user so, then answer from Wikipedia's article, naming Wikipedia as the source.\n\n## Wikipedia: ${title}\n\n${extract}\n\n<!-- ${url} -->`;
+  }
 
   async execute(params: unknown): Promise<string> {
     try {
@@ -53,7 +78,17 @@ export class BritannicaSkill implements Skill {
         return `No valid Britannica article link found for "${query}".`;
 
       const articleUrl = "https://www.britannica.com" + href;
-      const articleRes = await requestUrlWithTimeout({ url: articleUrl }, 12000);
+      const articleRes = await requestUrlWithTimeout({ url: articleUrl, throw: false }, 12000);
+      // Britannica sometimes puts its pages behind a browser check ("Just a
+      // moment…", HTTP 403) that only a person in a browser can pass.
+      if (
+        articleRes.status === 403 ||
+        articleRes.status === 503 ||
+        /<title>Just a moment/i.test(articleRes.text)
+      )
+        return await this.wikipediaInstead(query);
+      if (articleRes.status !== 200)
+        return `Britannica's article on "${query}" could not be read (HTTP ${articleRes.status}).`;
 
       const parser = new DOMParser();
       const doc = parser.parseFromString(articleRes.text, "text/html");

@@ -1,21 +1,21 @@
 import { TFile, Notice, Platform, normalizePath } from "obsidian";
 import { minimatch } from "minimatch";
 import HormePlugin from "../../main";
+import {
+  chunkHash,
+  extractHeadings,
+  headingPathAtOffset,
+  highlightsText,
+  parseGlobList,
+} from "../utils/noteText";
 import { HormeErrorModal } from "../modals/HormeErrorModal";
 import { EmbeddingService } from "./EmbeddingService";
-import { KeywordIndex } from "./KeywordIndex";
 import {
   compressEmbedding,
-  cosineSimilarityFloatInt8,
-  cosineSimilarityInt8,
   decompressEmbeddingToInt8,
   getModelPrefixes,
   quantizeEmbeddingToInt8,
 } from "../utils/VectorUtils";
-import type { AiProvider as TagProviderId } from "../types";
-import type { AiProvider as AiProviderClient } from "../providers/AiProvider";
-import { createProvider } from "../providers/createProvider";
-import { isLocalServer, keepsNotesPrivate } from "../utils/providerAccess";
 import {
   asArray,
   asNumberArray,
@@ -25,7 +25,7 @@ import {
   getStringProp,
 } from "../utils/TypeGuards";
 
-interface IndexEntry {
+export interface IndexEntry {
   path: string;
   chunkStart: number;
   chunkEnd: number;
@@ -40,117 +40,26 @@ interface IndexEntry {
   headingPath?: string;
 }
 
-interface TagTranslationRunStats {
-  primary: TagProviderId;
-  fallback: TagProviderId;
-  primaryIsCloud: boolean;
-  allowCloudTagTranslation: boolean;
-  cloudOkChunks: number;
-  fallbackUsedChunks: number;
-  totalFailures: number;
-  fallbackWarningLogged: boolean;
-  fallbackNoticeShown: boolean;
-}
-
-type VaultSearchScope = {
-  files?: string[];
-  folders?: string[];
-};
-
-type TextExtractorApi = {
+export type TextExtractorApi = {
   extractText: (file: TFile) => Promise<string>;
   canFileBeExtracted?: (filePath: string) => boolean;
   isInCache?: (file: TFile) => Promise<boolean>;
 };
 
-const STOP_WORDS = new Set([
-  "ayudame",
-  "encontrar",
-  "podrias",
-  "busca",
-  "encuentra",
-  "dime",
-  "sobre",
-  "hablame",
-  "tienes",
-  "algo",
-  "articulo",
-  "nota",
-  "notas",
-  "vault",
-  "boveda",
-  "mi",
-  "mis",
-  "the",
-  "and",
-  "for",
-  "with",
-  "from",
-  "that",
-  "this",
-  "these",
-  "those",
-  "about",
-  "find",
-  "help",
-  "note",
-  "search",
-  "does",
-  "what",
-  "where",
-  "when",
-  "how",
-  "why",
-  "who",
-  "which",
-  "un",
-  "una",
-  "unos",
-  "unas",
-  "el",
-  "la",
-  "los",
-  "las",
-  "en",
-  "con",
-  "por",
-  "para",
-  "que",
-  "del",
-  "al",
-  "was",
-  "were",
-  "been",
-  "have",
-  "has",
-  "had",
-  "pais",
-  "paises",
-  "estilos",
-  "generos",
-  "periodos",
-  "estructuras",
-]);
-
 export class VaultIndexer {
   private plugin: HormePlugin;
   public index: IndexEntry[] = [];
-  private pathIndex: Map<string, IndexEntry[]> = new Map();
+  /** Entries by note path, kept in step with `index`. */
+  readonly pathIndex: Map<string, IndexEntry[]> = new Map();
   public indexedModel: string = "";
   public loadWasPartial: boolean = false;
   private isSaving: boolean = false;
   private pendingSave: boolean = false;
   private lastShardSaveTime: number = 0;
   private indexPath: string;
-  // Cache of Spanish tag string → bilingual tag string.
-  // Built during indexing to avoid redundant LLM calls for notes sharing the same tags.
-  // Cleared when the plugin unloads (in-memory only — intentionally not persisted).
-  private tagTranslationCache: Map<string, string> = new Map();
-  private hasReportedEmptyTagTranslationModel = false;
-  private tagTranslationRunStats: TagTranslationRunStats | null = null;
 
   /** O(1) lookup of entries by path */
-  private getEntriesForPath(path: string): IndexEntry[] {
+  getEntriesForPath(path: string): IndexEntry[] {
     return this.pathIndex.get(path) || [];
   }
 
@@ -315,41 +224,6 @@ export class VaultIndexer {
     }
   }
 
-  private getCachePath(): string {
-    const configDir = this.plugin.app.vault.configDir;
-    return normalizePath(`${configDir}/plugins/${this.plugin.manifest.id}/Tag History/translations.json`);
-  }
-
-  async loadTagCache(): Promise<void> {
-    const path = this.getCachePath();
-    const adapter = this.plugin.app.vault.adapter;
-    if (await adapter.exists(path)) {
-      try {
-        const data = await adapter.read(path);
-        const parsed = JSON.parse(data) as Record<string, string>;
-        this.tagTranslationCache = new Map(Object.entries(parsed));
-      } catch (e) {
-        console.error("Horme Brain: Failed to parse Tag History", e);
-        this.tagTranslationCache = new Map();
-      }
-    } else {
-      this.tagTranslationCache = new Map();
-    }
-  }
-
-  async saveTagCache(): Promise<void> {
-    const path = this.getCachePath();
-    const adapter = this.plugin.app.vault.adapter;
-    const folderPath = path.substring(0, path.lastIndexOf("/"));
-
-    if (!(await adapter.exists(folderPath))) {
-      await adapter.mkdir(folderPath);
-    }
-
-    const obj = Object.fromEntries(this.tagTranslationCache);
-    await adapter.write(path, JSON.stringify(obj, null, 2));
-  }
-
   constructor(plugin: HormePlugin) {
     this.plugin = plugin;
 
@@ -361,8 +235,6 @@ export class VaultIndexer {
       void this.plugin.saveSettings();
     }
 
-    // Load persisted tag translations into RAM
-    this.tagTranslationCache = new Map(); // Will be populated async via loadTagCache()
     // Explicitly resolve the plugin directory relative to the vault root
     const configDir = this.plugin.app.vault.configDir;
     this.indexPath = normalizePath(
@@ -396,7 +268,7 @@ export class VaultIndexer {
     return EmbeddingService.sameSpace(this.indexedModel, this.plugin.embeddingService.embeddingFingerprint());
   }
 
-  private checkEmbeddingSpace(notify: boolean): void {
+  checkEmbeddingSpace(notify: boolean): void {
     if (this.isSpaceCompatible()) {
       this.spaceMismatchNotified = false;
       return;
@@ -427,7 +299,7 @@ export class VaultIndexer {
 
   private async loadIndex(): Promise<void> {
     try {
-      await this.loadTagCache();
+      await this.plugin.tagTranslator.loadTagCache();
       this.plugin.setIndexingStatus("Loading Vault Index...");
       // New sharded format: look for the first shard file
       if (await this.plugin.app.vault.adapter.exists(this.getShardPath(0))) {
@@ -891,11 +763,7 @@ export class VaultIndexer {
 
       this.indexingQueue = [];
       this.clearIndex();
-      this.tagTranslationCache.clear();
-      const cachePath = this.getCachePath();
-      if (await adapter.exists(cachePath)) {
-        await adapter.remove(cachePath);
-      }
+      await this.plugin.tagTranslator.forgetAll();
       this.indexedModel = "";
       this.loadWasPartial = false;
       this.plugin.settings.indexStatus = "Not built";
@@ -939,692 +807,6 @@ export class VaultIndexer {
   isIndexing = false;
   public isLoaded = false;
 
-  /** Extracts all markdown headings with their character offsets */
-  private extractHeadings(content: string): Array<{ level: number; text: string; offset: number }> {
-    const headings: Array<{ level: number; text: string; offset: number }> = [];
-
-    // Mask code blocks with spaces to preserve character offsets while hiding comments
-    const maskedContent = content.replace(/```[\s\S]*?```/g, (match) => " ".repeat(match.length));
-
-    const regex = /^(#{1,6})\s+(.+)$/gm;
-    let match;
-    while ((match = regex.exec(maskedContent)) !== null) {
-      headings.push({ level: match[1].length, text: match[2].trim(), offset: match.index });
-    }
-    return headings;
-  }
-
-  /** Returns the heading hierarchy path at a given character offset */
-  private getHeadingPathAtOffset(
-    headings: Array<{ level: number; text: string; offset: number }>,
-    offset: number,
-  ): string {
-    const stack: string[] = [];
-    const levelStack: number[] = [];
-    for (const h of headings) {
-      if (h.offset > offset) break;
-      while (levelStack.length > 0 && levelStack[levelStack.length - 1] >= h.level) {
-        stack.pop();
-        levelStack.pop();
-      }
-      stack.push(h.text);
-      levelStack.push(h.level);
-    }
-    return stack.join(" > ");
-  }
-
-  /**
-   * Splits a raw Obsidian tag into its path components and leaf value.
-   *
-   * Rule: the LAST slash-separated segment is always the leaf value.
-   * All preceding segments are path/category components.
-   * Underscores are converted to spaces in all segments.
-   *
-   * Examples:
-   *   "#artistas_suizos"               → { path: [],                           leaf: "artistas suizos" }
-   *   "#escritores/jorge_luis_borges"  → { path: ["escritores"],               leaf: "jorge luis borges" }
-   *   "#arquitectura/estilos/eclect…"  → { path: ["arquitectura", "estilos"],  leaf: "eclecticismo" }
-   *   "#arte/país/alemania"            → { path: ["arte", "país"],             leaf: "alemania" }
-   */
-  private splitTagHierarchy(raw: string): { path: string[]; leaf: string } {
-    const stripped = raw.replace(/^#+/, "").trim();
-    const segments = stripped
-      .split("/")
-      .map((s) => s.replace(/_/g, " ").trim())
-      .filter((s) => s.length > 0);
-
-    if (segments.length === 0) return { path: [], leaf: "" };
-    if (segments.length === 1) return { path: [], leaf: segments[0] };
-
-    return {
-      path: segments.slice(0, segments.length - 1),
-      leaf: segments[segments.length - 1],
-    };
-  }
-
-  /**
-   * Generic Spanish navigation words that appear as intermediate nodes
-   * in the tag hierarchy. These are useless as keyword search terms because
-   * they are present on every note in their domain category.
-   * When a tag like #arquitectura/país is used as a standalone tag (making
-   * "país" the leaf value), it contributes nothing to discriminating search.
-   */
-  private static readonly GENERIC_TAG_NODES = new Set([
-    "país",
-    "países",
-    "estilos",
-    "géneros",
-    "períodos",
-    "estructuras",
-    "región",
-    "regiones",
-    "tipo",
-    "tipos",
-    "categoría",
-    "categorías",
-  ]);
-
-  private extractTagValues(raw: unknown): string[] {
-    if (raw == null) return [];
-
-    if (Array.isArray(raw)) {
-      const out: string[] = [];
-      for (const item of raw) out.push(...this.extractTagValues(item));
-      return out;
-    }
-
-    if (typeof raw === "string") {
-      const trimmed = raw.trim();
-      if (!trimmed) return [];
-
-      const bracketArray = trimmed.match(/^\[(.*)\]$/);
-      const normalized = bracketArray ? bracketArray[1] : trimmed;
-      return normalized
-        .split(",")
-        .map((v) => v.trim().replace(/^["']|["']$/g, ""))
-        .filter((v) => v.length > 0);
-    }
-
-    return [];
-  }
-
-  /**
-   * Collects tags for shadow-tagging from metadata cache (inline + YAML),
-   * with frontmatter/raw-text fallbacks when cache is incomplete.
-   */
-  private collectShadowTags(content: string, file: TFile): string[] {
-    const rawTags: string[] = [];
-    const add = (value: string) => {
-      if (value && value.trim()) rawTags.push(value.trim());
-    };
-
-    const cache = this.plugin.app.metadataCache.getFileCache(file);
-    if (cache?.tags) {
-      for (const t of cache.tags) add(t.tag);
-    }
-
-    const frontmatter: Record<string, unknown> | undefined = cache?.frontmatter;
-    if (frontmatter) {
-      for (const tag of this.extractTagValues(frontmatter.tags)) add(tag);
-      for (const tag of this.extractTagValues(frontmatter.tag)) add(tag);
-    }
-
-    const inlineTagRegex = /(^|\s)#([^\s#[\]{}()<>"',.!?;]+)/gm;
-    let match: RegExpExecArray | null;
-    while ((match = inlineTagRegex.exec(content)) !== null) {
-      add(match[2]);
-    }
-
-    const uniqueTerms = new Set<string>();
-
-    for (const raw of rawTags) {
-      const { path, leaf } = this.splitTagHierarchy(raw);
-
-      if (leaf && !VaultIndexer.GENERIC_TAG_NODES.has(leaf.toLowerCase())) {
-        uniqueTerms.add(leaf);
-      }
-
-      for (const p of path) {
-        if (p && !VaultIndexer.GENERIC_TAG_NODES.has(p.toLowerCase())) {
-          uniqueTerms.add(p);
-        }
-      }
-    }
-
-    return Array.from(uniqueTerms).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
-  }
-
-  private extractHighlightsOnlyText(content: string): string | null {
-    if (!this.plugin.settings.indexHighlightsEnabled) return null;
-
-    // Ignore frontmatter and code to avoid indexing accidental highlight markers.
-    let text = content.replace(/^---\r?\n[\s\S]*?\r?\n---[^\S\r\n]*(?:\r?\n|$)/, "");
-    text = text.replace(/```[\s\S]*?```/g, "\n").replace(/~~~[\s\S]*?~~~/g, "\n");
-    text = text.replace(/`[^`\n]*`/g, " ");
-
-    const out: string[] = [];
-    const seen = new Set<string>();
-
-    // Obsidian highlight syntax: ==highlight==
-    const mdRe = /==([^=\n].*?[^=\n])==/g;
-    let mdMatch: RegExpExecArray | null;
-    while ((mdMatch = mdRe.exec(text)) !== null) {
-      const v = mdMatch[1].trim();
-      if (!v) continue;
-      const key = v.toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push(v);
-    }
-
-    // Highlightr-style HTML marks: <mark ...>highlight</mark>
-    const markRe = /<mark\b[^>]*>([\s\S]*?)<\/mark>/gi;
-    let markMatch: RegExpExecArray | null;
-    while ((markMatch = markRe.exec(text)) !== null) {
-      const raw = markMatch[1].replace(/<[^>]+>/g, "").trim();
-      if (!raw) continue;
-      const key = raw.toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push(raw);
-    }
-
-    if (out.length === 0) return null;
-
-    const maxCount = Math.max(0, this.plugin.settings.maxHighlightsPerNote || 0);
-    const maxChars = Math.max(0, this.plugin.settings.maxHighlightCharsPerNote || 0);
-
-    const capped = maxCount > 0 ? out.slice(0, maxCount) : [];
-    if (capped.length === 0) return null;
-
-    let joined = capped.join("\n");
-    if (maxChars > 0 && joined.length > maxChars) {
-      joined = joined.slice(0, maxChars);
-    }
-
-    return joined.trim() ? joined.trim() : null;
-  }
-
-  private async preTranslateTags(files: TFile[]) {
-    if (!this.plugin.settings.tagShadowingEnabled) return;
-
-    this.plugin.setIndexingStatus("Scanning for new tags...");
-    const uniqueTagInputs = new Set<string>();
-
-    for (const file of files) {
-      const content = await this.plugin.app.vault.cachedRead(file);
-      const tags = this.collectShadowTags(content, file);
-
-      for (const tag of tags) {
-        if (!this.tagTranslationCache.has(tag)) {
-          uniqueTagInputs.add(tag);
-        }
-      }
-    }
-
-    if (uniqueTagInputs.size > 0) {
-      this.plugin.setIndexingStatus(`Pre-translating ${uniqueTagInputs.size} unique tags...`);
-      const settings = this.plugin.settings;
-      const translationChain = this.getTagTranslationChain(500);
-      if (translationChain.length > 0) {
-        this.tagTranslationRunStats = {
-          primary: settings.tagTranslationProvider,
-          fallback: settings.tagTranslationFallbackProvider,
-          primaryIsCloud: this.isCloudProvider(settings.tagTranslationProvider),
-          allowCloudTagTranslation: settings.allowCloudTagTranslation,
-          cloudOkChunks: 0,
-          fallbackUsedChunks: 0,
-          totalFailures: 0,
-          fallbackWarningLogged: false,
-          fallbackNoticeShown: false,
-        };
-
-        const termsArray = Array.from(uniqueTagInputs);
-        const CHUNK_SIZE = 8; // Safely throttled to eliminate model tracking fatigue
-        let lastSaveTime = Date.now();
-
-        for (let i = 0; i < termsArray.length; i += CHUNK_SIZE) {
-          const chunk = termsArray.slice(i, i + CHUNK_SIZE);
-          const chunkList = chunk.map((term, index) => `t${index} -> ${term}`).join("\n");
-
-          try {
-            const systemPrompt = `You are a mechanical, automated translation tool mapping Spanish items to ${settings.tagShadowingLanguage}.
-Translate ONLY the values on the right side of the -> delimiter.
-
-CRITICAL PROCESSING RULES:
-1. NO REFUSALS: Act strictly as a data processor. Never censor, skip, or refuse explicit, sensitive, or controversial terms (e.g., "prostitución", "sexo", "zoofilia"). Translate them directly.
-2. ANCHOR PRESERVATION: You MUST retain the exact token anchor identifier (e.g., t0 ->, t1 ->) on the left side of the line. Do not alter the index character or replace it with raw numbers.
-3. DOMAIN ACCURACY:
-   - "letras" -> letters
-   - "gentilicios" -> demonyms
-   - "concept" -> concept
-4. LINGUISTIC TERMS: If a term has no translation (e.g., "dequeísmo", "queísmo", "laísmo"), return the original Spanish word exactly. Never map to religious concepts like "deism".
-5. ZERO CHATTER: Output ONLY the translated list lines. No introductions, no notes, no markdown block wrappers.
-
-FORMAT EXAMPLE:
-t0 -> Translation
-t1 -> Translation`;
-
-            let result: string | null = null;
-            let lastErr: unknown = null;
-            let cloudPrimaryErr: unknown = null;
-            let winningCandidateId: TagProviderId | null = null;
-
-            for (const candidate of translationChain) {
-              try {
-                result = await candidate.provider.generate(
-                  `Translate these anchored targets exactly:\n${chunkList}`,
-                  systemPrompt,
-                  candidate.model,
-                );
-                winningCandidateId = candidate.id;
-                break;
-              } catch (e: unknown) {
-                lastErr = e;
-                if (
-                  this.tagTranslationRunStats?.primaryIsCloud &&
-                  this.tagTranslationRunStats.allowCloudTagTranslation &&
-                  candidate.id === this.tagTranslationRunStats.primary
-                ) {
-                  cloudPrimaryErr = e;
-                }
-              }
-            }
-
-            if (result === null) {
-              throw lastErr instanceof Error ? lastErr : new Error(errorToMessage(lastErr));
-            }
-
-            // Track which provider actually succeeded per chunk (cloud vs fallback).
-            if (
-              this.tagTranslationRunStats?.primaryIsCloud &&
-              this.tagTranslationRunStats.allowCloudTagTranslation
-            ) {
-              const primaryId = this.tagTranslationRunStats.primary;
-              const fallbackId = this.tagTranslationRunStats.fallback;
-              if (winningCandidateId === primaryId) {
-                this.tagTranslationRunStats.cloudOkChunks++;
-              } else if (winningCandidateId === fallbackId && cloudPrimaryErr !== null) {
-                this.tagTranslationRunStats.fallbackUsedChunks++;
-
-                const cloudName = primaryId.charAt(0).toUpperCase() + primaryId.slice(1);
-                const fallbackName = fallbackId.charAt(0).toUpperCase() + fallbackId.slice(1);
-                const errMsg = errorToMessage(cloudPrimaryErr);
-
-                // Log once per indexing run (avoid flooding diagnostics).
-                if (!this.tagTranslationRunStats.fallbackWarningLogged) {
-                  this.tagTranslationRunStats.fallbackWarningLogged = true;
-                  this.plugin.diagnosticService.report(
-                    "Tag Translation",
-                    `Tag translation: cloud ${cloudName} failed → using local fallback ${fallbackName} (error: ${errMsg})`,
-                    "warning",
-                  );
-                }
-
-                // Notice once per indexing run (avoid spamming toasts).
-                if (!this.tagTranslationRunStats.fallbackNoticeShown) {
-                  this.tagTranslationRunStats.fallbackNoticeShown = true;
-                  new Notice(
-                    `Vault Brain: Cloud tag translation failed — using local fallback ${fallbackName} for this run.`,
-                    8000,
-                  );
-                }
-              }
-            }
-
-            // 1. Parse lines with space-resilient index token identification
-            const lines = result
-              .split("\n")
-              .map((line) => line.trim())
-              .filter((line) => /(?:^|[^\p{L}\p{N}_])t\s*\d+\s*(?:->|◈|:|=>|=)/u.test(line));
-
-            // 2. Build the lookup map matching index values back to terms safely
-            const translationMap = new Map<string, string>();
-            lines.forEach((line) => {
-              const match = line.match(/(?:^|[^\p{L}\p{N}_])t\s*(\d+)\s*(?:->|◈|:|=>|=)\s*(.*)/u);
-              if (match) {
-                const idx = parseInt(match[1], 10);
-                if (idx >= 0 && idx < chunk.length) {
-                  let trans = match[2].trim();
-                  // Strip decorative markdown wrappers from boundary lines
-                  trans = trans.replace(/^[\s_*`"'_[\]()\]]+/, "").replace(/[\s_*`"'_[\]()\]]+$/, "");
-                  trans = trans.replace(/[.,;]+$/, "");
-
-                  if (trans) {
-                    translationMap.set(chunk[idx].toLowerCase(), trans);
-                  }
-                }
-              }
-            });
-
-            // 3. Map back to the chunk array using normalized lookups
-            chunk.forEach((term) => {
-              const translation = translationMap.get(term.toLowerCase()) || term;
-              const combined = `${term}, ${translation}`;
-              this.tagTranslationCache.set(term, combined);
-            });
-          } catch (e: unknown) {
-            if (this.tagTranslationRunStats) this.tagTranslationRunStats.totalFailures++;
-            this.plugin.diagnosticService.report(
-              "Vault Brain",
-              `Tag translation chunk failed: ${errorToMessage(e)}`,
-              "warning",
-            );
-            chunk.forEach((term) => {
-              this.tagTranslationCache.set(term, term);
-            });
-          }
-
-          // TIME-BASED CHECKPOINT: Guarantees at least 15 seconds between disk writes.
-          // This gives aggressive sync engines (iCloud/Dropbox) ample time to release
-          // file locks, entirely preventing file duplication on fast translation runs.
-          const now = Date.now();
-          if (now - lastSaveTime > 15000) {
-            await this.saveTagCache();
-            lastSaveTime = now;
-          }
-
-          // Mandatory 400ms pacing delay to clear context queue on local server instances
-          await new Promise((resolve) => window.setTimeout(resolve, 400));
-        }
-
-        // 🟢 Final guaranteed storage commit after all chunks finish
-        await this.saveTagCache();
-      }
-    }
-  }
-
-  private translateTagsBilingually(spanishTags: string): string {
-    if (!this.plugin.settings.tagShadowingEnabled || !spanishTags.trim()) return spanishTags;
-    const cached = this.tagTranslationCache.get(spanishTags);
-    return cached !== undefined ? cached : spanishTags;
-  }
-
-  /**
-   * Samples the vault to collect representative tag path components and
-   * leaf values, runs them through the translation model, and returns a
-   * structured result for display in the settings panel.
-   *
-   * This is a READ-ONLY diagnostic operation. It does not modify the index,
-   * the translation cache, or any settings.
-   *
-   * Returns an array of result rows, each containing:
-   * - type: "path" (generic category label) or "leaf" (specific value)
-   * - original: the Spanish input string
-   * - translated: what the model returned, or null on failure
-   * - warning: a human-readable warning if the output looks malformed
-   */
-  async testTagTranslation(): Promise<
-    {
-      type: "path" | "leaf";
-      original: string;
-      translated: string | null;
-      warning: string | null;
-    }[]
-  > {
-    const files = this.plugin.app.vault.getMarkdownFiles();
-
-    // Scan vault in-memory cache to get real tags
-    const uniquePaths = new Set<string>();
-    const uniqueLeaves = new Set<string>();
-
-    for (const file of files) {
-      const cache = this.plugin.app.metadataCache.getFileCache(file);
-      const rawTags: string[] = [];
-      const add = (value: string) => {
-        if (value && value.trim()) rawTags.push(value.trim());
-      };
-
-      if (cache?.tags) {
-        for (const t of cache.tags) add(t.tag);
-      }
-      const frontmatter: Record<string, unknown> | undefined = cache?.frontmatter;
-      if (frontmatter) {
-        for (const tag of this.extractTagValues(frontmatter.tags)) add(tag);
-        for (const tag of this.extractTagValues(frontmatter.tag)) add(tag);
-      }
-
-      for (const raw of rawTags) {
-        const { path, leaf } = this.splitTagHierarchy(raw);
-        if (leaf && !VaultIndexer.GENERIC_TAG_NODES.has(leaf.toLowerCase())) {
-          uniqueLeaves.add(leaf);
-        }
-        for (const p of path) {
-          if (p && !VaultIndexer.GENERIC_TAG_NODES.has(p.toLowerCase())) {
-            uniquePaths.add(p);
-          }
-        }
-      }
-    }
-
-    const pathSample = Array.from(uniquePaths).slice(0, 20);
-    const leafSample = Array.from(uniqueLeaves).slice(0, 15);
-
-    const results: {
-      type: "path" | "leaf";
-      original: string;
-      translated: string | null;
-      warning: string | null;
-    }[] = [];
-
-    if (pathSample.length === 0 && leafSample.length === 0) {
-      return results;
-    }
-
-    const settings = this.plugin.settings;
-    const translationChain = this.getTagTranslationChain(200);
-    if (translationChain.length === 0) {
-      throw new Error(
-        "No Tag Translation Provider/Model is configured. Enable tag shadowing and configure a provider (cloud or local) plus a usable model.",
-      );
-    }
-
-    const testRunStats = {
-      primary: settings.tagTranslationProvider,
-      fallback: settings.tagTranslationFallbackProvider,
-      primaryIsCloud: this.isCloudProvider(settings.tagTranslationProvider),
-      allowCloudTagTranslation: settings.allowCloudTagTranslation,
-      cloudOkChunks: 0,
-      fallbackUsedChunks: 0,
-      totalFailures: 0,
-      fallbackWarningLogged: false,
-      fallbackNoticeShown: false,
-    };
-
-    const runAnchoredTest = async (sample: string[], contextRule: string, type: "path" | "leaf") => {
-      const chunkList = sample.map((term, index) => `t${index} -> ${term}`).join("\n");
-      const systemPrompt = `You are a mechanical translation tool mapping Spanish to ${settings.tagShadowingLanguage}.
-Translate ONLY the values on the right side of the -> delimiter.
-
-CRITICAL RULES:
-1. ANCHOR PRESERVATION: You MUST retain the exact token anchor identifier (e.g., t0 ->, t1 ->) on the left side of the line.
-2. ZERO CHATTER: Output ONLY the translated list lines. No explanations.
-3. ${contextRule}
-
-FORMAT EXAMPLE:
-t0 -> Translation
-t1 -> Translation`;
-
-      try {
-        let result: string | null = null;
-        let lastErr: unknown = null;
-        let cloudPrimaryErr: unknown = null;
-        let winningCandidateId: TagProviderId | null = null;
-        for (const candidate of translationChain) {
-          try {
-            result = await candidate.provider.generate(
-              `Translate these anchored targets exactly:\n${chunkList}`,
-              systemPrompt,
-              candidate.model,
-            );
-            winningCandidateId = candidate.id;
-            break;
-          } catch (e: unknown) {
-            lastErr = e;
-            if (
-              testRunStats.primaryIsCloud &&
-              testRunStats.allowCloudTagTranslation &&
-              candidate.id === testRunStats.primary
-            ) {
-              cloudPrimaryErr = e;
-            }
-          }
-        }
-
-        if (result === null) {
-          throw lastErr instanceof Error ? lastErr : new Error(errorToMessage(lastErr));
-        }
-
-        if (testRunStats.primaryIsCloud && testRunStats.allowCloudTagTranslation) {
-          if (winningCandidateId === testRunStats.primary) {
-            testRunStats.cloudOkChunks++;
-          } else if (winningCandidateId === testRunStats.fallback && cloudPrimaryErr !== null) {
-            testRunStats.fallbackUsedChunks++;
-
-            const cloudName = testRunStats.primary.charAt(0).toUpperCase() + testRunStats.primary.slice(1);
-            const fallbackName =
-              testRunStats.fallback.charAt(0).toUpperCase() + testRunStats.fallback.slice(1);
-            const errMsg = errorToMessage(cloudPrimaryErr);
-
-            if (!testRunStats.fallbackWarningLogged) {
-              testRunStats.fallbackWarningLogged = true;
-              this.plugin.diagnosticService.report(
-                "Tag Translation",
-                `Tag translation (test): cloud ${cloudName} failed → using local fallback ${fallbackName} (error: ${errMsg})`,
-                "warning",
-              );
-            }
-
-            if (!testRunStats.fallbackNoticeShown) {
-              testRunStats.fallbackNoticeShown = true;
-              new Notice(
-                `Vault Brain: Cloud tag translation test failed — using local fallback ${fallbackName}.`,
-                8000,
-              );
-            }
-          }
-        }
-
-        const lines = result
-          .split("\n")
-          .map((line) => line.trim())
-          .filter((line) => /(?:^|[^\p{L}\p{N}_])t\s*\d+\s*(?:->|◈|:|=>|=)/u.test(line));
-
-        const translationMap = new Map<number, string>();
-        lines.forEach((line) => {
-          const match = line.match(/(?:^|[^\p{L}\p{N}_])t\s*(\d+)\s*(?:->|◈|:|=>|=)\s*(.*)/u);
-          if (match) {
-            const idx = parseInt(match[1], 10);
-            let trans = match[2].trim();
-            trans = trans.replace(/^[\s_*`"'[\]()\]]+/, "").replace(/[\s_*`"'[\]()\]]+$/, "");
-            trans = trans.replace(/[.,;]+$/, "");
-            if (trans) {
-              translationMap.set(idx, trans);
-            }
-          }
-        });
-
-        sample.forEach((original, i) => {
-          const translated = translationMap.get(i) || null;
-          results.push({
-            type,
-            original,
-            translated,
-            warning: translated ? null : "Model omitted this anchor or failed to parse.",
-          });
-        });
-      } catch (e: unknown) {
-        testRunStats.totalFailures++;
-        sample.forEach((original) => {
-          results.push({ type, original, translated: null, warning: errorToMessage(e) });
-        });
-      }
-    };
-
-    if (pathSample.length > 0) {
-      await runAnchoredTest(pathSample, "Translate generic category labels.", "path");
-    }
-    if (leafSample.length > 0) {
-      await runAnchoredTest(leafSample, "Translate common nouns. Preserve proper nouns exactly.", "leaf");
-    }
-
-    if (testRunStats.primaryIsCloud && testRunStats.allowCloudTagTranslation) {
-      this.plugin.diagnosticService.report(
-        "Tag Translation",
-        `Tag translation (test): cloud ok ${testRunStats.cloudOkChunks} chunks, fallback used ${testRunStats.fallbackUsedChunks} chunks, total failures ${testRunStats.totalFailures}.`,
-        "info",
-      );
-    }
-
-    return results;
-  }
-
-  /** Not one of the local servers: when it fails, the local fallback translates. */
-  private isCloudProvider(provider: TagProviderId): boolean {
-    return !isLocalServer(provider);
-  }
-
-  private getTagTranslationModelFor(provider: TagProviderId): string {
-    const s = this.plugin.settings;
-
-    // Local: explicit translation model is preferred, but we can fall back to the configured local chat model.
-    if (provider === "lmstudio")
-      return (s.tagTranslationModel || "").trim() || (s.lmStudioModel || "").trim();
-    if (provider === "llamacpp")
-      return (s.tagTranslationModel || "").trim() || (s.llamaCppModel || "").trim();
-    if (provider === "ollama") return (s.tagTranslationModel || "").trim() || (s.defaultModel || "").trim();
-
-    // Cloud: reuse the provider's configured model setting.
-    if (provider === "claude") return (s.claudeModel || "").trim();
-    if (provider === "gemini") return (s.geminiModel || "").trim();
-    if (provider === "openai") return (s.openaiModel || "").trim();
-    if (provider === "groq") return (s.groqModel || "").trim();
-    if (provider === "openrouter") return (s.openRouterModel || "").trim();
-    if (provider === "mistral") return (s.mistralModel || "").trim();
-    if (provider === "custom") return (s.customModel || "").trim();
-
-    return "";
-  }
-
-  private createProvider(provider: TagProviderId, maxTokens: number): AiProviderClient {
-    return createProvider(this.plugin, provider, maxTokens);
-  }
-
-  private getTagTranslationChain(maxTokens: number): Array<{
-    id: TagProviderId;
-    provider: AiProviderClient;
-    model: string;
-  }> {
-    const s = this.plugin.settings;
-    const primary = s.tagTranslationProvider;
-    const fallback = s.tagTranslationFallbackProvider;
-
-    const chainIds: TagProviderId[] = [];
-    // Tag names reach a cloud provider only with consent; the OpenAI-compatible
-    // server the user says is theirs needs none, but still has the local fallback.
-    if (
-      keepsNotesPrivate(s, primary, this.getTagTranslationModelFor(primary)) ||
-      s.allowCloudTagTranslation
-    ) {
-      chainIds.push(primary);
-    }
-    if (this.isCloudProvider(primary)) {
-      chainIds.push(fallback);
-    }
-
-    const unique = Array.from(new Set(chainIds));
-    const out: Array<{ id: TagProviderId; provider: AiProviderClient; model: string }> = [];
-
-    for (const id of unique) {
-      const model = this.getTagTranslationModelFor(id);
-      // llama.cpp answers with its loaded model when none is named.
-      if (!model && id !== "llamacpp") continue;
-      out.push({ id, provider: this.createProvider(id, maxTokens), model });
-    }
-
-    return out;
-  }
-
   private extractFrontmatterSummary(
     content: string,
     file: TFile,
@@ -1643,11 +825,11 @@ t1 -> Translation`;
       }
     }
 
-    const tags = this.collectShadowTags(content, file);
+    const tags = this.plugin.tagTranslator.collectShadowTags(content, file);
     let tagsOnly = "";
 
     if (tags.length > 0) {
-      tagsOnly = tags.map((t) => this.translateTagsBilingually(t)).join(", ");
+      tagsOnly = tags.map((t) => this.plugin.tagTranslator.translateTagsBilingually(t)).join(", ");
     }
 
     if (!summaryOnly && !tagsOnly) return null;
@@ -1674,14 +856,17 @@ t1 -> Translation`;
     };
   }
 
-  private parseGlobCsv(raw: string): string[] {
-    return raw
-      .split(/[,\n]/g)
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
+  /** The note's ==highlights== as one entry's text, when highlights are indexed. */
+  private highlightsOf(content: string): string | null {
+    const s = this.plugin.settings;
+    if (!s.indexHighlightsEnabled) return null;
+    return highlightsText(content, {
+      maxHighlights: s.maxHighlightsPerNote,
+      maxChars: s.maxHighlightCharsPerNote,
+    });
   }
 
-  private getTextExtractorApi(): TextExtractorApi | undefined {
+  getTextExtractorApi(): TextExtractorApi | undefined {
     // Optional dependency: community plugin "Text Extractor" (id: "text-extractor").
     // `app.plugins` is not part of Obsidian's public typings, so describe just the
     // shape we read instead of reaching through `any`.
@@ -1692,8 +877,8 @@ t1 -> Translation`;
   }
 
   private isPathIndexableByPatterns(path: string): boolean {
-    const include = this.parseGlobCsv(this.plugin.settings.vaultIndexIncludePatterns || "");
-    const exclude = this.parseGlobCsv(this.plugin.settings.vaultIndexExcludePatterns || "");
+    const include = parseGlobList(this.plugin.settings.vaultIndexIncludePatterns || "");
+    const exclude = parseGlobList(this.plugin.settings.vaultIndexExcludePatterns || "");
 
     const opts = { dot: true };
     if (exclude.some((p) => minimatch(path, p, opts))) return false;
@@ -1746,9 +931,8 @@ t1 -> Translation`;
     this.isIndexing = true;
     this.loadWasPartial = false; // Reset partial load flag since we are doing a full rebuild
 
-    this.tagTranslationCache.clear();
+    this.plugin.tagTranslator.startRun();
     this.lastShardSaveTime = 0;
-    this.tagTranslationRunStats = null;
 
     try {
       this.plugin.setIndexingStatus("Initializing Index Rebuild...");
@@ -1818,7 +1002,9 @@ t1 -> Translation`;
       this.plugin.setIndexingStatus(`Indexing 0 / ${total}`);
 
       // Pre-translate tags for Markdown files only (PDFs have no tags/frontmatter).
-      await this.preTranslateTags(files.filter((f) => f.extension.toLowerCase() === "md"));
+      await this.plugin.tagTranslator.preTranslateTags(
+        files.filter((f) => f.extension.toLowerCase() === "md"),
+      );
 
       for (let i = 0; i < total; i++) {
         const file = files[i];
@@ -1871,14 +1057,14 @@ t1 -> Translation`;
 
           if (validChunks.length > 0 || hasFmSummary) {
             // Extract heading structure for heading-aware chunking
-            const headings = isPdf ? [] : this.extractHeadings(content);
+            const headings = isPdf ? [] : extractHeadings(content);
             const bilingualTags = fmData?.tagsOnly || "";
-            const highlightsOnly = isPdf ? "" : this.extractHighlightsOnlyText(content);
+            const highlightsOnly = isPdf ? "" : this.highlightsOf(content);
             const hasHighlights = Boolean(highlightsOnly);
 
             // Build embedding texts with search_document prefix and heading context
             const embeddingTexts = validChunks.map((c) => {
-              const hp = this.getHeadingPathAtOffset(headings, c.start);
+              const hp = headingPathAtOffset(headings, c.start);
               const docPrefix = getModelPrefixes(this.plugin.embeddingService.embeddingModelName()).doc;
               // Prepend bilingual tags to every chunk so the vector captures both languages.
               // Tags are brief (30–80 chars) and won't dilute the body content meaningfully.
@@ -1895,7 +1081,7 @@ t1 -> Translation`;
             // Add a dedicated frontmatter summary embedding (offset 0,0 = signals summary entry)
             if (hasFmSummary) embeddingTexts.unshift(fmData.fullText);
 
-            const chunkHashes = embeddingTexts.map((t) => VaultIndexer.chunkHash(t));
+            const chunkHashes = embeddingTexts.map((t) => chunkHash(t));
 
             const resolvedEmbeddings: Array<Int8Array | null> = new Array<Int8Array | null>(
               embeddingTexts.length,
@@ -1973,7 +1159,7 @@ t1 -> Translation`;
             for (let j = 0; j < validChunks.length; j++) {
               const emb = resolvedEmbeddings[j + cursor];
               if (emb && emb.length > 0) {
-                const hp = this.getHeadingPathAtOffset(headings, validChunks[j].start);
+                const hp = headingPathAtOffset(headings, validChunks[j].start);
                 newEntries.push({
                   path: file.path,
                   chunkStart: validChunks[j].start,
@@ -2030,34 +1216,7 @@ t1 -> Translation`;
 
       await this.saveIndex();
 
-      // Log translation results to diagnostics panel for post-rebuild audit
-      if (this.tagTranslationCache.size > 0) {
-        const cacheEntries = Array.from(this.tagTranslationCache.entries())
-          .filter(([, v]) => v && v !== "") // skip fallback (untranslated) entries
-          .slice(0, 30); // cap log length
-
-        if (cacheEntries.length > 0) {
-          const logLines = cacheEntries.map(([k, v]) => `  ${k} → ${v}`).join("\n");
-          this.plugin.diagnosticService.report(
-            "Tag Translation",
-            `Translation results (${cacheEntries.length} unique inputs):\n${logLines}`,
-            "info",
-          );
-        }
-      }
-
-      // Summarize whether tag translation actually used cloud vs fallback for this run.
-      // Captured into a local (with its declared type) because TS narrows the field to
-      // `null` from the reset at the top of rebuildIndex — it can't see that the
-      // pre-translation step above repopulates it via a called helper.
-      const runStats = this.tagTranslationRunStats as TagTranslationRunStats | null;
-      if (runStats?.primaryIsCloud && runStats.allowCloudTagTranslation) {
-        this.plugin.diagnosticService.report(
-          "Tag Translation",
-          `Tag translation: cloud ok ${runStats.cloudOkChunks} chunks, fallback used ${runStats.fallbackUsedChunks} chunks, total failures ${runStats.totalFailures}.`,
-          "info",
-        );
-      }
+      this.plugin.tagTranslator.reportRun();
 
       this.plugin.settings.indexStatus = "Ready";
       await this.plugin.saveSettings();
@@ -2197,7 +1356,7 @@ t1 -> Translation`;
 
       // Ensure queued files have tags pre-translated to avoid mid-queue VRAM swaps
       if (totalQueued > 0) {
-        await this.preTranslateTags([...this.indexingQueue]);
+        await this.plugin.tagTranslator.preTranslateTags([...this.indexingQueue]);
       }
 
       while (this.indexingQueue.length > 0) {
@@ -2296,13 +1455,13 @@ t1 -> Translation`;
       const hasFmSummary = fmData !== null;
 
       if (validChunks.length > 0 || hasFmSummary) {
-        const headings = isPdf ? [] : this.extractHeadings(content);
+        const headings = isPdf ? [] : extractHeadings(content);
         const bilingualTags = fmData?.tagsOnly || "";
-        const highlightsOnly = isPdf ? "" : this.extractHighlightsOnlyText(content);
+        const highlightsOnly = isPdf ? "" : this.highlightsOf(content);
         const hasHighlights = Boolean(highlightsOnly);
 
         const embeddingTexts = validChunks.map((c) => {
-          const hp = this.getHeadingPathAtOffset(headings, c.start);
+          const hp = headingPathAtOffset(headings, c.start);
           const docPrefix = getModelPrefixes(this.plugin.embeddingService.embeddingModelName()).doc;
           // Prepend bilingual tags to every chunk so the vector captures both languages.
           // Tags are brief (30–80 chars) and won't dilute the body content meaningfully.
@@ -2317,7 +1476,7 @@ t1 -> Translation`;
 
         if (hasFmSummary) embeddingTexts.unshift(fmData.fullText);
 
-        const chunkHashes = embeddingTexts.map((t) => VaultIndexer.chunkHash(t));
+        const chunkHashes = embeddingTexts.map((t) => chunkHash(t));
 
         const resolvedEmbeddings: Array<Int8Array | null> = new Array<Int8Array | null>(
           embeddingTexts.length,
@@ -2392,7 +1551,7 @@ t1 -> Translation`;
         for (let j = 0; j < validChunks.length; j++) {
           const emb = resolvedEmbeddings[j + cursor];
           if (emb && emb.length > 0) {
-            const hp = this.getHeadingPathAtOffset(headings, validChunks[j].start);
+            const hp = headingPathAtOffset(headings, validChunks[j].start);
             newEntries.push({
               path: file.path,
               chunkStart: validChunks[j].start,
@@ -2421,769 +1580,5 @@ t1 -> Translation`;
       );
       return false;
     }
-  }
-
-  private static normalizeTextForSearch(text: string): string {
-    return text
-      .toLowerCase()
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "");
-  }
-
-  /**
-   * Stable, low-collision content hash for chunk-level incremental indexing.
-   * Uses two parallel 32-bit FNV-1a accumulators (64-bit effective key) so we
-   * can safely reuse embeddings across small edits without relying on BigInt.
-   */
-  private static chunkHash(text: string): string {
-    const bytes = new TextEncoder().encode(text);
-    let h1 = 0x811c9dc5;
-    let h2 = (0x811c9dc5 ^ 0x9e3779b9) >>> 0;
-    for (let i = 0; i < bytes.length; i++) {
-      const b = bytes[i];
-      h1 ^= b;
-      h1 = Math.imul(h1, 0x01000193) >>> 0;
-      h2 ^= b;
-      h2 = Math.imul(h2, 0x01000193) >>> 0;
-      // Cross-mix to reduce correlated collisions when only seed differs
-      h2 ^= (h1 + ((h1 << 7) | (h1 >>> 25))) >>> 0;
-    }
-    return h1.toString(16).padStart(8, "0") + h2.toString(16).padStart(8, "0");
-  }
-
-  /** BM25 word index over passage text (see KeywordIndex), kept in step with the vault index. */
-  private keywordIndex = new KeywordIndex();
-  /** Per note: the index state its words were read from ("mtime:entries"). */
-  private keywordSignature = new Map<string, string>();
-
-  /** Brings the word index up to date: notes added, changed or removed since the last search. */
-  private async refreshKeywordIndex(fileCache: Map<string, string>): Promise<void> {
-    for (const path of this.keywordIndex.paths()) {
-      if (!this.pathIndex.has(path)) {
-        this.keywordIndex.removePath(path);
-        this.keywordSignature.delete(path);
-      }
-    }
-    for (const [path, list] of this.pathIndex) {
-      const signature = `${list.reduce((m, e) => Math.max(m, e.mtime), 0)}:${list.length}`;
-      if (this.keywordSignature.get(path) === signature) continue;
-      const file = this.plugin.app.vault.getAbstractFileByPath(path);
-      if (!(file instanceof TFile)) continue;
-      let content = "";
-      try {
-        content = (await this.readIndexableText(file, fileCache)) || "";
-      } catch {
-        continue;
-      }
-      const passages = list.map((e) => {
-        let text: string;
-        if (e.chunkStart === 0 && e.chunkEnd === 0) {
-          text =
-            e.entryType === "highlights"
-              ? e.highlightsText || ""
-              : `${e.summaryText || ""} ${e.tagsText || ""}`;
-        } else {
-          text = content.slice(e.chunkStart, e.chunkEnd);
-        }
-        return { key: this.getSearchEntryKey(e), text: `${file.basename} ${e.headingPath || ""}\n${text}` };
-      });
-      this.keywordIndex.setPath(path, passages);
-      this.keywordSignature.set(path, signature);
-    }
-  }
-
-  private getSearchEntryKey(entry: IndexEntry): string {
-    const type = entry.entryType ?? "unknown";
-    const heading = entry.headingPath ?? "";
-    return `${entry.path}::${type}::${entry.chunkStart}::${entry.chunkEnd}::${heading}`;
-  }
-
-  private isHighlightEntry(entry: IndexEntry): boolean {
-    return (
-      entry.entryType === "highlights" ||
-      (entry.chunkStart === 0 && entry.chunkEnd === 0 && !!entry.highlightsText)
-    );
-  }
-
-  private computeMetadataBonus(entry: IndexEntry, searchTerms: string[], quotedTerms: string[]): number {
-    // Metadata keyword boosting: Exact quotes (Major) + Regular terms (Minor) (Accent-insensitive!)
-    let metadataBonus = 0;
-    const lowerPath = VaultIndexer.normalizeTextForSearch(entry.path);
-    const lowerSummary = VaultIndexer.normalizeTextForSearch(entry.summaryText || "");
-    const lowerTags = VaultIndexer.normalizeTextForSearch(entry.tagsText || "");
-    const lowerHighlights = VaultIndexer.normalizeTextForSearch(entry.highlightsText || "");
-    const lowerHeading = VaultIndexer.normalizeTextForSearch(entry.headingPath || "");
-
-    // 1. Quoted terms get a massive priority boost
-    for (const term of quotedTerms) {
-      if (
-        lowerPath.includes(term) ||
-        lowerSummary.includes(term) ||
-        lowerTags.includes(term) ||
-        lowerHighlights.includes(term) ||
-        lowerHeading.includes(term)
-      ) {
-        metadataBonus += 0.15;
-      }
-    }
-
-    // 2. Regular keyword boosting, skipping stop-words
-    for (const term of searchTerms) {
-      if (STOP_WORDS.has(term)) continue;
-      if (lowerPath.includes(term)) metadataBonus += 0.05;
-      if (lowerSummary.includes(term)) metadataBonus += 0.04;
-      if (lowerTags.includes(term)) metadataBonus += 0.03;
-      if (lowerHighlights.includes(term)) metadataBonus += 0.04;
-      if (lowerHeading.includes(term)) metadataBonus += 0.04;
-    }
-
-    // Cap the metadata bonus so it doesn't exponentially drown out semantic vector scores
-    return Math.min(metadataBonus, this.plugin.settings.searchMetadataCap);
-  }
-
-  private computeContentBonusFromChunkText(
-    chunkText: string,
-    searchTerms: string[],
-    quotedTerms: string[],
-  ): number {
-    let contentBonus = 0;
-    const normalizedChunkText = VaultIndexer.normalizeTextForSearch(chunkText);
-
-    for (const term of searchTerms) {
-      if (STOP_WORDS.has(term)) continue;
-      if (normalizedChunkText.includes(term)) {
-        contentBonus += 0.05;
-      }
-    }
-    for (const term of quotedTerms) {
-      if (normalizedChunkText.includes(term)) contentBonus += 0.15;
-    }
-    return contentBonus;
-  }
-
-  private filterEntriesByScope(entries: IndexEntry[], scope?: VaultSearchScope): IndexEntry[] {
-    if (!scope) return entries;
-    const files = (scope.files ?? []).map((p) => normalizePath(p)).filter((p) => p.length > 0);
-    const folders = (scope.folders ?? []).map((p) => normalizePath(p)).filter((p) => p.length > 0);
-    if (files.length === 0 && folders.length === 0) return entries;
-
-    const fileSet = new Set(files);
-    const folderPrefixes = folders.map((f) => (f.endsWith("/") ? f : `${f}/`));
-
-    return entries.filter((entry) => {
-      if (fileSet.has(entry.path)) return true;
-      return folderPrefixes.some((prefix) => entry.path.startsWith(prefix));
-    });
-  }
-
-  /**
-   * Multi-query hybrid search using vector similarity + keyword boosting.
-   * Uses nomic-embed-text search_query prefix and dual-embedding fusion.
-   */
-  async search(query: string, topN = 20, options?: { scope?: VaultSearchScope }): Promise<string[]> {
-    this.plugin.debugLog(`Horme Brain: Search called. Index size: ${this.index.length}`);
-    const canAccess = this.plugin.isLocalProviderActive() || this.plugin.settings.allowCloudRAG;
-    if (!this.plugin.settings.vaultBrainEnabled || !canAccess) {
-      if (!canAccess)
-        this.plugin.diagnosticService.report(
-          "Horme Privacy Guard",
-          "Vault search blocked (Cloud Provider Active & allowCloudRAG is OFF).",
-          "warning",
-        );
-      return [];
-    }
-
-    // Wait for the index to finish loading from disk before searching.
-    // The constructor calls loadIndex() fire-and-forget, so an early search
-    // (e.g. immediately after plugin load) might otherwise see an empty index.
-    if (!this.isLoaded) {
-      const deadline = Date.now() + 5000;
-      while (!this.isLoaded && Date.now() < deadline) {
-        await new Promise<void>((r) => window.setTimeout(r, 100));
-      }
-      if (!this.isLoaded) {
-        this.plugin.diagnosticService.report(
-          "Horme Brain",
-          "Index not yet loaded, skipping search.",
-          "warning",
-        );
-        return [];
-      }
-    }
-
-    // Which model the server has now decides whether the index can be searched.
-    await this.plugin.embeddingService.resolveEmbeddingModelName();
-    if (!this.isSpaceCompatible()) {
-      this.checkEmbeddingSpace(false);
-      return [];
-    }
-
-    try {
-      // 1. Refine query: remove conversational junk (Bilingual)
-      const refinedQuery = query
-        .toLowerCase()
-        // Step 1: strip well-known leading conversational prefixes
-        .replace(
-          /^(?:ayúdame a encontrar|podrías ayudarme a encontrar|busca|encuentra|dime sobre|háblame de|tienes algo sobre|algún artículo sobre|alguna nota sobre|is it true that|can you help me find|tell me about|do you have anything on|search for|find|look for|i read that|i heard that|i was told that|can you confirm that|is it correct that|did you know that)\s+/i,
-          "",
-        )
-        // Step 2: strip trailing conversational question closers
-        .replace(/\?+$/, "")
-        .replace(/\s*(?:right\?|correct\?|is that right|is that true|can you confirm)\s*$/i, "")
-        .trim();
-
-      // 1.5 Extract quoted terms for exact-match priority (normalized for accent-insensitivity)
-      const normalizedQueryForQuotes = VaultIndexer.normalizeTextForSearch(query);
-      const quotedMatches = normalizedQueryForQuotes.match(/"([^"]+)"/g) || [];
-      const quotedTerms = quotedMatches.map((m) => m.replace(/"/g, ""));
-
-      // Normalize refined query for robust keyword splitting (stripping accents)
-      const normalizedRefinedQuery = VaultIndexer.normalizeTextForSearch(refinedQuery);
-      const cleanedQuery = normalizedRefinedQuery.replace(/[.,/#!$%^&*;:{}=\-_`~()]/g, " ");
-      const searchTerms = cleanedQuery.split(/\s+/).filter((t) => t.length > 2);
-
-      // 2. Truncate very long queries (e.g. user pasting whole articles) to a
-      //    focused portion for embedding — models work best with focused queries.
-      //    We keep the first 500 chars, which captures the topic without dilution.
-      const MAX_EMBED_CHARS = 500;
-      const embeddingQuery =
-        refinedQuery.length > MAX_EMBED_CHARS ? refinedQuery.slice(0, MAX_EMBED_CHARS) : refinedQuery;
-
-      // 3. Multi-query: full (truncated) query + keyword-distilled variant.
-      // If Ollama rejects or times out (any error, not just "context length"),
-      // fall back to keyword-only scoring instead of returning zero results.
-      const { query: qPrefix } = getModelPrefixes(
-        await this.plugin.embeddingService.resolveEmbeddingModelName(),
-      );
-      let primaryEmbedding: number[] = [];
-      let secondaryEmbedding: number[] | null = null;
-
-      try {
-        primaryEmbedding = await this.plugin.embeddingService.getEmbedding(`${qPrefix}${embeddingQuery}`);
-        const keyTerms = searchTerms.filter((t) => t.length > 3).join(" ");
-        if (keyTerms && keyTerms !== embeddingQuery) {
-          secondaryEmbedding = await this.plugin.embeddingService.getEmbedding(`${qPrefix}${keyTerms}`);
-        }
-      } catch {
-        // Embedding failed (Ollama down, model not loaded, long-text timeout, etc.)
-        // Log and continue with vector scores zeroed out — keyword bonus alone will
-        // Still surface obvious matches like the exact-title case.
-        this.plugin.diagnosticService.report(
-          "Search",
-          "Embedding failed. Falling back to keyword search.",
-          "warning",
-        );
-      }
-
-      const MIN_SIMILARITY = 0.1; // Lowered: keyword-only searches can still score ~0.25+
-
-      const scope = options?.scope;
-      const entries = this.filterEntriesByScope(this.index, scope);
-
-      // ── New hybrid fusion: Reciprocal Rank Fusion (RRF) ────────────────────
-      // YOLO's hybrid search fuses keyword hits + embedding hits via RRF, which
-      // avoids brittle score calibration across different retrieval signals.
-      if (this.plugin.settings.vaultBrainUseRrfHybridSearch) {
-        const fileCache = new Map<string, string>();
-        const k = Math.max(1, Math.floor(this.plugin.settings.vaultBrainRrfK || 60));
-        const poolSize = Math.max(50, Math.min(250, topN * 10));
-
-        const scored = entries.map((entry) => {
-          const emb =
-            typeof entry.embedding === "string"
-              ? decompressEmbeddingToInt8(entry.embedding)
-              : entry.embedding;
-
-          const primaryScore =
-            primaryEmbedding.length > 0 ? cosineSimilarityFloatInt8(primaryEmbedding, emb) : 0;
-          const secondaryScore = secondaryEmbedding ? cosineSimilarityFloatInt8(secondaryEmbedding, emb) : 0;
-          const vectorScore = Math.max(primaryScore, secondaryScore);
-
-          const metadataScore = this.computeMetadataBonus(entry, searchTerms, quotedTerms);
-
-          const boost = Math.max(0, Math.min(1, this.plugin.settings.highlightBoost || 0));
-          const highlightMul =
-            this.isHighlightEntry(entry) && this.plugin.settings.indexHighlightsEnabled ? 1 + boost : 1;
-
-          return {
-            entry,
-            vectorScore: vectorScore * highlightMul,
-            metadataScore: metadataScore * highlightMul,
-          };
-        });
-
-        // Dense results (embedding similarity)
-        const vectorRanked = scored
-          .filter((s) => s.vectorScore > 0)
-          .sort((a, b) => b.vectorScore - a.vectorScore)
-          .slice(0, poolSize);
-
-        // Sparse results: BM25 over the words of every passage (a name, a date or
-        // a price in the body counts, rare words above common ones), plus the
-        // title, tag and heading matches that used to be the only keyword signal.
-        const keywordSeed = scored
-          .filter((s) => s.metadataScore > 0)
-          .sort((a, b) => b.metadataScore - a.metadataScore)
-          .slice(0, poolSize);
-        await this.refreshKeywordIndex(fileCache);
-        const entryByScopeKey = new Map(entries.map((e) => [this.getSearchEntryKey(e), e]));
-        const bm25 = this.keywordIndex.search(query, poolSize, (key) => entryByScopeKey.has(key));
-        const topBm25 = bm25[0]?.score || 1;
-        const keywordByKey = new Map<string, { entry: IndexEntry; keywordScore: number }>();
-        for (const hit of bm25) {
-          const entry = entryByScopeKey.get(hit.key);
-          if (entry) keywordByKey.set(hit.key, { entry, keywordScore: hit.score / topBm25 });
-        }
-        for (const item of keywordSeed) {
-          const key = this.getSearchEntryKey(item.entry);
-          const prev = keywordByKey.get(key);
-          const bonus = 2 * item.metadataScore;
-          if (prev) prev.keywordScore += bonus;
-          else keywordByKey.set(key, { entry: item.entry, keywordScore: bonus });
-        }
-        const keywordRanked = [...keywordByKey.values()];
-        keywordRanked.sort((a, b) => b.keywordScore - a.keywordScore);
-
-        // If embeddings are unavailable, fall back to keyword-only list.
-        if (vectorRanked.length === 0) {
-          const selectedKeywordOnly = keywordRanked
-            .slice(0, topN)
-            .map((k) => ({ entry: k.entry, score: k.keywordScore }));
-          return await this.buildSearchResultsFromEntries(selectedKeywordOnly, fileCache);
-        }
-
-        // If keywords are unavailable, fall back to vector-only list.
-        if (keywordRanked.length === 0) {
-          const selectedVectorOnly = vectorRanked
-            .slice(0, topN)
-            .map((v) => ({ entry: v.entry, score: v.vectorScore }));
-          return await this.buildSearchResultsFromEntries(selectedVectorOnly, fileCache);
-        }
-
-        // RRF fusion across the union of ranked keys (1-based ranks)
-        const vectorRankByKey = new Map<string, number>();
-        vectorRanked.forEach((v, i) => {
-          const key = this.getSearchEntryKey(v.entry);
-          if (!vectorRankByKey.has(key)) vectorRankByKey.set(key, i + 1);
-        });
-        const keywordRankByKey = new Map<string, number>();
-        keywordRanked.forEach((v, i) => {
-          const key = this.getSearchEntryKey(v.entry);
-          if (!keywordRankByKey.has(key)) keywordRankByKey.set(key, i + 1);
-        });
-
-        const keys = new Set<string>([...vectorRankByKey.keys(), ...keywordRankByKey.keys()]);
-        const entryByKey = new Map<string, IndexEntry>();
-        for (const v of vectorRanked) entryByKey.set(this.getSearchEntryKey(v.entry), v.entry);
-        for (const v of keywordRanked) entryByKey.set(this.getSearchEntryKey(v.entry), v.entry);
-
-        const fused: Array<{
-          entry: IndexEntry;
-          score: number;
-          vectorRank?: number;
-          keywordRank?: number;
-        }> = [];
-
-        for (const key of keys) {
-          const entry = entryByKey.get(key);
-          if (!entry) continue;
-          const vr = vectorRankByKey.get(key);
-          const kr = keywordRankByKey.get(key);
-          let score = 0;
-          if (vr !== undefined) score += 1 / (k + vr);
-          if (kr !== undefined) score += 1 / (k + kr);
-          fused.push({ entry, score, vectorRank: vr, keywordRank: kr });
-        }
-
-        fused.sort((a, b) => {
-          if (a.score !== b.score) return b.score - a.score;
-          const aDual = a.vectorRank !== undefined && a.keywordRank !== undefined;
-          const bDual = b.vectorRank !== undefined && b.keywordRank !== undefined;
-          if (aDual !== bDual) return aDual ? -1 : 1;
-          const av = a.vectorRank ?? Number.MAX_SAFE_INTEGER;
-          const bv = b.vectorRank ?? Number.MAX_SAFE_INTEGER;
-          if (av !== bv) return av - bv;
-          const ak = a.keywordRank ?? Number.MAX_SAFE_INTEGER;
-          const bk = b.keywordRank ?? Number.MAX_SAFE_INTEGER;
-          if (ak !== bk) return ak - bk;
-          return a.entry.path.localeCompare(b.entry.path);
-        });
-
-        // Diversity Injection: for each summary/highlights entry, ensure the best content
-        // chunk from the same note is promoted to follow it immediately.
-        const injected: Array<{ entry: IndexEntry; score: number }> = [];
-        for (const item of fused) {
-          if (injected.length >= topN * 2) break;
-          injected.push({ entry: item.entry, score: item.score });
-          if (item.entry.chunkStart === 0 && item.entry.chunkEnd === 0) {
-            const bestContent = fused.find(
-              (s) =>
-                s.entry.path === item.entry.path &&
-                !(s.entry.chunkStart === 0 && s.entry.chunkEnd === 0) &&
-                !injected.some((i) => this.getSearchEntryKey(i.entry) === this.getSearchEntryKey(s.entry)),
-            );
-            if (bestContent) injected.push({ entry: bestContent.entry, score: bestContent.score });
-          }
-        }
-
-        // File-level dedup: prevent a single long note from flooding the top-N.
-        const selected: Array<{ entry: IndexEntry; score: number }> = [];
-        const perFileCounts = new Map<string, number>();
-
-        const takeUpTo = (maxChunksPerFile: number) => {
-          for (const item of injected) {
-            if (selected.length >= topN) return;
-            const current = perFileCounts.get(item.entry.path) || 0;
-            if (current >= maxChunksPerFile) continue;
-            const key = this.getSearchEntryKey(item.entry);
-            if (selected.some((s) => this.getSearchEntryKey(s.entry) === key)) continue;
-            perFileCounts.set(item.entry.path, current + 1);
-            selected.push(item);
-          }
-        };
-
-        takeUpTo(1);
-        if (selected.length < topN) takeUpTo(3);
-
-        this.plugin.debugLog(
-          `%cHorme Brain (RRF): Top ${selected.length} search results:`,
-          "color: #34d399; font-weight: bold;",
-        );
-        selected.forEach((s, idx) => {
-          this.plugin.debugLog(
-            `  %c${idx + 1}. [RRF: ${s.score.toFixed(4)}]%c ${s.entry.path}${
-              s.entry.headingPath ? " > " + s.entry.headingPath : ""
-            }`,
-            "color: #34d399; font-weight: bold;",
-            "color: inherit;",
-          );
-        });
-
-        return await this.buildSearchResultsFromEntries(selected, fileCache);
-      }
-
-      // 4. Score all entries: max(primary, secondary) + metadata bonus
-      const rawScored = entries
-        .map((entry) => {
-          const emb =
-            typeof entry.embedding === "string"
-              ? decompressEmbeddingToInt8(entry.embedding)
-              : entry.embedding;
-
-          const primaryScore =
-            primaryEmbedding.length > 0 ? cosineSimilarityFloatInt8(primaryEmbedding, emb) : 0;
-          const secondaryScore = secondaryEmbedding ? cosineSimilarityFloatInt8(secondaryEmbedding, emb) : 0;
-          const vectorScore = Math.max(primaryScore, secondaryScore);
-
-          // Metadata keyword boosting: Exact quotes (Major) + Regular terms (Minor) (Accent-insensitive!)
-          let metadataBonus = 0;
-          const lowerPath = VaultIndexer.normalizeTextForSearch(entry.path);
-          const lowerSummary = VaultIndexer.normalizeTextForSearch(entry.summaryText || "");
-          const lowerTags = VaultIndexer.normalizeTextForSearch(entry.tagsText || "");
-          const lowerHighlights = VaultIndexer.normalizeTextForSearch(entry.highlightsText || "");
-          const lowerHeading = VaultIndexer.normalizeTextForSearch(entry.headingPath || "");
-
-          // 1. Quoted terms get a massive priority boost
-          for (const term of quotedTerms) {
-            if (
-              lowerPath.includes(term) ||
-              lowerSummary.includes(term) ||
-              lowerTags.includes(term) ||
-              lowerHighlights.includes(term) ||
-              lowerHeading.includes(term)
-            ) {
-              metadataBonus += 0.15;
-            }
-          }
-
-          // 2. Regular keyword boosting, skipping stop-words
-          for (const term of searchTerms) {
-            if (STOP_WORDS.has(term)) continue;
-            if (lowerPath.includes(term)) metadataBonus += 0.05;
-            if (lowerSummary.includes(term)) metadataBonus += 0.04;
-            if (lowerTags.includes(term)) metadataBonus += 0.03;
-            if (lowerHighlights.includes(term)) metadataBonus += 0.04;
-            if (lowerHeading.includes(term)) metadataBonus += 0.04;
-          }
-
-          // Cap the metadata bonus so it doesn't exponentially drown out semantic vector scores
-          metadataBonus = Math.min(metadataBonus, this.plugin.settings.searchMetadataCap);
-
-          const baseScore = vectorScore + metadataBonus;
-          const isHighlightEntry =
-            entry.entryType === "highlights" ||
-            (entry.chunkStart === 0 && entry.chunkEnd === 0 && !!entry.highlightsText);
-          const boost = Math.max(0, Math.min(1, this.plugin.settings.highlightBoost || 0));
-          const boosted =
-            isHighlightEntry && this.plugin.settings.indexHighlightsEnabled
-              ? baseScore * (1 + boost)
-              : baseScore;
-
-          return { entry, score: boosted };
-        })
-        .filter((s) => s.score >= MIN_SIMILARITY)
-        .sort((a, b) => b.score - a.score);
-
-      // 4.1 Content-Aware Boosting (The "Deep Scan")
-      // Fetch and scan actual chunk text for top candidates to reward factual matches.
-      const topCandidates = rawScored.slice(0, 50); // Cap deep scan to prevent memory exhaustion
-      const scored: Array<{ entry: IndexEntry; score: number }> = [];
-      const fileCache = new Map<string, string>(); // Cache content to avoid redundant reads for the same file
-
-      for (const item of topCandidates) {
-        let contentBonus = 0;
-        try {
-          let content = fileCache.get(item.entry.path);
-          if (content === undefined) {
-            const abstractFile = this.plugin.app.vault.getAbstractFileByPath(item.entry.path);
-            if (abstractFile instanceof TFile) {
-              content = (await this.readIndexableText(abstractFile, fileCache)) ?? "";
-            }
-          }
-
-          if (content) {
-            const isNoteLevelEntry = item.entry.entryType
-              ? item.entry.entryType === "summary" || item.entry.entryType === "highlights"
-              : item.entry.chunkStart === 0 && item.entry.chunkEnd === 0;
-
-            const chunkText = isNoteLevelEntry
-              ? item.entry.entryType === "highlights" && item.entry.highlightsText
-                ? item.entry.highlightsText
-                : item.entry.summaryText || item.entry.tagsText
-                  ? (item.entry.summaryText || "") + " " + (item.entry.tagsText || "")
-                  : content.slice(0, 800)
-              : content.slice(item.entry.chunkStart, item.entry.chunkEnd);
-
-            const normalizedChunkText = VaultIndexer.normalizeTextForSearch(chunkText);
-
-            // Boost for search terms found in the actual body text (Accent-insensitive!)
-            for (const term of searchTerms) {
-              if (STOP_WORDS.has(term)) continue;
-              if (normalizedChunkText.includes(term)) {
-                contentBonus += 0.05; // Significant reward for factual body match
-              }
-            }
-            // Extra boost for quoted terms in content
-            for (const term of quotedTerms) {
-              if (normalizedChunkText.includes(term)) contentBonus += 0.15;
-            }
-          }
-        } catch {
-          /* skip if file read fails */
-        }
-
-        scored.push({
-          entry: item.entry,
-          score: item.score + Math.min(contentBonus, this.plugin.settings.searchContentCap),
-        });
-      }
-
-      // Re-sort after content boosting
-      scored.sort((a, b) => b.score - a.score);
-
-      // Diversity Injection: for each summary entry, ensure the best content
-      // chunk from the same note is promoted to follow it immediately.
-      const injected: Array<{ entry: IndexEntry; score: number }> = [];
-
-      for (const item of scored) {
-        if (injected.length >= topN * 2) break; // cap the injection pass
-        if (!injected.includes(item)) {
-          injected.push(item);
-        }
-
-        if (item.entry.chunkStart === 0 && item.entry.chunkEnd === 0) {
-          // This is a summary entry — find the best sibling content chunk
-          const bestContent = scored.find(
-            (s) =>
-              s.entry.path === item.entry.path &&
-              !(s.entry.chunkStart === 0 && s.entry.chunkEnd === 0) &&
-              !injected.includes(s),
-          );
-          if (bestContent) {
-            injected.push(bestContent);
-          }
-        }
-      }
-
-      // Replace `scored` with the injection-ordered list
-      // (the takeUpTo dedup below still applies, so no duplicates will
-      // survive into `selected`)
-      const diverseScored = injected;
-
-      // 4.5 File-level dedup: prevent a single long note from flooding the top-N.
-      // Pass 1: take max 1 chunk per file for variety.
-      // Pass 2: if we still have capacity, allow up to 3 chunks per file.
-      const selected: Array<{ entry: IndexEntry; score: number }> = [];
-      const perFileCounts = new Map<string, number>();
-
-      const takeUpTo = (maxChunksPerFile: number) => {
-        for (const item of diverseScored) {
-          if (selected.length >= topN) return;
-          const current = perFileCounts.get(item.entry.path) || 0;
-          if (current >= maxChunksPerFile) continue;
-          if (selected.includes(item)) continue; // CRITICAL DEDUP FIX
-          perFileCounts.set(item.entry.path, current + 1);
-          selected.push(item);
-        }
-      };
-
-      takeUpTo(1);
-      if (selected.length < topN) takeUpTo(3);
-
-      this.plugin.debugLog(
-        `%cHorme Brain: Top ${selected.length} search results:`,
-        "color: #34d399; font-weight: bold;",
-      );
-      selected.forEach((s, idx) => {
-        this.plugin.debugLog(
-          `  %c${idx + 1}. [Score: ${s.score.toFixed(3)}]%c ${s.entry.path}${
-            s.entry.headingPath ? " > " + s.entry.headingPath : ""
-          }`,
-          "color: #34d399; font-weight: bold;",
-          "color: inherit;",
-        );
-      });
-
-      return await this.buildSearchResultsFromEntries(selected, fileCache);
-    } catch (e: unknown) {
-      console.error("Horme: Search failed", e);
-      this.plugin.diagnosticService.report("Search", `Search failed: ${errorToMessage(e)}`);
-      return [];
-    }
-  }
-
-  private async buildSearchResultsFromEntries(
-    selected: Array<{ entry: IndexEntry; score: number }>,
-    fileCache: Map<string, string>,
-  ): Promise<string[]> {
-    const results: string[] = [];
-
-    for (const { entry } of selected) {
-      try {
-        const abstractFile = this.plugin.app.vault.getAbstractFileByPath(entry.path);
-        if (!(abstractFile instanceof TFile)) continue;
-
-        const content = await this.readIndexableText(abstractFile, fileCache);
-        if (!content) continue;
-
-        let chunk: string;
-        if (entry.chunkStart === 0 && entry.chunkEnd === 0) {
-          if (entry.entryType === "highlights" && entry.highlightsText) {
-            chunk = `Highlights:\n${entry.highlightsText}`;
-          } else {
-            const parts: string[] = [];
-            if (entry.summaryText) parts.push(entry.summaryText);
-            if (entry.tagsText) parts.push("Topics: " + entry.tagsText);
-            if (parts.length === 0) {
-              chunk = content
-                .replace(/^---\r?\n[\s\S]*?\r?\n---[^\S\r\n]*(?:\r?\n|$)/, "")
-                .slice(0, 600)
-                .trim();
-            } else {
-              chunk = parts.join("\n");
-            }
-          }
-        } else {
-          chunk = content.slice(entry.chunkStart, entry.chunkEnd).trim();
-        }
-
-        const heading = entry.headingPath ? ` (${entry.headingPath})` : "";
-        if (chunk) results.push(`[From ${entry.path}${heading}]:\n${chunk}`);
-      } catch {
-        /* skip */
-      }
-    }
-
-    return results;
-  }
-
-  private async readIndexableText(file: TFile, fileCache: Map<string, string>): Promise<string | undefined> {
-    const cached = fileCache.get(file.path);
-    if (cached !== undefined) return cached;
-
-    const ext = file.extension.toLowerCase();
-    let content = "";
-
-    if (ext === "pdf") {
-      const textExtractor = this.getTextExtractorApi();
-      if (!textExtractor) return undefined;
-      try {
-        content = (await textExtractor.extractText(file)) || "";
-      } catch {
-        return undefined;
-      }
-      const maxChars = Math.max(10_000, this.plugin.settings.vaultIndexPdfMaxChars || 0);
-      if (content.length > maxChars) content = content.slice(0, maxChars);
-    } else {
-      content = await this.plugin.app.vault.read(file);
-    }
-
-    fileCache.set(file.path, content);
-    return content;
-  }
-  /**
-   * Retrieves semantically related notes for the active file.
-   * Useful for the "Connections" side panel.
-   */
-  getConnections(activeFilePath: string): { path: string; score: number }[] | null | undefined {
-    if (!this.plugin.settings.vaultBrainEnabled || !this.isLoaded || !this.isSpaceCompatible()) return null;
-
-    const sourceEntries = this.getEntriesForPath(activeFilePath);
-    if (!sourceEntries || sourceEntries.length === 0) return undefined;
-
-    // Excluded folders: whole folders, in any letter case. "Temp" leaves out
-    // "Temp/…" but not "Templates/…" or "Temperature.md".
-    const excludedFolders = this.plugin.settings.connectionsExcludedFolders
-      .split(",")
-      .map((s) =>
-        normalizePath(s.trim())
-          .replace(/^\/+|\/+$/g, "")
-          .toLowerCase(),
-      )
-      .filter((s) => s.length > 0 && s !== "/");
-    const isInExcludedFolder = (path: string): boolean => {
-      const lower = path.toLowerCase();
-      return excludedFolders.some((folder) => lower.startsWith(folder + "/"));
-    };
-
-    // Find the most representative embedding for the file.
-    // Prefer the summary entry (chunkStart: 0) or fallback to the first content chunk.
-    const representativeEntry =
-      sourceEntries.find((e) => e.entryType === "summary") ||
-      sourceEntries.find((e) => e.entryType === "highlights") ||
-      sourceEntries.find((e) => e.chunkStart === 0 && e.chunkEnd === 0) ||
-      sourceEntries[0];
-
-    const sourceEmb =
-      typeof representativeEntry.embedding === "string"
-        ? decompressEmbeddingToInt8(representativeEntry.embedding)
-        : representativeEntry.embedding;
-
-    const pathScores = new Map<string, number>();
-
-    for (const entry of this.index) {
-      if (entry.path === activeFilePath) continue; // Skip source file
-
-      // Check exclusions
-      if (isInExcludedFolder(entry.path)) {
-        continue;
-      }
-
-      const emb =
-        typeof entry.embedding === "string" ? decompressEmbeddingToInt8(entry.embedding) : entry.embedding;
-
-      const score = cosineSimilarityInt8(sourceEmb, emb);
-
-      const currentMax = pathScores.get(entry.path) || 0;
-      if (score > currentMax) {
-        pathScores.set(entry.path, score);
-      }
-    }
-
-    return Array.from(pathScores.entries())
-      .map(([path, score]) => ({ path, score }))
-      .filter((s) => s.score >= this.plugin.settings.connectionsThreshold)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, this.plugin.settings.connectionsMaxResults);
   }
 }

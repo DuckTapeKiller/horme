@@ -259,6 +259,47 @@ export function cleanAuthor(author: string): string {
   return words.filter((w, i) => i === 0 || w !== words[i - 1]).join(" ");
 }
 
+/** Camera and editing leftovers in a file name: dates, frame numbers, "IMG", "DxO", "retusche". */
+const FILE_NAME_NOISE = [
+  /\b\d{4}[-_. ]\d{1,2}[-_. ]\d{1,2}\b/g, // 2012-05-13
+  /\b\d{1,2}[-_. ]\d{1,2}[-_. ]\d{4}\b/g, // 13.05.2012
+  /\b(?:IMG|DSC[FN]?|DCIM|PXL|PANO|HDR|DxO|retusche|retouched|edited|edit|cropped|crop|rotated|scaled|crop\d*)\b/gi,
+  /\b\d{2,4}D\b/g, // camera models: 60D, 5DII
+  /\b\d{5,}\b/g, // long frame or catalogue numbers
+  /\b(?!1\d{3}\b|20\d{2}\b)\d{4}\b/g, // four digits that are not a year
+];
+
+/**
+ * A picture's caption from its file name or object name: a name that reads
+ * like a camera's ("Aerial photograph 60D 2012 05 13 8760 DxO retusche")
+ * gives way to the description when there is one, and is otherwise cleaned
+ * of dates, frame numbers and editing words ("Aerial photograph").
+ */
+export function readableImageTitle(raw: string, description: string): string {
+  const spaced = raw.replace(/_/g, " ").replace(/\s+/g, " ").trim();
+  let cleaned = spaced;
+  let noise = 0;
+  for (const re of FILE_NAME_NOISE) {
+    cleaned = cleaned.replace(re, () => {
+      noise++;
+      return " ";
+    });
+  }
+  cleaned = cleaned
+    .replace(/\s*[-–,;.(]+\s*$/, "")
+    .replace(/\(\s*\)/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const flat = description.replace(/\s+/g, " ").trim();
+  const sentence = /^.{20,}?[.!?](?=\s|$)/.exec(flat)?.[0] ?? flat;
+  if (noise >= 2 && sentence.length >= 8) {
+    // A caption, not a sentence: no closing full stop.
+    const caption = sentence.replace(/\.$/, "");
+    return caption.length > 110 ? `${caption.slice(0, 109).trimEnd()}…` : caption;
+  }
+  return cleaned.length >= 3 ? cleaned : spaced;
+}
+
 /** One file's entry from a MediaWiki `prop=imageinfo` answer (formatversion=2). */
 export function imageFromInfo(page: unknown): FoundImage | null {
   if (typeof page !== "object" || page === null) return null;
@@ -286,10 +327,16 @@ export function imageFromInfo(page: unknown): FoundImage | null {
     return typeof f === "object" && f !== null ? htmlToText(str((f as Record<string, unknown>).value)) : "";
   };
   const fileTitle = str(p.title).replace(/^[^:]+:/, "");
-  const title = field("ObjectName") || fileTitle.replace(/\.[a-z0-9]{2,5}$/i, "") || "Image";
   let description = field("ImageDescription");
+  const title =
+    readableImageTitle(field("ObjectName") || fileTitle.replace(/\.[a-z0-9]{2,5}$/i, ""), description) ||
+    "Image";
   if (description.length > 240) description = `${description.slice(0, 237).trimEnd()}…`;
   const pageUrl = withoutTracking(str(i.descriptionurl));
+  // The caption came from the description: the rest of it, not the same words twice.
+  if (title.endsWith("…")) description = "";
+  else if (description.startsWith(title))
+    description = description.slice(title.length).replace(/^\./, "").trim();
   return {
     source: /(^|\.)wikipedia\.org$/.test(hostOf(pageUrl)) ? "Wikipedia" : "Wikimedia Commons",
     title,

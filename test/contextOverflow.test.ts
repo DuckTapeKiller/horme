@@ -90,3 +90,26 @@ void test("OpenAI-style refusals (vLLM, LiteLLM) are explained too", () => {
   assert.match(o, /128,000 tokens/);
   assert.doesNotMatch(o, /room kept for the reply/);
 });
+
+void test("Apple's model refusing a long request gets its own advice", () => {
+  const out =
+    explainContextOverflow(
+      'Server error (500): {"error":{"message":"The session\'s transcript exceeded the model\'s context size."}}',
+      "apple",
+      "Apple Intelligence",
+    ) ?? "";
+  assert.match(out, /about 8,000 tokens/);
+  assert.match(out, /Vault Brain/);
+});
+
+void test("Apple's server: 'Provided N tokens, but the maximum allowed is M' is explained with what to drop", () => {
+  const out =
+    explainContextOverflow(
+      "Provided 12,147 tokens, but the maximum allowed is 8192.",
+      "apple",
+      "Apple Intelligence",
+    ) ?? "";
+  assert.match(out, /12,147 tokens/);
+  assert.match(out, /8,192 tokens/);
+  assert.match(out, /turn off Vault Brain, the current note or the folders/);
+});

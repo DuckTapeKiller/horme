@@ -3,7 +3,7 @@ import { AiProvider, StreamOptions } from "./AiProvider";
 import { createProvider } from "./createProvider";
 import { AiProvider as AiProviderId } from "../types";
 import { explainContextOverflow } from "../utils/contextOverflow";
-import { providerInfo } from "../views/settings/providers";
+import { providerInfo, providerModel } from "./registry";
 export class AiGateway {
   private plugin: HormePlugin;
 
@@ -26,18 +26,43 @@ export class AiGateway {
     return createProvider(this.plugin, this.plugin.settings.aiProvider);
   }
 
+  /** The current model's context window in tokens, when its provider knows it. */
+  async contextWindow(model: string): Promise<number | null> {
+    try {
+      return (await this.getProvider().contextWindow?.(model)) ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** The characters the skills add to a chat request (tool list and skill rules), as stream() builds it. */
+  skillsChars(suppressVaultSkill: boolean, question: string): number {
+    const nativeEligible =
+      this.plugin.settings.nativeToolCalling &&
+      providerInfo(this.plugin.settings.aiProvider).nativeTools === true;
+    const tools = nativeEligible
+      ? this.plugin.skillManager.getNativeTools(suppressVaultSkill, undefined, question)
+      : [];
+    const rules = this.plugin.skillManager.getSkillInstructions(suppressVaultSkill, undefined, {
+      native: tools.length > 0,
+      question,
+    });
+    return JSON.stringify(tools).length + rules.length;
+  }
+
   private getSystemPromptWithSkills(
     baseSystem: string,
     suppressVaultSkill = false,
     suppressAllSkills = false,
     targetSkillId?: string,
     native = false,
+    question?: string,
   ): string {
     if (suppressAllSkills) return baseSystem;
     const skillInstructions = this.plugin.skillManager.getSkillInstructions(
       suppressVaultSkill,
       targetSkillId,
-      { native },
+      { native, question },
     );
     return `${baseSystem}\n\n${skillInstructions}`;
   }
@@ -83,6 +108,8 @@ export class AiGateway {
     suppressVaultSkill = false,
     suppressAllSkills = false,
     options?: StreamOptions,
+    /** The user's message: skills with a `whenAsked` rule are offered only when it asks for them. */
+    question?: string,
   ): Promise<ReadableStreamDefaultReader<Uint8Array>> {
     const provider = this.getProvider();
     const model = modelOverride || this.getCurrentModel();
@@ -93,8 +120,10 @@ export class AiGateway {
     const nativeEligible =
       !suppressAllSkills &&
       this.plugin.settings.nativeToolCalling &&
-      (providerId === "lmstudio" || providerId === "ollama" || providerId === "llamacpp");
-    const tools = nativeEligible ? this.plugin.skillManager.getNativeTools(suppressVaultSkill) : [];
+      providerInfo(providerId).nativeTools === true;
+    const tools = nativeEligible
+      ? this.plugin.skillManager.getNativeTools(suppressVaultSkill, undefined, question)
+      : [];
     const useNative = tools.length > 0;
 
     // Inject skills into the first system message or add a new one
@@ -110,6 +139,7 @@ export class AiGateway {
             suppressAllSkills,
             undefined,
             native,
+            question,
           ),
         };
       } else {
@@ -121,6 +151,7 @@ export class AiGateway {
             suppressAllSkills,
             undefined,
             native,
+            question,
           ),
         });
       }
@@ -162,18 +193,7 @@ export class AiGateway {
   }
 
   public getCurrentModel(): string {
-    const p = this.plugin.settings.aiProvider;
-    const settings = this.plugin.settings;
-    if (p === "claude") return settings.claudeModel;
-    if (p === "gemini") return settings.geminiModel;
-    if (p === "openai") return settings.openaiModel;
-    if (p === "groq") return settings.groqModel;
-    if (p === "openrouter") return settings.openRouterModel;
-    if (p === "mistral") return settings.mistralModel;
-    if (p === "lmstudio") return settings.lmStudioModel;
-    if (p === "llamacpp") return settings.llamaCppModel;
-    if (p === "custom") return settings.customModel;
-    return settings.defaultModel;
+    return providerModel(this.plugin.settings, this.plugin.settings.aiProvider);
   }
 
   /**

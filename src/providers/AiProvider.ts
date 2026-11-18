@@ -17,4 +17,9 @@ export interface AiProvider {
     tools?: NativeTool[],
     options?: StreamOptions,
   ): Promise<ReadableStreamDefaultReader<Uint8Array>>;
+  /**
+   * The model's context window in tokens, when the provider knows it, so a
+   * chat can be fitted into it. Null or absent: nothing is cut.
+   */
+  contextWindow?(model: string): Promise<number | null>;
 }

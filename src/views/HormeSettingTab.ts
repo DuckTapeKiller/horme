@@ -17,16 +17,14 @@ import { FileOrFolderSuggest } from "../utils/Suggest";
 import { GenericConfirmModal } from "../modals/GenericConfirmModal";
 import { CustomSkillModal } from "../modals/CustomSkillModal";
 import { modelField } from "./settings/modelField";
+import { embeddingOptions, embeddingProvider, providerOptions } from "./settings/providers";
 import {
   PROVIDERS,
-  embeddingOptions,
-  embeddingProvider,
   isLocalProvider,
   providerInfo,
   providerModel,
-  providerOptions,
   type ProviderInfo,
-} from "./settings/providers";
+} from "../providers/registry";
 import type { SettingKey, SettingsHost } from "./settings/types";
 import {
   compatBaseUrl,
@@ -36,9 +34,11 @@ import {
   keepsNotesPrivate,
 } from "../utils/providerAccess";
 import { isPublicHttpUrl } from "../utils/urlSafety";
+import { APPLE_REQUIREMENTS, APPLE_TERMS_COMMAND } from "../services/AppleModelServer";
 import {
   ConnectionChecker,
   ISSUES_URL,
+  commandNoteItem,
   refreshLiveText,
   activityLogItem,
   connectionItem,
@@ -435,6 +435,25 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
           ),
       }),
     );
+    if (p.id === "apple") {
+      items.push(
+        commandNoteItem(
+          `${APPLE_REQUIREMENTS} Before first use, accept Apple's terms for its model tool once: open Terminal and run`,
+          APPLE_TERMS_COMMAND,
+          "It asks for your Mac password. Horme then starts Apple's model by itself.",
+        ),
+        noteItem(
+          () => this.plugin.appleServer.problem,
+          "warning",
+          () => this.plugin.appleServer.problem !== "",
+          "apple-problem",
+        ),
+        noteItem(
+          "Models: system runs on this Mac, so your notes stay here. pcc is Apple's larger model on Private Cloud Compute (it needs an iCloud account): Horme treats it as a cloud provider and asks before sending notes. Apple's model reads about 8,000 tokens at a time, so with Vault Brain a long chat may not fit.",
+          "info",
+        ),
+      );
+    }
     if (p.id === "ollama") {
       items.push(
         noteItem(
@@ -442,6 +461,7 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
             `${this.s.defaultModel.trim()} is one of Ollama's cloud models: Ollama runs it on its own servers, not on this computer, so Horme treats it as a cloud provider and asks before sending your notes.`,
           "warning",
           () => isOllamaCloudModel(this.s.defaultModel),
+          "ollama-cloud-model",
         ),
       );
     }
@@ -461,6 +481,7 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
             `${String(this.s[urlKey]).trim()} is on the internet. Horme treats ${p.name} as yours and sends it your notes without asking: use it only if you run that server.`,
           "warning",
           () => keepsNotesPrivate(this.s, p.id) && isPublicHttpUrl(String(this.s[urlKey]).trim()),
+          "provider-internet-address",
         ),
       );
     }
@@ -675,12 +696,14 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
         () => this.plugin.embeddingBlock() ?? "",
         "warning",
         () => this.plugin.embeddingBlock() !== null,
+        "embedding-blocked",
       ),
       noteItem(
         () =>
           `${embeddingAddress(this.s)} is on the internet: indexing sends the full text of your notes there. Use it only if you run that server.`,
         "warning",
         () => this.plugin.embeddingBlock() === null && isPublicHttpUrl(embeddingAddress(this.s)),
+        "embedding-internet-address",
       ),
       noteItem(
         "Uses the server address and API key set for LM Studio in Models.",
@@ -698,7 +721,7 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
         () => ep() === "custom",
       ),
       modelField(this, {
-        name: "Embedding model",
+        name: "Embedding model (OpenAI-compatible server)",
         desc: 'Leave empty to use the first model whose name says "embed". Rebuild the index after changing it.',
         key: "customEmbeddingModel",
         listId: "horme-custom-embedding-models",
@@ -708,7 +731,7 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
         visible: () => ep() === "custom",
       }),
       modelField(this, {
-        name: "Embedding model",
+        name: "Embedding model (Ollama)",
         desc: "An embedding model in Ollama, such as nomic-embed-text. Rebuild the index after changing it.",
         key: "ragEmbeddingModel",
         listId: "horme-embed-models",
@@ -718,7 +741,7 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
         visible: () => ep() === "ollama",
       }),
       modelField(this, {
-        name: "Embedding model",
+        name: "Embedding model (LM Studio)",
         desc: "Leave empty to use the first embedding model LM Studio has loaded. Rebuild the index after changing it.",
         key: "lmStudioEmbeddingModel",
         listId: "horme-lmstudio-embedding-models",
@@ -748,7 +771,7 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
         control: { type: "secret", key: "llamaCppEmbeddingSecretId" },
       },
       modelField(this, {
-        name: "Embedding model",
+        name: "Embedding model (llama.cpp)",
         desc: "Leave empty to use the model the embedding server has loaded. Rebuild the index after changing it.",
         key: "llamaCppEmbeddingModel",
         listId: "horme-llamacpp-embedding-models",
@@ -1574,7 +1597,11 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
             {
               name: "Mobile provider",
               visible: on,
-              control: { type: "dropdown", key: "mobileProvider", options: providerOptions() },
+              control: {
+                type: "dropdown",
+                key: "mobileProvider",
+                options: providerOptions(true, undefined, true),
+              },
             },
             modelField(this, {
               name: "Mobile model",

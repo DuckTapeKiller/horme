@@ -144,7 +144,7 @@ export class VaultQuerySkill implements Skill {
       `Today is ${isoDay(Date.now())}. To use this skill, output exactly: <call:vault_query>{"action": "find", "topic": "stamps"}</call>. ` +
       `More examples: {"action": "find", "folder": "Recipes"}; {"action": "find", "tag": "coins", "modified_after": "2026-11-01"}; ` +
       `{"action": "find", "text": "Stanley Gibbons"}; {"action": "read", "note": "Inverted Jenny"}; {"action": "overview"}. ` +
-      `Give the counts it returns exactly, say how the notes were matched, and link notes as [[Note name]].`
+      `Give the counts it returns exactly, say how the notes were matched, and link each note by its name in double square brackets.`
     );
   }
 
@@ -355,8 +355,8 @@ export class VaultQuerySkill implements Skill {
     }
     lines.push(
       topic
-        ? "Give these counts exactly and say how the notes were matched (title, folder, tag or property). Link notes as [[Note name]]."
-        : "Give these counts exactly. Link notes as [[Note name]].",
+        ? "Give these counts exactly and say how the notes were matched (title, folder, tag or property). Link each note by its name in double square brackets."
+        : "Give these counts exactly. Link each note by its name in double square brackets.",
     );
     return lines.join("\n");
   }

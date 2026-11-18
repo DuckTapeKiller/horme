@@ -75,9 +75,19 @@ function nodeHttpStream(
     // rather than with the socket's own "aborted" error.
     let response: MinimalIncomingMessage | null = null;
     let controllerRef: ReadableStreamDefaultController<Uint8Array> | null = null;
+    const payload = JSON.stringify(body);
     const req = httpModule.request(
       url,
-      { method: "POST", headers: { "Content-Type": "application/json", ...headers } },
+      {
+        method: "POST",
+        // The length up front: Node otherwise sends the body in chunks, which
+        // Apple's fm server refuses ("Invalid JSON"); every server accepts this.
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": String(new TextEncoder().encode(payload).length),
+          ...headers,
+        },
+      },
       (res) => {
         response = res;
         const status = res.statusCode ?? 0;
@@ -141,7 +151,7 @@ function nodeHttpStream(
         { once: true },
       );
     }
-    req.write(JSON.stringify(body));
+    req.write(payload);
     req.end();
   });
 }

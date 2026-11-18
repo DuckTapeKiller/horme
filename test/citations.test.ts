@@ -4,6 +4,8 @@ import {
   linkCitations,
   mergePills,
   parseResearchSources,
+  dropDanglingCitations,
+  pillsForAnswer,
   pillsFromSkillResult,
   sourceLabel,
 } from "../src/utils/citations";
@@ -26,6 +28,15 @@ void test("the sources list of a research result is read by number", () => {
   assert.equal(map.size, 3);
   assert.equal(map.get(2)?.title, "Catholic Church and the Age of Discovery");
   assert.equal(map.get(4)?.url, "https://example.org/a(b)");
+});
+
+void test("a source whose title ran over several lines is still read", () => {
+  const map = parseResearchSources(
+    "## Sources\n\n[1] Scriptorium — https://en.wikipedia.org/wiki/Scriptorium\n[2] The Medieval\n      Scriptorium | Smarthistory\n   — https://smarthistory.org/scriptorium/\n[3] Book — https://example.org/b\n",
+  );
+  assert.equal(map.size, 3);
+  assert.equal(map.get(2)?.title, "The Medieval Scriptorium | Smarthistory");
+  assert.equal(map.get(2)?.url, "https://smarthistory.org/scriptorium/");
 });
 
 void test("citations become links, with no source list added to the answer", () => {
@@ -100,7 +111,7 @@ void test("other results give unnamed or link-text pills, and numbered pills lea
   assert.deepEqual(
     ddg.map((p) => [p.n, p.label]),
     [
-      [undefined, "Britannica: Abelard - Britannica"],
+      [undefined, "Britannica: Abelard"],
       [undefined, "Wikipedia: Heloise"],
     ],
   );
@@ -126,4 +137,65 @@ void test("links inside Markdown emphasis or with brackets in the address come o
     ["https://en.wikipedia.org/wiki/Mercury_(planet)", "https://example.com/page"],
   );
   assert.equal(pills[0].label, "Wikipedia: Mercury (planet)");
+});
+
+void test("a run of citations [1][4][5] links every one, not only the last", () => {
+  const sources = new Map([
+    [1, { n: 1, url: "https://a.example/one", title: "One" }],
+    [4, { n: 4, url: "https://b.example/four", title: "Four" }],
+    [5, { n: 5, url: "https://c.example/five", title: "Five" }],
+  ]);
+  const out = linkCitations("Lenses are cleaned daily [1][4][5]. Fuel too [1].", sources);
+  assert.strictEqual(
+    out,
+    "Lenses are cleaned daily [\\[1\\]](https://a.example/one)[\\[4\\]](https://b.example/four)[\\[5\\]](https://c.example/five). Fuel too [\\[1\\]](https://a.example/one).",
+  );
+  // A Markdown reference link stays as it is.
+  assert.strictEqual(linkCitations("See [the guide][1].", sources), "See [the guide][1].");
+});
+
+void test("a Britannica page title is cut to the article's name", () => {
+  assert.equal(
+    sourceLabel(
+      "https://www.britannica.com/art/scriptorium",
+      "Scriptorium | Monastic, Illuminated Manuscripts, Medieval | Britannica",
+    ),
+    "Britannica: Scriptorium",
+  );
+});
+
+void test("only the research sources an answer cites are listed under it", () => {
+  const pills = [
+    { url: "https://en.wikipedia.org/wiki/Scribe", n: 1, label: "Wikipedia: Scribe" },
+    { url: "https://en.wikipedia.org/wiki/Scriptorium", n: 2, label: "Wikipedia: Scriptorium" },
+    { url: "https://en.wikipedia.org/wiki/Chelles_Abbey", n: 3, label: "Wikipedia: Chelles Abbey" },
+    { url: "https://obsidian.md/changelog/", label: "obsidian.md: Obsidian Changelog" },
+  ];
+  const cited = pillsForAnswer(pills, "A writing room [\\[2\\]](https://x) where scribes worked [1, 2].");
+  assert.deepEqual(
+    cited.map((p) => p.n ?? p.label),
+    [1, 2, "obsidian.md: Obsidian Changelog"],
+  );
+  const uncited = pillsForAnswer(pills, "A scriptorium was a writing room in a monastery.");
+  assert.deepEqual(
+    uncited.map((p) => p.n ?? p.label),
+    [2, "obsidian.md: Obsidian Changelog"],
+  );
+});
+
+void test("citations that cite no known source are removed, the others kept", () => {
+  const known = new Set([1]);
+  assert.equal(
+    dropDanglingCitations("Collects errors [1]. Appears in pageants [2]. Both [1, 2].", known),
+    "Collects errors [1]. Appears in pageants. Both [1].",
+  );
+  assert.equal(dropDanglingCitations("No sources at all [1].", new Set()), "No sources at all.");
+  assert.equal(
+    dropDanglingCitations("`arr[2]` and [link](x) and [[Note]] stay", new Set()),
+    "`arr[2]` and [link](x) and [[Note]] stay",
+  );
+  assert.equal(
+    dropDanglingCitations("Already linked [\\[3\\]](https://x).", new Set()),
+    "Already linked [\\[3\\]](https://x).",
+  );
 });

@@ -3,7 +3,7 @@ import type HormePlugin from "../../../main";
 import { GenericConfirmModal } from "../../modals/GenericConfirmModal";
 import { markDestructive } from "../../utils/destructiveButton";
 import type { IndexHealth } from "../../services/DiagnosticService";
-import { providerInfo, providerModel } from "./providers";
+import { providerInfo, providerModel } from "../../providers/registry";
 import { keepsNotesPrivate } from "../../utils/providerAccess";
 import type { SettingsHost } from "./types";
 
@@ -74,6 +74,11 @@ export function connectionLabel(plugin: HormePlugin, state: ConnectionState): st
   if (state === "ok") return `Connected to ${p.name}.`;
   if (state === "fail") {
     if (p.keyRequired && !plugin.getApiKeyForProvider(p.id)) return `No API key for ${p.name} yet.`;
+    if (p.id === "apple")
+      return (
+        plugin.appleServer.problem ||
+        "Apple Intelligence did not answer. Check that it is turned on in System Settings."
+      );
     if (!p.urlKey) return `${p.name} did not accept the API key.`;
     const address = String(s[p.urlKey]).trim();
     if (!address) return `No server address for ${p.name} yet.`;
@@ -101,14 +106,41 @@ export function refreshLiveText(): void {
   liveText.forEach((paint) => paint());
 }
 
+/**
+ * An information note that contains a command to run in Terminal, shown as
+ * code with a Copy button so it is seen and copied exactly.
+ */
+export function commandNoteItem(before: string, command: string, after: string): SettingDefinitionRender {
+  return {
+    name: `Note: ${command}`,
+    searchable: false,
+    render: (setting: Setting) => {
+      setting.settingEl.empty();
+      setting.settingEl.addClass("horme-note-row", "is-info");
+      setIcon(setting.settingEl.createSpan({ cls: "horme-note-icon" }), "info");
+      const text = setting.settingEl.createSpan({ cls: "horme-note-text" });
+      text.appendText(before);
+      const line = text.createDiv({ cls: "horme-note-command" });
+      line.createEl("code", { text: command });
+      const copy = line.createEl("button", { text: "Copy" });
+      copy.addEventListener("click", () => {
+        void navigator.clipboard.writeText(command).then(() => copy.setText("Copied"));
+      });
+      text.appendText(after);
+    },
+  };
+}
+
 export function noteItem(
   text: string | (() => string),
   kind: "info" | "warning" = "info",
   visible?: () => boolean,
+  /** The note's name for Obsidian, unique on its page; needed when the text is worked out. */
+  key?: string,
 ): SettingDefinitionRender {
   const read = () => (typeof text === "function" ? text() : text);
   return {
-    name: typeof text === "string" ? text : "Note",
+    name: key ?? (typeof text === "string" ? text : "Note"),
     searchable: false,
     visible,
     render: (setting: Setting) => {
@@ -526,7 +558,7 @@ export function tagTranslationTestItem(host: SettingsHost, visible: () => boolea
             cls: "horme-tag-test-loading",
           });
           try {
-            const rows = await plugin.vaultIndexer.testTagTranslation();
+            const rows = await plugin.tagTranslator.testTagTranslation();
             loading.remove();
             if (rows.length === 0) {
               results.createEl("p", {

@@ -37,7 +37,7 @@ export class VaultLinkSkill implements Skill {
         return "Vault search is not available with the current provider configuration.";
       }
 
-      const results = await this.plugin.vaultIndexer.search(context, 5);
+      const results = await this.plugin.vaultSearch.search(context, 5);
       if (results.length === 0) {
         return "No strongly related notes found in the vault.";
       }

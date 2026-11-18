@@ -88,7 +88,7 @@ export class HormeConnectionsView extends ItemView {
     loadingEl.createEl("p", { text: "Finding connections..." });
 
     try {
-      const connections = this.plugin.vaultIndexer.getConnections(filePath);
+      const connections = this.plugin.vaultSearch.getConnections(filePath);
 
       this.connectionsListEl.empty();
 

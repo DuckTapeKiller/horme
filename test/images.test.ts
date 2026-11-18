@@ -14,6 +14,7 @@ import {
   extensionForType,
   withoutImageData,
   withoutTracking,
+  readableImageTitle,
 } from "../src/utils/images";
 import { pillsFromSkillResult, sourceLabel } from "../src/utils/citations";
 
@@ -275,5 +276,26 @@ void test("saved conversations show the pictures as Markdown with their credit",
   assert.equal(
     imagesToMarkdown(sample),
     "![Coliseo — «Roma» --> 2020](https://thumb.wikimedia.org/wikipedia/commons/thumb/d/de/C.jpg/960px-C.jpg)\n*José Pérez · CC BY-SA 4.0*",
+  );
+});
+
+void test("a camera-style file name becomes a readable caption", () => {
+  assert.equal(
+    readableImageTitle("Aerial photograph 60D 2012 05 13 8760 DxO retusche", ""),
+    "Aerial photograph",
+  );
+  assert.equal(
+    readableImageTitle(
+      "Aerial photograph 60D 2012 05 13 8760 DxO retusche",
+      "Aerial view of the Colosseum in Rome, seen from the north-east. Taken from a light aircraft.",
+    ),
+    "Aerial view of the Colosseum in Rome, seen from the north-east",
+  );
+  assert.equal(readableImageTitle("IMG_20190612_143355", ""), "IMG_20190612_143355".replace(/_/g, " "));
+  assert.equal(readableImageTitle("Eiffel Tower 1889", ""), "Eiffel Tower 1889");
+  assert.equal(readableImageTitle("Boeing 747-400 at Heathrow", ""), "Boeing 747-400 at Heathrow");
+  assert.equal(
+    readableImageTitle("Mona Lisa, by Leonardo da Vinci", "Portrait."),
+    "Mona Lisa, by Leonardo da Vinci",
   );
 });

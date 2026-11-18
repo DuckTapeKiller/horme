@@ -2,8 +2,8 @@ import { RequestUrlResponse } from "obsidian";
 import { requestUrlWithTimeout } from "./requestWithTimeout";
 import { isPublicHttpUrl } from "./urlSafety";
 import { asArray, getRecordProp, getStringProp } from "./TypeGuards";
-import { decodeDuckDuckGoLink } from "./passages";
-export { decodeDuckDuckGoLink, splitPassages, mapLimit } from "./passages";
+import { decodeDuckDuckGoLink, isSearchChallenge } from "./passages";
+export { decodeDuckDuckGoLink, isSearchChallenge, splitPassages, mapLimit } from "./passages";
 
 /**
  * Web lookups that work without an API key: DuckDuckGo's HTML results page,
@@ -40,18 +40,58 @@ function wikiHost(lang: string): string {
   return `https://${code}.wikipedia.org`;
 }
 
+/** A web search's hits, and whether DuckDuckGo turned the search away. */
+export interface WebSearch {
+  hits: WebHit[];
+  blocked: boolean;
+}
+
+/** Searches spaced this far apart; a burst is what DuckDuckGo turns away. */
+const SEARCH_GAP_MS = 1500;
+/** After a human check, no searches for this long: each new one extends the block. */
+const CHALLENGE_PAUSE_MS = 3 * 60_000;
+let nextSearchAt = 0;
+let pausedUntil = 0;
+
+/** Waits for this search's turn; concurrent callers queue one gap apart. */
+async function searchTurn(): Promise<void> {
+  const now = Date.now();
+  const at = Math.max(now, nextSearchAt);
+  nextSearchAt = at + SEARCH_GAP_MS;
+  if (at > now) await new Promise((resolve) => window.setTimeout(resolve, at - now));
+}
+
 /**
  * Web search through DuckDuckGo's HTML page (no key), falling back to its lite
- * page, which answers when the first is briefly rate-limited. Empty when both
- * are blocked or find nothing.
+ * page. `blocked` is true when every page answered with a human check, so the
+ * caller can say web search is unavailable instead of "nothing found".
  */
-export async function searchWeb(query: string, max = 8): Promise<WebHit[]> {
+export async function webSearch(query: string, max = 8): Promise<WebSearch> {
+  if (Date.now() < pausedUntil) return { hits: [], blocked: true };
   const q = encodeURIComponent(query);
-  const html = await get(`https://html.duckduckgo.com/html/?q=${q}`).catch(() => null);
-  const hits = html && html.status === 200 ? parseDuckDuckGo(html.text, "html", max) : [];
-  if (hits.length) return hits;
-  const lite = await get(`https://lite.duckduckgo.com/lite/?q=${q}`).catch(() => null);
-  return lite && lite.status === 200 ? parseDuckDuckGo(lite.text, "lite", max) : [];
+  let challenged = false;
+  let answered = false;
+  for (const kind of ["html", "lite"] as const) {
+    await searchTurn();
+    const res = await get(`https://${kind}.duckduckgo.com/${kind}/?q=${q}`).catch(() => null);
+    if (!res) continue;
+    if (isSearchChallenge(res.status, res.text)) {
+      challenged = true;
+      continue;
+    }
+    if (res.status !== 200) continue;
+    answered = true;
+    const hits = parseDuckDuckGo(res.text, kind, max);
+    if (hits.length) return { hits, blocked: false };
+  }
+  const blocked = challenged && !answered;
+  if (blocked) pausedUntil = Date.now() + CHALLENGE_PAUSE_MS;
+  return { hits: [], blocked };
+}
+
+/** Web search hits only; empty when DuckDuckGo found nothing or turned the search away. */
+export async function searchWeb(query: string, max = 8): Promise<WebHit[]> {
+  return (await webSearch(query, max)).hits;
 }
 
 function parseDuckDuckGo(body: string, kind: "html" | "lite", max: number): WebHit[] {

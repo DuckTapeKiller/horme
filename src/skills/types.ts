@@ -15,6 +15,13 @@ export interface Skill {
   instructions: string;
   terminal?: boolean;
   primaryParam?: string;
+  /**
+   * Offered to the model only when the user's message matches: a skill that
+   * changes the vault must never run on a model's guess. (qwen 3.5 2B took
+   * "researches a term and creates a note" for a lookup and wrote notes nobody
+   * asked for.) Picking the skill from the menu always offers it.
+   */
+  whenAsked?: RegExp;
   execute(params: unknown): Promise<string>;
 }
 

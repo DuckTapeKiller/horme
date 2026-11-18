@@ -10,7 +10,8 @@ export type AiProvider =
   | "groq"
   | "openrouter"
   | "mistral"
-  | "custom";
+  | "custom"
+  | "apple";
 
 export interface CustomSkillDefinition {
   id: string; // generated slug: "custom_" + sanitized name
@@ -22,6 +23,16 @@ export interface CustomSkillDefinition {
   body: string; // POST body template — use {{query}} as placeholder
   responsePath: string; // dot-path to extract from JSON response (e.g. "results[0].text")
 }
+
+/** Settings keys whose values are strings. */
+export type StringKey = {
+  [K in keyof HormeSettings]: HormeSettings[K] extends string ? K : never;
+}[keyof HormeSettings];
+
+/** Settings keys whose values are true or false. */
+export type BooleanKey = {
+  [K in keyof HormeSettings]: HormeSettings[K] extends boolean ? K : never;
+}[keyof HormeSettings];
 
 export interface HormeSettings {
   aiProvider: AiProvider;
@@ -94,6 +105,8 @@ export interface HormeSettings {
    * address is a new server, which counts as cloud until confirmed again.
    */
   customTrustedUrl: string;
+  /** Apple Intelligence: "system" (on this Mac) or "pcc" (Apple's Private Cloud Compute). */
+  appleModel: string;
   systemPromptPath: string;
   presetsPaths: string[];
   temperature: number;

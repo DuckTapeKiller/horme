@@ -165,3 +165,9 @@ void test("notesDestination: a new address or Ollama model is a new destination"
   assert.strictEqual(notesDestination(s, "ollama"), "ollama:qwen3.5:2b");
   assert.strictEqual(notesDestination(s, "gemini"), "gemini");
 });
+
+void test("Apple Intelligence keeps notes on this Mac, except its Private Cloud Compute model", () => {
+  assert.strictEqual(keepsNotesPrivate({ ...notMine, appleModel: "system" }, "apple"), true);
+  assert.strictEqual(keepsNotesPrivate({ ...notMine, appleModel: "pcc" }, "apple"), false);
+  assert.strictEqual(notesDestination({ customUrl: "", appleModel: "pcc" }, "apple"), "apple:pcc");
+});
