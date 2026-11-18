@@ -4,7 +4,8 @@ import { CONNECTIONS_VIEW_TYPE } from "../constants";
 
 export class HormeConnectionsView extends ItemView {
   plugin: HormePlugin;
-  private connectionsListEl: HTMLElement;
+  // Built in onOpen(), before anything reads it.
+  private connectionsListEl!: HTMLElement;
   private activeFilePath: string | null = null;
   private isPaused = false;
   private debounceTimer: number | null = null;
@@ -26,7 +27,7 @@ export class HormeConnectionsView extends ItemView {
     return "cable";
   }
 
-  async onOpen() {
+  onOpen(): Promise<void> {
     this.contentEl.empty();
     this.contentEl.addClass("horme-connections-view");
 
@@ -41,7 +42,7 @@ export class HormeConnectionsView extends ItemView {
       // On resume, show the note opened last, even if it was opened while paused.
       const latest = this.latestRequestedPath ?? this.activeFilePath;
       if (!this.isPaused && latest) {
-        void this.updateConnections(latest, true);
+        this.updateConnections(latest, true);
       }
     };
 
@@ -49,10 +50,12 @@ export class HormeConnectionsView extends ItemView {
 
     // Initial render
     this.renderEmptyState();
+    return Promise.resolve();
   }
 
-  async onClose() {
+  onClose(): Promise<void> {
     this.contentEl.empty();
+    return Promise.resolve();
   }
 
   private renderEmptyState() {
@@ -64,7 +67,7 @@ export class HormeConnectionsView extends ItemView {
   /** The last note asked for, kept while paused so Resume can catch up. */
   private latestRequestedPath: string | null = null;
 
-  public async updateConnections(filePath: string, force = false) {
+  public updateConnections(filePath: string, force = false): void {
     this.latestRequestedPath = filePath;
     if (this.isPaused) return;
     if (!force && filePath === this.activeFilePath) return;
@@ -74,18 +77,18 @@ export class HormeConnectionsView extends ItemView {
     if (this.debounceTimer !== null) window.clearTimeout(this.debounceTimer);
     this.debounceTimer = window.setTimeout(() => {
       this.debounceTimer = null;
-      void this._doUpdateConnections(filePath);
+      this._doUpdateConnections(filePath);
     }, 400);
   }
 
-  private async _doUpdateConnections(filePath: string) {
+  private _doUpdateConnections(filePath: string): void {
     this.connectionsListEl.empty();
 
     const loadingEl = this.connectionsListEl.createDiv({ cls: "horme-connections-loading" });
     loadingEl.createEl("p", { text: "Finding connections..." });
 
     try {
-      const connections = await this.plugin.vaultIndexer.getConnections(filePath);
+      const connections = this.plugin.vaultIndexer.getConnections(filePath);
 
       this.connectionsListEl.empty();
 

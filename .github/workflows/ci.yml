@@ -14,9 +14,9 @@ jobs:
       - name: Use Node.js
         uses: actions/setup-node@v4
         with:
-          # Node 20+ required: eslint-plugin-obsidianmd uses import.meta.dirname,
-          # which is undefined on Node 18 and crashes the lint step.
-          node-version: "20"
+          # Node 24 (LTS): stylelint 18 needs 22.22 or newer, and
+          # eslint-plugin-obsidianmd needs import.meta.dirname (Node 20+).
+          node-version: "24"
           cache: "npm"
 
       - name: Install dependencies
@@ -28,6 +28,11 @@ jobs:
       # Obsidian's official plugin lint (eslint-plugin-obsidianmd). Fails on any warning.
       - name: Lint
         run: npx eslint . --max-warnings=0
+
+      # The review bot checks styles.css against the oldest Chromium Obsidian
+      # supports (Chrome 114): no :has, no partly supported features.
+      - name: Lint styles
+        run: npx stylelint styles.css --max-warnings=0
 
       - name: Type check
         run: npx tsc --noEmit

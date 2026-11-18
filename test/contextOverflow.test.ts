@@ -60,3 +60,33 @@ void test("ollamaNumCtx: 0 (or nonsense) leaves the window to Ollama", () => {
   assert.strictEqual(ollamaNumCtx(-5, 262144), null);
   assert.strictEqual(ollamaNumCtx(Number.NaN, 262144), null);
 });
+
+void test("ollamaNumCtx: never less than the window the model is already loaded with", () => {
+  // Another app (or OLLAMA_CONTEXT_LENGTH) loaded it larger: keep that, no reload.
+  assert.strictEqual(ollamaNumCtx(16384, 262144, 32768), 32768);
+  // Loaded at Ollama's 4,096 default: raise it to the setting.
+  assert.strictEqual(ollamaNumCtx(16384, 262144, 4096), 16384);
+  // Not loaded, or unknown: the setting.
+  assert.strictEqual(ollamaNumCtx(16384, 262144, null), 16384);
+  // Still capped at what the model takes.
+  assert.strictEqual(ollamaNumCtx(16384, 8192, 4096), 8192);
+  // 0 still leaves it to Ollama, whatever is loaded.
+  assert.strictEqual(ollamaNumCtx(0, 262144, 32768), null);
+});
+
+void test("OpenAI-style refusals (vLLM, LiteLLM) are explained too", () => {
+  const vllm =
+    'Server error (400): {"object":"error","message":"This model\'s maximum context length is 8192 tokens. However, you requested 10240 tokens (2048 in the messages, 8192 in the completion). Please reduce the length of the messages or completion."}';
+  const out = explainContextOverflow(vllm, "custom", "OpenAI-compatible server") ?? "";
+  assert.match(out, /10,240 tokens/);
+  assert.match(out, /8,192 tokens\)/);
+  // The reply room alone fills the window: say so, and name the setting.
+  assert.match(out, /8,192 of those tokens are the room kept for the reply/);
+  assert.match(out, /Longest reply/);
+  const openai =
+    "OpenAI error: This model's maximum context length is 128000 tokens. However, your messages resulted in 130500 tokens. Please reduce the length of the messages.";
+  const o = explainContextOverflow(openai, "openai", "OpenAI") ?? "";
+  assert.match(o, /130,500 tokens/);
+  assert.match(o, /128,000 tokens/);
+  assert.doesNotMatch(o, /room kept for the reply/);
+});

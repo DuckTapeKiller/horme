@@ -45,3 +45,29 @@ export function isPublicHttpUrl(raw: string): boolean {
   }
   return true;
 }
+
+/**
+ * True for an address that means "this device": localhost, 127.x, ::1. On a
+ * phone or tablet that is the phone itself, never the computer running the
+ * server.
+ */
+export function isLoopbackUrl(raw: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(raw.trim());
+  } catch {
+    return false;
+  }
+  const host = url.hostname
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "")
+    .replace(/\.+$/, "");
+  return (
+    host === "localhost" ||
+    host.endsWith(".localhost") ||
+    /^127\./.test(host) ||
+    host === "::1" ||
+    host === "0.0.0.0" ||
+    host === "::"
+  );
+}

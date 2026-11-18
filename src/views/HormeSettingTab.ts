@@ -19,7 +19,6 @@ import { CustomSkillModal } from "../modals/CustomSkillModal";
 import { modelField } from "./settings/modelField";
 import {
   PROVIDERS,
-  embeddingAddress,
   embeddingOptions,
   embeddingProvider,
   isLocalProvider,
@@ -29,11 +28,18 @@ import {
   type ProviderInfo,
 } from "./settings/providers";
 import type { SettingKey, SettingsHost } from "./settings/types";
-import { keepsNotesPrivate } from "../utils/providerAccess";
+import {
+  compatBaseUrl,
+  customServerIsMine,
+  embeddingAddress,
+  isOllamaCloudModel,
+  keepsNotesPrivate,
+} from "../utils/providerAccess";
 import { isPublicHttpUrl } from "../utils/urlSafety";
 import {
   ConnectionChecker,
   ISSUES_URL,
+  refreshLiveText,
   activityLogItem,
   connectionItem,
   healthItem,
@@ -114,6 +120,8 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
   getControlValue(key: string): unknown {
     const s = this.plugin.settings;
     if (key === "vaultBrainEnabled") return s.vaultBrainEnabled && this.vaultBrainAllowed();
+    // Shown as on only while it still applies: to the address the user confirmed.
+    if (key === "customIsLocal") return customServerIsMine(s);
     return (s as unknown as Record<string, unknown>)[key];
   }
 
@@ -141,13 +149,21 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
     }
 
     // So does saying the OpenAI-compatible server is the user's own: from then
-    // on notes go to it without the cloud questions.
-    if (key === "customIsLocal" && value === true && !s.customIsLocal) {
+    // on notes go to it without the cloud questions. The yes is for this
+    // address only.
+    if (key === "customIsLocal" && value === true && !customServerIsMine(s)) {
+      const address = compatBaseUrl(s.customUrl);
+      if (!address) {
+        new Notice("Horme: add the server's address first.");
+        this.refresh(true, true);
+        return;
+      }
       new GenericConfirmModal(
         this.app,
-        "Treat this server as yours? Horme will send it passages from your notes, the open note and documents without asking, as it does llama.cpp. Cancel if it passes requests on to a cloud service.",
+        `Treat the server at ${address} as yours? Horme will send it passages from your notes, the open note and documents without asking, as it does llama.cpp. Cancel if it passes requests on to a cloud service. If you change the address, Horme asks again.`,
         () => {
           s.customIsLocal = true;
+          s.customTrustedUrl = address;
           this.saveSoon();
           this.refresh(true, true);
         },
@@ -166,34 +182,50 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
 
     // Keep dependent choices valid.
     let changedOthers = false;
-    const consentWithdrawn = key === "allowCloudRAG" || key === "customIsLocal";
-    if (consentWithdrawn && value === false && !s.allowCloudRAG && !keepsNotesPrivate(s, s.tagsProvider)) {
+    // The OpenAI-compatible server stops being the user's own when they say so,
+    // or when its address changes: a new address is a new server.
+    const addressChanged =
+      key === "customUrl" && value !== before && s.customIsLocal && !customServerIsMine(s);
+    const customTrustEnded =
+      (key === "customIsLocal" && value === false && before === true) || addressChanged;
+    if (customTrustEnded) {
+      s.customIsLocal = false;
+      s.customTrustedUrl = "";
+      // The cloud questions apply again.
+      s.contextCloudWarningShown = false;
+      s.contextNotesCloudWarningShown = false;
+      s.contextFoldersCloudWarningShown = false;
+      s.documentCloudWarningShown = false;
+      changedOthers = true;
+      if (addressChanged)
+        new Notice(
+          'Horme: "This server is mine" is now off, because the OpenAI-compatible server\'s address changed. Turn it on again if you run the server at the new address.',
+          10000,
+        );
+      // Embeddings from it stop; they never move to another server by themselves.
+      if (s.embeddingSource === "custom")
+        new Notice(
+          "Horme: Vault Brain is paused. Its embeddings come from the OpenAI-compatible server, which is no longer marked as yours.",
+          10000,
+        );
+    }
+    const consentWithdrawn = (key === "allowCloudRAG" && value === false) || customTrustEnded;
+    if (
+      consentWithdrawn &&
+      !s.allowCloudRAG &&
+      !keepsNotesPrivate(s, s.tagsProvider, s.tagsModel.trim() || undefined)
+    ) {
       s.tagsProvider = keepsNotesPrivate(s, s.aiProvider) ? s.aiProvider : "ollama";
       s.tagsModel = "";
       changedOthers = true;
     }
     if (
-      (key === "allowCloudTagTranslation" || key === "customIsLocal") &&
-      value === false &&
+      ((key === "allowCloudTagTranslation" && value === false) || customTrustEnded) &&
       !s.allowCloudTagTranslation &&
-      !keepsNotesPrivate(s, s.tagTranslationProvider)
+      !keepsNotesPrivate(s, s.tagTranslationProvider, s.tagTranslationModel.trim() || undefined)
     ) {
       s.tagTranslationProvider = s.tagTranslationFallbackProvider;
       changedOthers = true;
-    }
-    // The server is no longer the user's own: the cloud questions apply again,
-    // and embeddings from it stop (they never move to another server by themselves).
-    if (key === "customIsLocal" && value === false && before === true && s.embeddingSource === "custom") {
-      new Notice(
-        "Horme: Vault Brain is paused. Its embeddings come from the OpenAI-compatible server, which is no longer marked as yours.",
-        10000,
-      );
-    }
-    if (key === "customIsLocal" && value === false && before === true) {
-      s.contextCloudWarningShown = false;
-      s.contextNotesCloudWarningShown = false;
-      s.contextFoldersCloudWarningShown = false;
-      s.documentCloudWarningShown = false;
     }
     if (key === "tagsProvider" && value !== before && s.tagsModel) {
       s.tagsModel = "";
@@ -243,6 +275,10 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
    * control the user last touched would keep showing the old value.
    */
   refresh(structural: boolean, valuesChangedInCode = false): void {
+    // Text worked out from the settings (an address in a warning) and the
+    // connection state follow every change, not only structural ones.
+    refreshLiveText();
+    this.checker.ensure();
     if (this.fallbackMode || !requireApiVersion("1.13.0")) {
       // The old renderer redraws everything; only for changes that alter what is
       // shown, so moving between text fields never loses the next one.
@@ -399,6 +435,16 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
           ),
       }),
     );
+    if (p.id === "ollama") {
+      items.push(
+        noteItem(
+          () =>
+            `${this.s.defaultModel.trim()} is one of Ollama's cloud models: Ollama runs it on its own servers, not on this computer, so Horme treats it as a cloud provider and asks before sending your notes.`,
+          "warning",
+          () => isOllamaCloudModel(this.s.defaultModel),
+        ),
+      );
+    }
     if (p.privateKey) {
       items.push({
         name: "This server is mine",
@@ -626,15 +672,15 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
         control: { type: "dropdown", key: "embeddingSource", options: embeddingOptions(this.s) },
       },
       noteItem(
-        'Paused: the OpenAI-compatible server is not marked as yours, so no notes are sent to it. Turn on "This server is mine" on its page in Models, or choose another server here.',
+        () => this.plugin.embeddingBlock() ?? "",
         "warning",
-        () => !this.plugin.embeddingsAllowed(),
+        () => this.plugin.embeddingBlock() !== null,
       ),
       noteItem(
         () =>
           `${embeddingAddress(this.s)} is on the internet: indexing sends the full text of your notes there. Use it only if you run that server.`,
         "warning",
-        () => this.plugin.embeddingsAllowed() && isPublicHttpUrl(embeddingAddress(this.s)),
+        () => this.plugin.embeddingBlock() === null && isPublicHttpUrl(embeddingAddress(this.s)),
       ),
       noteItem(
         "Uses the server address and API key set for LM Studio in Models.",

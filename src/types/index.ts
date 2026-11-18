@@ -88,6 +88,12 @@ export interface HormeSettings {
   customEmbeddingModel: string;
   /** The user says the OpenAI-compatible server is theirs: notes may go to it as to a local provider. */
   customIsLocal: boolean;
+  /**
+   * The address the user confirmed as theirs with "This server is mine". The
+   * mark holds only while the server's address is still this one: a new
+   * address is a new server, which counts as cloud until confirmed again.
+   */
+  customTrustedUrl: string;
   systemPromptPath: string;
   presetsPaths: string[];
   temperature: number;

@@ -153,7 +153,8 @@ Vault Brain is Horme's index of your notes. It is built and searched on your com
 - **You choose what is indexed.** Include or leave out folders with patterns such as `Templates/**`. PDFs can be indexed through the [Text Extractor](https://github.com/scambier/obsidian-text-extractor) plugin.
 - **You choose the embedding server.** **Embeddings from**, under Vault Brain, picks the server that builds the index: llama.cpp, LM Studio, Ollama, or the OpenAI-compatible server once it is marked as yours. It stays the same whatever answers the chat, so a cloud chat never sends Vault Brain looking for a server you do not run.
 - **Never mixes models.** The index records which embedding set-up built it. If the set-up changes, the index is kept but not searched until you switch back or rebuild it.
-- **Forgets deleted notes.** A deleted or renamed note leaves the index at once, and notes deleted while Obsidian was closed leave it at the next start.
+- **Keeps up with the vault.** A deleted or renamed note leaves the index at once, and renamed notes and PDFs are indexed under their new name. At each start, notes added or changed while Obsidian was closed are indexed, and on a computer notes deleted meanwhile leave the index. A phone or tablet never removes anything at start-up: it may hold only part of the vault.
+- **Knows where it can reach its server.** On a phone or tablet, an embedding address such as `127.0.0.1` is the device itself, so Vault Brain neither indexes nor searches by meaning there (notes are found by their words) until the embedding server has a network address.
 
 ### Live connections
 
@@ -233,7 +234,8 @@ When you choose a cloud provider:
 
 - **Vault Brain pauses.** Passages from your notes are sent only if you turn on **Let cloud providers read notes**, which asks you to confirm.
 - **Vault Query follows the same rule.** A cloud provider can count, list or read your notes only when **Let cloud providers read notes** is on.
-- **You confirm each kind of content.** The current note, picked notes, folders and uploaded documents each ask once before they are sent. Switching to another cloud provider asks again.
+- **You confirm each kind of content.** The current note, picked notes, folders and uploaded documents each ask once before they are sent, and so do the **Tags** and **Summary** buttons, which send the whole note. Switching to another cloud provider, another address for the OpenAI-compatible server, or another Ollama cloud model asks again.
+- **Ollama's cloud models count as cloud.** A model whose name ends in `-cloud` or `:cloud` runs on Ollama's servers, not on your computer, so Horme asks before sending it notes, as for any cloud provider.
 - **Embeddings stay with you.** The index is built only by a server you run, chosen under Vault Brain; cloud services are never offered, because indexing sends the full text of every note. The OpenAI-compatible server is offered only once it is marked as yours, and Vault Brain pauses (sending nothing anywhere) if that mark is removed. An embedding or chat address on the internet, for a server Horme treats as yours, shows a warning.
 - **API keys stay out of the settings file.** They are kept in Obsidian's keychain.
 - **Web skills only visit public addresses.** They refuse local and private network addresses typed directly, such as `localhost` or `192.168.x.x`.
@@ -245,7 +247,7 @@ When you choose a cloud provider:
 | Provider       | Where it runs | Notes                                                                    |
 | -------------- | ------------- | ------------------------------------------------------------------------ |
 | **llama.cpp**  | Your computer | Recommended, and selected on a new install. Leave the model empty to use the one the server has loaded. |
-| **Ollama**     | Your computer | Picks an installed chat model if none is set. Asks Ollama for a 16,384-token context window (**Context window** on its page in Models; 0 leaves it to Ollama). |
+| **Ollama**     | Your computer | Picks an installed chat model if none is set. Asks Ollama for a 16,384-token context window (**Context window** on its page in Models; 0 leaves it to Ollama), or keeps the larger window a model is already loaded with. |
 | **LM Studio**  | Your computer | Uses LM Studio's local server.                                           |
 | **Claude**     | Cloud         | Needs an API key from Anthropic.                                         |
 | **Gemini**     | Cloud         | Needs an API key from Google.                                            |
@@ -259,7 +261,7 @@ With an API key set, the model field lists the provider's own models.
 
 **Keys for local servers.** llama.cpp, Ollama and LM Studio each take an optional API key on the Models page, for a server started with a key (`llama-server --api-key`) or behind a proxy that asks for one. The llama.cpp embedding server has its own key under Vault Brain; leave it empty to use the chat server's. With no key set, Horme sends exactly what it sent before.
 
-**The OpenAI-compatible server counts as cloud** until you turn on **This server is mine** on its page, because a router often passes requests on to cloud services. Turn it on only for a server you run yourself: Horme then sends it notes as it does llama.cpp, without the cloud questions, and it can also make Vault Brain's embeddings.
+**The OpenAI-compatible server counts as cloud** until you turn on **This server is mine** on its page, because a router often passes requests on to cloud services. Turn it on only for a server you run yourself: Horme then sends it notes as it does llama.cpp, without the cloud questions, and it can also make Vault Brain's embeddings. The mark belongs to the address you confirmed: change the address and it turns off, and Horme asks again.
 
 ---
 

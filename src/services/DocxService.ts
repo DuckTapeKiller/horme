@@ -1,4 +1,4 @@
-import { Document, Packer, Paragraph, TextRun, HeadingLevel } from "docx";
+import { Document, Packer, Paragraph, TextRun, HeadingLevel, type IRunOptions } from "docx";
 
 export class DocxService {
   /** ArrayBuffer rather than a Node Buffer, which the mobile apps do not have. */
@@ -67,7 +67,8 @@ export class DocxService {
         current = "";
         const end = text.indexOf("**", i + 2);
         if (end !== -1) {
-          runs.push(new TextRun({ text: text.slice(i + 2, end), bold: true }));
+          const bold: IRunOptions = { text: text.slice(i + 2, end), bold: true };
+          runs.push(new TextRun(bold));
           i = end + 2;
         } else {
           current = "**";
@@ -86,7 +87,8 @@ export class DocxService {
           end++;
         }
         if (end < text.length) {
-          runs.push(new TextRun({ text: text.slice(i + 1, end), italics: true }));
+          const italic: IRunOptions = { text: text.slice(i + 1, end), italics: true };
+          runs.push(new TextRun(italic));
           i = end + 1;
         } else {
           current = "*";

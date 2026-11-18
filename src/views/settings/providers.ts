@@ -7,6 +7,7 @@ import { normalizeBaseUrl } from "../../utils/normalizeBaseUrl";
 import {
   bearer,
   compatBaseUrl,
+  customServerIsMine,
   isLocalServer,
   keepsNotesPrivate,
   type EmbeddingSource,
@@ -176,18 +177,9 @@ export function embeddingProvider(s: HormeSettings): EmbeddingSource {
  */
 export function embeddingOptions(s: HormeSettings): Record<string, string> {
   const out: Record<string, string> = { llamacpp: "llama.cpp", lmstudio: "LM Studio", ollama: "Ollama" };
-  if (s.customIsLocal) out.custom = "OpenAI-compatible server";
+  if (customServerIsMine(s)) out.custom = "OpenAI-compatible server";
   else if (s.embeddingSource === "custom") out.custom = "OpenAI-compatible server (paused)";
   return out;
-}
-
-/** Where the chosen embedding server lives. */
-export function embeddingAddress(s: HormeSettings): string {
-  const p = s.embeddingSource;
-  if (p === "llamacpp") return s.llamaCppEmbeddingUrl.trim();
-  if (p === "lmstudio") return s.lmStudioUrl.trim();
-  if (p === "custom") return s.customUrl.trim();
-  return s.ollamaBaseUrl.trim();
 }
 
 export type ModelPurpose = "chat" | "embedding" | "any";

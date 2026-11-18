@@ -1,4 +1,4 @@
-import { TFile, Notice, normalizePath } from "obsidian";
+import { TFile, Notice, Platform, normalizePath } from "obsidian";
 import { minimatch } from "minimatch";
 import HormePlugin from "../../main";
 import { HormeErrorModal } from "../modals/HormeErrorModal";
@@ -169,7 +169,15 @@ export class VaultIndexer {
     this.index.length = writeIndex;
 
     this.pathIndex.delete(path);
+    this.changes++;
   }
+
+  /**
+   * Counts changes to the index in memory, so a pass that changed nothing (a
+   * note that failed to embed, an edit that was already indexed) writes
+   * nothing: saving rewrites every shard.
+   */
+  private changes = 0;
 
   private forgetSaveTimer: number | null = null;
 
@@ -195,18 +203,31 @@ export class VaultIndexer {
   }
 
   /**
-   * Drops the passages of notes that no longer exist, deleted or moved while
-   * Obsidian was closed (or while it was open, before forgetNote saved). Run
-   * once the vault has loaded. Changes nothing when more than half of the
-   * indexed notes look missing: a vault still loading or a folder offline.
-   * Returns how many notes were dropped.
+   * Brings the saved index in line with the vault once both have loaded,
+   * after a time Horme was not running: queues notes added or changed
+   * meanwhile, and, on a computer, drops notes deleted meanwhile. A phone or
+   * tablet never drops anything: it often holds only part of the vault
+   * (selective sync), and a note it lacks may well exist on the computer that
+   * built the index. Run once, when the workspace is ready.
    */
-  async pruneVanishedNotes(): Promise<number> {
+  async reconcileWithVault(): Promise<void> {
     const deadline = Date.now() + 60_000;
     while (!this.isLoaded && Date.now() < deadline) {
       await new Promise<void>((r) => window.setTimeout(r, 200));
     }
-    if (!this.isLoaded || this.loadWasPartial || this.isIndexing || this.pathIndex.size === 0) return 0;
+    if (!this.isLoaded || this.loadWasPartial) return;
+    if (!Platform.isMobile) await this.pruneVanishedNotes();
+    this.queueMissedNotes();
+  }
+
+  /**
+   * Drops the passages of notes that no longer exist, deleted or moved while
+   * Obsidian was closed (or while it was open, before forgetNote saved).
+   * Changes nothing when more than half of the indexed notes look missing: a
+   * vault still loading or a folder offline. Returns how many notes were dropped.
+   */
+  private async pruneVanishedNotes(): Promise<number> {
+    if (this.isIndexing || this.pathIndex.size === 0) return 0;
     const vault = this.plugin.app.vault;
     const missing = [...this.pathIndex.keys()].filter(
       (p) => !(vault.getAbstractFileByPath(p) instanceof TFile),
@@ -234,8 +255,41 @@ export class VaultIndexer {
     return missing.length;
   }
 
+  /**
+   * Queues the notes to index that the index lacks or holds an older version
+   * of: added or changed while Horme was not running, or back on this device
+   * after being missing. Unchanged passages keep their vectors (chunk hashes),
+   * so a note that only came back is read again, not embedded again.
+   */
+  private queueMissedNotes(): number {
+    if (!this.plugin.settings.vaultBrainEnabled || this.plugin.embeddingBlock() !== null) return 0;
+    if (this.isIndexing || this.index.length === 0 || !this.isSpaceCompatible()) return 0;
+    const queued = new Set(this.indexingQueue.map((f) => f.path));
+    const missed = this.filesToIndex().filter((f) => {
+      if (f.stat.size === 0 || queued.has(f.path)) return false;
+      const entries = this.pathIndex.get(f.path);
+      return !entries?.length || entries[0].mtime < f.stat.mtime;
+    });
+    if (missed.length === 0) return 0;
+    this.indexingQueue.push(...missed);
+    this.plugin.diagnosticService.report(
+      "Vault Brain",
+      `Indexing ${missed.length} ${missed.length === 1 ? "note" : "notes"} added or changed while Horme was not running.`,
+      "info",
+    );
+    void this.processQueue().catch((e: unknown) => {
+      this.plugin.diagnosticService.report(
+        "Vault Brain",
+        `Queue processing failed: ${errorToMessage(e)}`,
+        "warning",
+      );
+    });
+    return missed.length;
+  }
+
   /** Adds entries and updates the Map */
   private addEntries(entries: IndexEntry[]): void {
+    if (entries.length > 0) this.changes++;
     for (const entry of entries) {
       this.index.push(entry);
       const arr = this.pathIndex.get(entry.path);
@@ -248,6 +302,7 @@ export class VaultIndexer {
   private clearIndex(): void {
     this.index = [];
     this.pathIndex.clear();
+    this.changes++;
   }
 
   /** Rebuilds the pathIndex Map from the flat array (used after deserialization) */
@@ -1547,7 +1602,10 @@ t1 -> Translation`;
     const chainIds: TagProviderId[] = [];
     // Tag names reach a cloud provider only with consent; the OpenAI-compatible
     // server the user says is theirs needs none, but still has the local fallback.
-    if (keepsNotesPrivate(s, primary) || s.allowCloudTagTranslation) {
+    if (
+      keepsNotesPrivate(s, primary, this.getTagTranslationModelFor(primary)) ||
+      s.allowCloudTagTranslation
+    ) {
       chainIds.push(primary);
     }
     if (this.isCloudProvider(primary)) {
@@ -1579,7 +1637,7 @@ t1 -> Translation`;
       const summaryKeys = ["resumen", "summary", "description", "abstract", "Resumen", "Summary"];
       for (const key of summaryKeys) {
         if (frontmatter[key] && typeof frontmatter[key] === "string") {
-          summaryOnly = (frontmatter[key] as string).trim();
+          summaryOnly = frontmatter[key].trim();
           break;
         }
       }
@@ -1648,6 +1706,35 @@ t1 -> Translation`;
     return files.filter((f) => this.isPathIndexableByPatterns(f.path));
   }
 
+  /** True when Vault Brain indexes this file (see filesToIndex). */
+  indexes(file: TFile): boolean {
+    if (!this.isPathIndexableByPatterns(file.path)) return false;
+    const ext = file.extension.toLowerCase();
+    if (ext === "md") return true;
+    if (ext !== "pdf" || !this.plugin.settings.vaultIndexIndexPdf) return false;
+    const textExtractor = this.getTextExtractorApi();
+    if (!textExtractor) return false;
+    return textExtractor.canFileBeExtracted ? textExtractor.canFileBeExtracted(file.path) : true;
+  }
+
+  /**
+   * The files Vault Brain indexes: every note, and PDFs when asked for and
+   * Text Extractor can read them, filtered by the include and leave-out patterns.
+   */
+  private filesToIndex(): TFile[] {
+    const textExtractor = this.getTextExtractorApi();
+    const pdfFiles =
+      this.plugin.settings.vaultIndexIndexPdf && textExtractor
+        ? this.plugin.app.vault
+            .getFiles()
+            .filter((f) => f.extension.toLowerCase() === "pdf")
+            .filter((f) =>
+              textExtractor.canFileBeExtracted ? textExtractor.canFileBeExtracted(f.path) : true,
+            )
+        : [];
+    return this.filterFilesForIndexing([...this.plugin.app.vault.getMarkdownFiles(), ...pdfFiles]);
+  }
+
   /**
    * Rebuilds the index incrementally.
    */
@@ -1670,8 +1757,9 @@ t1 -> Translation`;
       // embedding server, so it runs only when that server is the user's own
       // (whatever answers the chat). Summaries are extracted locally; tag
       // translation has its own consent.
-      if (!this.plugin.embeddingsAllowed()) {
-        new Notice(EmbeddingService.PAUSED_NOTICE, 10000);
+      const block = this.plugin.embeddingBlock();
+      if (block) {
+        new Notice(`Horme: ${block}`, 10000);
         return;
       }
       if (
@@ -1693,17 +1781,15 @@ t1 -> Translation`;
         await new Promise<void>((r) => window.setTimeout(r, 200));
       }
 
-      // Vectors from another embedding set-up cannot be reused or kept.
+      // Vectors from another embedding set-up cannot be reused or kept. The
+      // model is detected first, so the label names it.
+      await this.plugin.embeddingService.resolveEmbeddingModelName();
       if (!this.isSpaceCompatible()) this.clearIndex();
       this.indexedModel = this.plugin.embeddingService.embeddingFingerprint();
       this.spaceMismatchNotified = false;
-      await this.plugin.embeddingService.resolveEmbeddingModelName();
 
       const textExtractor = this.getTextExtractorApi();
-      const pdfIndexRequested = Boolean(this.plugin.settings.vaultIndexIndexPdf);
-      const pdfIndexEnabled = pdfIndexRequested && Boolean(textExtractor);
-
-      if (pdfIndexRequested && !textExtractor) {
+      if (this.plugin.settings.vaultIndexIndexPdf && !textExtractor) {
         this.plugin.diagnosticService.report(
           "Vault Brain",
           'PDF indexing is enabled, but the companion plugin "Text Extractor" (id: text-extractor) is not available. PDFs will be skipped.',
@@ -1711,18 +1797,7 @@ t1 -> Translation`;
         );
       }
 
-      const markdownFiles = this.plugin.app.vault.getMarkdownFiles();
-      const pdfFiles = pdfIndexEnabled
-        ? this.plugin.app.vault
-            .getFiles()
-            .filter((f) => f.extension.toLowerCase() === "pdf")
-            .filter((f) =>
-              textExtractor?.canFileBeExtracted ? textExtractor.canFileBeExtracted(f.path) : true,
-            )
-        : [];
-
-      const allFiles = [...markdownFiles, ...pdfFiles];
-      const files = this.filterFilesForIndexing(allFiles);
+      const files = this.filesToIndex();
       const total = files.length;
       this.plugin.debugLog(`Horme Brain: Rebuilding index for ${total} files...`);
 
@@ -2038,10 +2113,11 @@ t1 -> Translation`;
    */
   async enqueueIndex(file: TFile) {
     // Indexing only reaches the embedding server, never the chat provider, so
-    // it is that server that must be the user's own; with a cloud chat the
-    // index still keeps up with edits (searching it for the chat is gated
-    // separately, in search()).
-    if (!this.plugin.embeddingsAllowed() || !this.plugin.settings.vaultBrainEnabled) {
+    // it is that server that must be usable: the user's own, and reachable
+    // from this device (a phone cannot reach the computer's 127.0.0.1). With a
+    // cloud chat the index still keeps up with edits (searching it for the
+    // chat is gated separately, in search()).
+    if (this.plugin.embeddingBlock() !== null || !this.plugin.settings.vaultBrainEnabled) {
       return;
     }
     // Incremental indexing is only allowed after at least one successful full build,
@@ -2106,8 +2182,18 @@ t1 -> Translation`;
         return;
       }
 
+      // The server may have another model loaded since the index was built:
+      // its vectors never join the index.
+      await this.plugin.embeddingService.resolveEmbeddingModelName();
+      if (!this.isSpaceCompatible()) {
+        this.indexingQueue = [];
+        this.checkEmbeddingSpace(true);
+        return;
+      }
+
       let totalQueued = this.indexingQueue.length;
       let processed = 0;
+      const changesAtStart = this.changes;
 
       // Ensure queued files have tags pre-translated to avoid mid-queue VRAM swaps
       if (totalQueued > 0) {
@@ -2115,8 +2201,8 @@ t1 -> Translation`;
       }
 
       while (this.indexingQueue.length > 0) {
-        // Re-check on every iteration: the embedding server may have stopped being allowed since enqueue.
-        if (!this.plugin.embeddingsAllowed() || !this.plugin.settings.vaultBrainEnabled) {
+        // Re-check on every iteration: the embedding server may have become unusable since enqueue.
+        if (this.plugin.embeddingBlock() !== null || !this.plugin.settings.vaultBrainEnabled) {
           this.plugin.debugLog(
             "Horme Brain: Embedding server no longer allowed during queue processing. Clearing queue.",
           );
@@ -2142,9 +2228,9 @@ t1 -> Translation`;
         }
       }
 
-      // Save once when the queue is fully drained instead of after every file.
-      // This eliminates repeated synchronous JSON.stringify calls that block typing.
-      if (processed > 0) {
+      // Save once when the queue is fully drained instead of after every file,
+      // and only when something changed: saving rewrites every shard.
+      if (this.changes !== changesAtStart) {
         this.plugin.setIndexingStatus("Saving brain index...");
         await this.saveIndex();
       }
@@ -2525,6 +2611,8 @@ t1 -> Translation`;
       }
     }
 
+    // Which model the server has now decides whether the index can be searched.
+    await this.plugin.embeddingService.resolveEmbeddingModelName();
     if (!this.isSpaceCompatible()) {
       this.checkEmbeddingSpace(false);
       return [];
@@ -3037,9 +3125,7 @@ t1 -> Translation`;
    * Retrieves semantically related notes for the active file.
    * Useful for the "Connections" side panel.
    */
-  async getConnections(
-    activeFilePath: string,
-  ): Promise<{ path: string; score: number }[] | null | undefined> {
+  getConnections(activeFilePath: string): { path: string; score: number }[] | null | undefined {
     if (!this.plugin.settings.vaultBrainEnabled || !this.isLoaded || !this.isSpaceCompatible()) return null;
 
     const sourceEntries = this.getEntriesForPath(activeFilePath);

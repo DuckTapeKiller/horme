@@ -2,13 +2,16 @@ import { requestUrl } from "obsidian";
 import HormePlugin from "../../main";
 import { asArray, asNumberArray, errorToMessage, getRecordProp, getStringProp } from "../utils/TypeGuards";
 import { normalizeBaseUrl } from "../utils/normalizeBaseUrl";
-import { bearer, compatBaseUrl, embeddingSourceAllowed, type EmbeddingSource } from "../utils/providerAccess";
+import { sameEmbeddingSpace } from "../utils/embeddingLabel";
+import {
+  bearer,
+  compatBaseUrl,
+  embeddingAddress,
+  embeddingSourceAllowed,
+  type EmbeddingSource,
+} from "../utils/providerAccess";
 
 export class EmbeddingService {
-  /** Said when an index is to be built while the embedding server may not be sent notes. */
-  static readonly PAUSED_NOTICE =
-    "Vault Brain is paused: the OpenAI-compatible server is not marked as yours. Mark it as yours, or choose another embedding server.";
-
   private plugin: HormePlugin;
 
   constructor(plugin: HormePlugin) {
@@ -25,34 +28,59 @@ export class EmbeddingService {
   }
 
   /**
-   * Refuses, with the reason, when the chosen server may not be sent notes:
-   * the OpenAI-compatible server no longer marked as the user's own. Nothing
-   * is sent anywhere else instead.
+   * Refuses, with the reason, when the chosen server cannot be used here (see
+   * plugin.embeddingBlock). Nothing is sent anywhere else instead.
    */
-  private assertAllowed(): void {
-    if (embeddingSourceAllowed(this.plugin.settings)) return;
-    throw new Error(
-      'Vault Brain is paused: the OpenAI-compatible server is not marked as yours, so your notes are not sent to it. Turn on "This server is mine" on its page in Models, or choose another embedding server under Vault Brain.',
-    );
+  private assertUsable(): void {
+    const block = this.plugin.embeddingBlock();
+    if (block) throw new Error(block);
   }
 
   /**
-   * Names the embedding space: which server kind and model make the vectors.
+   * Names the embedding space: which server kind and model make the vectors,
+   * and for the OpenAI-compatible server, which server (any address can be
+   * typed there, and one name can mean different models on two servers).
    * Indexes store it, and vectors from different spaces are never compared.
-   * "auto" means the server's loaded model is detected at run time.
+   * The model is the one set, or the one detected on the server; "auto" only
+   * until it has been detected (call resolveEmbeddingModelName() first).
    */
   embeddingFingerprint(): string {
-    const s = this.plugin.settings;
     const p = this.embeddingProvider();
-    if (p === "lmstudio") return `lmstudio:${s.lmStudioEmbeddingModel.trim() || "auto"}`;
-    if (p === "llamacpp") return `llamacpp:${s.llamaCppEmbeddingModel.trim() || "auto"}`;
-    if (p === "custom") return `custom:${s.customEmbeddingModel.trim() || "auto"}`;
-    return `ollama:${s.ragEmbeddingModel.trim() || "nomic-embed-text"}`;
+    if (p === "ollama")
+      return `ollama:${this.plugin.settings.ragEmbeddingModel.trim() || "nomic-embed-text"}`;
+    const model = this.embeddingModelName() || "auto";
+    if (p === "custom") return `custom:${model}@${compatBaseUrl(this.plugin.settings.customUrl)}`;
+    return `${p}:${model}`;
   }
 
-  /** True when an index labelled `stored` can be searched with the current set-up. */
+  /** True when an index labelled `stored` can be searched with the current set-up (see sameEmbeddingSpace). */
   static sameSpace(stored: string, current: string): boolean {
-    return !stored || stored === current;
+    return sameEmbeddingSpace(stored, current);
+  }
+
+  /** Embedding models found on servers, by server kind and address. */
+  private detected = new Map<string, { model: string; at: number }>();
+
+  private serverKey(p: EmbeddingSource): string {
+    return `${p}|${embeddingAddress(this.plugin.settings)}`;
+  }
+
+  /** The model last found on the chosen server at its current address; "" if none yet. */
+  private detectedModel(p: EmbeddingSource): string {
+    return this.detected.get(this.serverKey(p))?.model ?? "";
+  }
+
+  /**
+   * The model found on the chosen server within the last minute, or "" to ask
+   * again: the server may have loaded another model since.
+   */
+  private recent(p: EmbeddingSource): string {
+    const d = this.detected.get(this.serverKey(p));
+    return d && Date.now() - d.at < 60_000 ? d.model : "";
+  }
+
+  private remember(p: EmbeddingSource, model: string): void {
+    this.detected.set(this.serverKey(p), { model, at: Date.now() });
   }
 
   /**
@@ -75,9 +103,9 @@ export class EmbeddingService {
   embeddingModelName(): string {
     const s = this.plugin.settings;
     const p = this.embeddingProvider();
-    if (p === "lmstudio") return s.lmStudioEmbeddingModel.trim() || this.lmStudioDetectedEmbeddingModel || "";
-    if (p === "llamacpp") return s.llamaCppEmbeddingModel.trim() || this.llamaCppDetectedEmbeddingModel || "";
-    if (p === "custom") return s.customEmbeddingModel.trim() || this.customDetectedEmbeddingModel || "";
+    if (p === "lmstudio") return s.lmStudioEmbeddingModel.trim() || this.detectedModel(p);
+    if (p === "llamacpp") return s.llamaCppEmbeddingModel.trim() || this.detectedModel(p);
+    if (p === "custom") return s.customEmbeddingModel.trim() || this.detectedModel(p);
     return s.ragEmbeddingModel.trim() || "nomic-embed-text";
   }
 
@@ -106,7 +134,7 @@ export class EmbeddingService {
    * Generates embeddings for multiple text chunks in a single batch request.
    */
   async getEmbeddings(texts: string[]): Promise<number[][]> {
-    this.assertAllowed();
+    this.assertUsable();
     const embedProvider = this.embeddingProvider();
 
     const BATCH_SIZE = 32;
@@ -280,9 +308,6 @@ export class EmbeddingService {
     throw new Error(`Ollama embed error: ${res.status}${errorDetail ? ` - ${errorDetail}` : ""}`);
   }
 
-  /** Cached embedding-model autodetection result for this session. */
-  private lmStudioDetectedEmbeddingModel: string | null = null;
-
   /**
    * Resolves the LM Studio embedding model: the dedicated setting first, then
    * autodetection from /v1/models (embedding models cannot chat and chat
@@ -291,7 +316,8 @@ export class EmbeddingService {
   private async resolveLmStudioEmbeddingModel(): Promise<string> {
     const configured = this.plugin.settings.lmStudioEmbeddingModel.trim();
     if (configured) return configured;
-    if (this.lmStudioDetectedEmbeddingModel) return this.lmStudioDetectedEmbeddingModel;
+    const known = this.recent("lmstudio");
+    if (known) return known;
     const res = await requestUrl({
       url: `${normalizeBaseUrl(this.plugin.settings.lmStudioUrl)}/v1/models`,
       headers: this.plugin.serverAuth("lmstudio"),
@@ -302,7 +328,7 @@ export class EmbeddingService {
       const ids = dataArr.map((m) => getStringProp(m, "id")).filter((m): m is string => Boolean(m));
       const detected = ids.find((id) => /embed/i.test(id));
       if (detected) {
-        this.lmStudioDetectedEmbeddingModel = detected;
+        this.remember("lmstudio", detected);
         return detected;
       }
     }
@@ -346,9 +372,6 @@ export class EmbeddingService {
     }
   }
 
-  /** Cached llama.cpp embedding-model autodetection result for this session. */
-  private llamaCppDetectedEmbeddingModel: string | null = null;
-
   /**
    * Resolves the llama.cpp embedding model: the dedicated setting first, then
    * autodetection from the embedding server's /v1/models. llama.cpp serves
@@ -358,7 +381,8 @@ export class EmbeddingService {
   private async resolveLlamaCppEmbeddingModel(): Promise<string> {
     const configured = this.plugin.settings.llamaCppEmbeddingModel.trim();
     if (configured) return configured;
-    if (this.llamaCppDetectedEmbeddingModel) return this.llamaCppDetectedEmbeddingModel;
+    const known = this.recent("llamacpp");
+    if (known) return known;
     const res = await requestUrl({
       url: `${normalizeBaseUrl(this.plugin.settings.llamaCppEmbeddingUrl)}/v1/models`,
       headers: this.plugin.serverAuth("llamacpp", "embedding"),
@@ -371,7 +395,7 @@ export class EmbeddingService {
       // model it lists is usable; prefer one whose name says "embed".
       const detected = ids.find((id) => /embed/i.test(id)) ?? ids[0];
       if (detected) {
-        this.llamaCppDetectedEmbeddingModel = detected;
+        this.remember("llamacpp", detected);
         return detected;
       }
     }
@@ -416,9 +440,6 @@ export class EmbeddingService {
     }
   }
 
-  /** Cached embedding-model detection on the OpenAI-compatible server for this session. */
-  private customDetectedEmbeddingModel: string | null = null;
-
   /**
    * The OpenAI-compatible server's embedding model: the setting first, then a
    * model whose name says it embeds, from the server's own list. Never the
@@ -428,7 +449,8 @@ export class EmbeddingService {
     const s = this.plugin.settings;
     const configured = s.customEmbeddingModel.trim();
     if (configured) return configured;
-    if (this.customDetectedEmbeddingModel) return this.customDetectedEmbeddingModel;
+    const known = this.recent("custom");
+    if (known) return known;
     const base = compatBaseUrl(s.customUrl);
     if (!base) throw new Error("The OpenAI-compatible server has no address yet. Add it on the Models page.");
     const res = await requestUrl({
@@ -445,7 +467,7 @@ export class EmbeddingService {
       const ids = dataArr.map((m) => getStringProp(m, "id")).filter((m): m is string => Boolean(m));
       const detected = ids.find((id) => /embed/i.test(id));
       if (detected) {
-        this.customDetectedEmbeddingModel = detected;
+        this.remember("custom", detected);
         return detected;
       }
     }

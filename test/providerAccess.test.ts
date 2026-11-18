@@ -3,7 +3,10 @@ import assert from "node:assert";
 import {
   bearer,
   compatBaseUrl,
+  customServerIsMine,
   embeddingSourceAllowed,
+  isOllamaCloudModel,
+  notesDestination,
   initialEmbeddingSource,
   isEmbeddingSource,
   isLocalServer,
@@ -49,21 +52,41 @@ void test("isLocalServer knows the three local servers only", () => {
   for (const id of ["custom", "openai", "claude", ""]) assert.strictEqual(isLocalServer(id), false, id);
 });
 
+const LAN = "http://192.168.1.20:4000/v1";
+const mine = { customIsLocal: true, customUrl: LAN, customTrustedUrl: LAN };
+const notMine = { customIsLocal: false, customUrl: LAN, customTrustedUrl: "" };
+
 void test("keepsNotesPrivate: local servers always, cloud providers never", () => {
-  const trusting = { customIsLocal: true };
-  const wary = { customIsLocal: false };
   for (const id of ["llamacpp", "ollama", "lmstudio"] as const) {
-    assert.strictEqual(keepsNotesPrivate(wary, id), true, id);
+    assert.strictEqual(keepsNotesPrivate(notMine, id), true, id);
   }
   for (const id of ["claude", "gemini", "openai", "groq", "openrouter", "mistral"] as const) {
-    assert.strictEqual(keepsNotesPrivate(trusting, id), false, id);
+    assert.strictEqual(keepsNotesPrivate(mine, id), false, id);
   }
 });
 
 void test("keepsNotesPrivate: the OpenAI-compatible server counts as cloud until the user says it is theirs", () => {
-  assert.strictEqual(keepsNotesPrivate({ customIsLocal: false }, "custom"), false);
-  assert.strictEqual(keepsNotesPrivate({} as { customIsLocal: boolean }, "custom"), false);
-  assert.strictEqual(keepsNotesPrivate({ customIsLocal: true }, "custom"), true);
+  assert.strictEqual(keepsNotesPrivate(notMine, "custom"), false);
+  assert.strictEqual(keepsNotesPrivate({} as typeof mine, "custom"), false);
+  assert.strictEqual(keepsNotesPrivate(mine, "custom"), true);
+});
+
+void test("customServerIsMine: the mark belongs to the address it was given for", () => {
+  // Same server, written differently: still the user's.
+  assert.strictEqual(customServerIsMine({ ...mine, customUrl: `${LAN}/` }), true);
+  assert.strictEqual(customServerIsMine({ ...mine, customUrl: `${LAN}/chat/completions` }), true);
+  // Another address: a new server, cloud until confirmed again.
+  assert.strictEqual(customServerIsMine({ ...mine, customUrl: "https://notes-collector.example/v1" }), false);
+  assert.strictEqual(
+    keepsNotesPrivate({ ...mine, customUrl: "https://api.deepseek.com/v1" }, "custom"),
+    false,
+  );
+  // Never for an empty address, nor for a mark with no confirmed address.
+  assert.strictEqual(customServerIsMine({ customIsLocal: true, customUrl: "", customTrustedUrl: "" }), false);
+  assert.strictEqual(
+    customServerIsMine({ customIsLocal: true, customUrl: LAN, customTrustedUrl: "" }),
+    false,
+  );
 });
 
 void test("isEmbeddingSource accepts the four servers only", () => {
@@ -75,10 +98,15 @@ void test("isEmbeddingSource accepts the four servers only", () => {
 
 void test("embeddingSourceAllowed: local servers always; the OpenAI-compatible server only while it is yours", () => {
   for (const id of ["llamacpp", "lmstudio", "ollama"] as const) {
-    assert.strictEqual(embeddingSourceAllowed({ embeddingSource: id, customIsLocal: false }), true, id);
+    assert.strictEqual(embeddingSourceAllowed({ embeddingSource: id, ...notMine }), true, id);
   }
-  assert.strictEqual(embeddingSourceAllowed({ embeddingSource: "custom", customIsLocal: false }), false);
-  assert.strictEqual(embeddingSourceAllowed({ embeddingSource: "custom", customIsLocal: true }), true);
+  assert.strictEqual(embeddingSourceAllowed({ embeddingSource: "custom", ...notMine }), false);
+  assert.strictEqual(embeddingSourceAllowed({ embeddingSource: "custom", ...mine }), true);
+  // A changed address pauses it: nothing is sent to the new one.
+  assert.strictEqual(
+    embeddingSourceAllowed({ embeddingSource: "custom", ...mine, customUrl: "https://elsewhere.example/v1" }),
+    false,
+  );
 });
 
 void test("initialEmbeddingSource keeps the server an existing index was built with", () => {
@@ -111,4 +139,29 @@ void test("initialEmbeddingSource repairs an unreadable choice, and uses the def
   );
   assert.strictEqual(initialEmbeddingSource({ temperature: 0.5 }, "llamacpp"), "llamacpp");
   assert.strictEqual(initialEmbeddingSource({ temperature: 0.5 }, "ollama"), "ollama");
+});
+
+void test("Ollama's cloud models are cloud, whatever runs on this computer", () => {
+  for (const m of ["gpt-oss:120b-cloud", "deepseek-v3.1:671b-cloud", "glm-4.6:cloud", "KIMI-K2:1T-CLOUD"])
+    assert.strictEqual(isOllamaCloudModel(m), true, m);
+  for (const m of ["bonsai-2:9b", "qwen3.5:2b", "nomic-embed-text", "cloudy-model:7b", "", undefined])
+    assert.strictEqual(isOllamaCloudModel(m), false, String(m));
+  assert.strictEqual(keepsNotesPrivate({ ...notMine, defaultModel: "bonsai-2:9b" }, "ollama"), true);
+  assert.strictEqual(keepsNotesPrivate({ ...notMine, defaultModel: "gpt-oss:120b-cloud" }, "ollama"), false);
+  // Another model given (tags, tag translation) is judged instead of the chat's.
+  assert.strictEqual(
+    keepsNotesPrivate({ ...notMine, defaultModel: "bonsai-2:9b" }, "ollama", "glm-4.6:cloud"),
+    false,
+  );
+});
+
+void test("notesDestination: a new address or Ollama model is a new destination", () => {
+  const s = { customUrl: "http://a.example/v1/", defaultModel: "qwen3.5:2b" };
+  assert.strictEqual(notesDestination(s, "custom"), "custom@http://a.example/v1");
+  assert.notStrictEqual(
+    notesDestination(s, "custom"),
+    notesDestination({ ...s, customUrl: "http://b.example/v1" }, "custom"),
+  );
+  assert.strictEqual(notesDestination(s, "ollama"), "ollama:qwen3.5:2b");
+  assert.strictEqual(notesDestination(s, "gemini"), "gemini");
 });

@@ -137,7 +137,7 @@ export class HormeChatView extends ItemView {
   private activeLoadingIntervals: Set<number> = new Set();
   private connectionPollId: number | null = null;
 
-  private async pickImage() {
+  private pickImage(): void {
     const fileInput = activeDocument.createElement("input");
     fileInput.type = "file";
     fileInput.accept = "image/*";
@@ -492,7 +492,11 @@ export class HormeChatView extends ItemView {
       const addFoldersBtn = row3.createEl("button", { cls: "horme-header-btn", text: "+ Add folders" });
       addFoldersBtn.addEventListener("click", () => {
         new FolderPickerModal(this.app, (folder: TFolder) => {
-          void this.addContextFolder(folder).catch((e) => this.plugin.handleError(e, "Folders"));
+          try {
+            this.addContextFolder(folder);
+          } catch (e: unknown) {
+            this.plugin.handleError(e, "Folders");
+          }
         }).open();
       });
       const clearBtn = row3.createEl("button", { cls: "horme-header-btn", text: "Clear" });
@@ -501,32 +505,28 @@ export class HormeChatView extends ItemView {
       });
       this.contextNotesLabel = header.createDiv("horme-context-note-label");
       this.contextToggle.addEventListener("change", () => {
-        void (async () => {
-          if (
-            this.contextToggle.checked &&
-            !this.plugin.isLocalProviderActive() &&
-            !this.plugin.settings.contextCloudWarningShown
-          ) {
-            const provider = providerInfo(this.plugin.settings.aiProvider).name;
-            new GenericConfirmModal(
-              this.app,
-              `Privacy notice: Your current note's full text will be sent to ${provider}, a cloud provider. The content will leave your device. Do you want to continue?`,
-              () => {
-                void (async () => {
-                  this.plugin.settings.contextCloudWarningShown = true;
-                  await this.plugin.saveSettings();
-                  this.updateContextNoteLabel();
-                })();
-              },
-              () => {
-                this.contextToggle.checked = false;
-                this.updateContextNoteLabel();
-              },
-            ).open();
-          } else {
-            this.updateContextNoteLabel();
-          }
-        })().catch((e) => this.plugin.handleError(e));
+        if (
+          this.contextToggle.checked &&
+          !this.plugin.isLocalProviderActive() &&
+          !this.plugin.settings.contextCloudWarningShown
+        ) {
+          const provider = providerInfo(this.plugin.settings.aiProvider).name;
+          new GenericConfirmModal(
+            this.app,
+            `Privacy notice: Your current note's full text will be sent to ${provider}, a cloud provider. The content will leave your device. Do you want to continue?`,
+            () => {
+              this.plugin.settings.contextCloudWarningShown = true;
+              this.updateContextNoteLabel();
+              void this.plugin.saveSettings().catch((e) => this.plugin.handleError(e));
+            },
+            () => {
+              this.contextToggle.checked = false;
+              this.updateContextNoteLabel();
+            },
+          ).open();
+        } else {
+          this.updateContextNoteLabel();
+        }
       });
 
       this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.updateContextNoteLabel()));
@@ -576,14 +576,22 @@ export class HormeChatView extends ItemView {
       setIcon(uploadBtn, "paperclip");
       uploadBtn.title = "Upload document";
       uploadBtn.addEventListener("click", () => {
-        void this.pickDocument().catch((err) => this.plugin.handleError(err, "Upload"));
+        try {
+          this.pickDocument();
+        } catch (err: unknown) {
+          this.plugin.handleError(err, "Upload");
+        }
       });
 
       const imageBtn = actionRow.createEl("button", { cls: "horme-image-btn" });
       setIcon(imageBtn, "image");
       imageBtn.title = "Upload image";
       imageBtn.addEventListener("click", () => {
-        void this.pickImage().catch((err) => this.plugin.handleError(err, "Upload"));
+        try {
+          this.pickImage();
+        } catch (err: unknown) {
+          this.plugin.handleError(err, "Upload");
+        }
       });
 
       actionRow.createDiv("horme-input-spacer");
@@ -728,7 +736,7 @@ export class HormeChatView extends ItemView {
     return allMd.filter((f) => f.path.startsWith(prefix));
   }
 
-  private async addContextFolder(folder: TFolder): Promise<void> {
+  private addContextFolder(folder: TFolder): void {
     const folderPath = folder.path || "/";
     const normalized = folderPath === "/" ? "/" : folderPath.replace(/\/+$/, "");
 
@@ -1016,7 +1024,7 @@ export class HormeChatView extends ItemView {
     this.sendBtn.classList.remove("horme-stop-btn");
   }
 
-  private async pickDocument() {
+  private pickDocument(): void {
     const fileInput = activeDocument.createElement("input");
     fileInput.type = "file";
     fileInput.accept = ".txt,.md";
@@ -1229,7 +1237,7 @@ export class HormeChatView extends ItemView {
         }
         // Regenerate would replay an older turn's request; a skill run is repeated by running it again.
         this.lastMsgs = null;
-        await this.plugin.historyManager.append({
+        this.plugin.historyManager.append({
           id: this.conversationId,
           title: this.history.find((m) => m.role === "user")?.content.slice(0, 60) || "Untitled chat",
           timestamp: Date.now(),
@@ -1656,7 +1664,7 @@ export class HormeChatView extends ItemView {
     const historyAtStart = this.history;
     let partialKept = false;
     /** After Stop: the text received so far stays in this chat's history, once. */
-    const keepPartialReply = async () => {
+    const keepPartialReply = (): void => {
       if (partialKept || !(fullContent || fullReasoning)) return;
       if (this.conversationId !== convoAtStart || this.history !== historyAtStart) return;
       partialKept = true;
@@ -1667,7 +1675,7 @@ export class HormeChatView extends ItemView {
         context: passages || undefined,
         sources: sources.length ? sources : undefined,
       });
-      await this.plugin.historyManager.append({
+      this.plugin.historyManager.append({
         id: this.conversationId,
         title: this.history.find((m) => m.role === "user")?.content.slice(0, 60) || "Untitled chat",
         timestamp: Date.now(),
@@ -1717,7 +1725,7 @@ export class HormeChatView extends ItemView {
     const renderProgressiveMarkdown = (() => {
       let lastRender = 0;
       let renderTask: Promise<void> | null = null;
-      return async (text: string, target: HTMLElement) => {
+      return (text: string, target: HTMLElement): void => {
         const now = Date.now();
         if (now - lastRender < 200) return; // Throttle 200ms
         if (renderTask) return; // Skip if busy
@@ -1738,7 +1746,7 @@ export class HormeChatView extends ItemView {
     const renderProgressiveReasoning = (() => {
       let lastRender = 0;
       let renderTask: Promise<void> | null = null;
-      return async (text: string, target: HTMLElement) => {
+      return (text: string, target: HTMLElement): void => {
         const now = Date.now();
         if (now - lastRender < 200) return; // Throttle 200ms
         if (renderTask) return; // Skip if busy
@@ -1838,7 +1846,7 @@ export class HormeChatView extends ItemView {
                     fullReasoning += reasoning;
                     let reasoningBody = reasoningEl.querySelector(".horme-thinking-body");
                     if (!reasoningBody) reasoningBody = reasoningEl.createDiv("horme-thinking-body");
-                    void renderProgressiveReasoning(fullReasoning, reasoningBody as HTMLElement);
+                    renderProgressiveReasoning(fullReasoning, reasoningBody as HTMLElement);
                   }
 
                   if (content) {
@@ -1846,7 +1854,7 @@ export class HormeChatView extends ItemView {
                     // If there was reasoning, ensure the content is outside/after it
                     let contentArea = el.querySelector(".horme-content-area") as HTMLElement;
                     if (!contentArea) contentArea = el.createDiv("horme-content-area");
-                    void renderProgressiveMarkdown(this.withVaultNotice(fullContent), contentArea);
+                    renderProgressiveMarkdown(this.withVaultNotice(fullContent), contentArea);
                   }
                   this.scrollToBottom();
                 });
@@ -1862,7 +1870,7 @@ export class HormeChatView extends ItemView {
 
       if (this.generationEpoch !== epoch) {
         // Stopped, or overtaken by Clear or another chat: run no skills.
-        await keepPartialReply();
+        keepPartialReply();
         return;
       }
 
@@ -2068,7 +2076,7 @@ export class HormeChatView extends ItemView {
             roundResults.every((r) => imagesFromSkillResult(r).length > 0) &&
             onlyAsksForPictures(this.lastUserText())
           ) {
-            await this.finishWithPictures(roundResults, aggregatedSkillLinks);
+            this.finishWithPictures(roundResults, aggregatedSkillLinks);
             return;
           }
 
@@ -2183,7 +2191,7 @@ export class HormeChatView extends ItemView {
         }
 
         if (!this.contentEl.isConnected) return;
-        await this.plugin.historyManager.append({
+        this.plugin.historyManager.append({
           id: this.conversationId,
           title: this.history.find((m) => m.role === "user")?.content.slice(0, 60) || "Untitled chat",
           timestamp: Date.now(),
@@ -2194,7 +2202,11 @@ export class HormeChatView extends ItemView {
       // Stop aborts the request, which usually surfaces here rather than as the
       // end of the stream; whatever arrived before it is kept.
       if (this.generationEpoch !== epoch) {
-        await keepPartialReply().catch(() => undefined);
+        try {
+          keepPartialReply();
+        } catch {
+          // The reply already failed; keeping its first part is a courtesy.
+        }
         new Notice("Generation stopped.");
       } else if (e instanceof DOMException && e.name === "AbortError") {
         new Notice("Generation stopped.");
@@ -2401,14 +2413,14 @@ export class HormeChatView extends ItemView {
    * Ends a turn that only showed pictures. The cards are the reply (title, credit,
    * link); the titles and credits are kept in the history for the model and notes.
    */
-  private async finishWithPictures(results: string[], pills: SourcePill[]): Promise<void> {
+  private finishWithPictures(results: string[], pills: SourcePill[]): void {
     const text = imagesSummary(results.flatMap((r) => imagesFromSkillResult(r)));
     this.history.push({ role: "assistant", content: text, picturesOnly: true });
     this.pillsUnderPictures(pills);
     // Regenerate would replay a request whose answer was never the model's.
     this.lastMsgs = null;
     if (!this.contentEl.isConnected) return;
-    await this.plugin.historyManager.append({
+    this.plugin.historyManager.append({
       id: this.conversationId,
       title: this.history.find((m) => m.role === "user")?.content.slice(0, 60) || "Untitled chat",
       timestamp: Date.now(),
@@ -2667,7 +2679,7 @@ export class HormeChatView extends ItemView {
 
     // Self-cleanup when the element is removed during normal operation
     // (e.g., loadingEl.remove() after generation completes).
-    const origRemove = el.remove.bind(el) as () => void;
+    const origRemove = el.remove.bind(el);
     el.remove = () => {
       window.clearInterval(intervalId);
       this.activeLoadingIntervals.delete(intervalId);

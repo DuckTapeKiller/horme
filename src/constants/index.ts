@@ -56,6 +56,7 @@ export const DEFAULT_SETTINGS: HormeSettings = {
   customModel: "",
   customEmbeddingModel: "",
   customIsLocal: false,
+  customTrustedUrl: "",
   systemPromptPath: "",
   presetsPaths: [],
   temperature: 0.3,

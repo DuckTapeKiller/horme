@@ -45,7 +45,12 @@ export class DateCalculatorSkill implements Skill {
 
   instructions = `To use this skill, output exactly: <call:date_calc>{"operation": "difference", "date1": "1914-07-28", "date2": "1918-11-11"}</call>. Operations: "timezone" (current time in a city, e.g. {"operation": "timezone", "timezone": "Asia/Shanghai"}), "difference" (time between two dates), "day_of_week" (what day a date fell on), "add" (add time to a date, e.g. {"operation": "add", "date1": "2024-01-01", "amount": "90 days"}). Use "timezone" whenever the user asks what time it is somewhere. Use the others to verify historical claims about durations, dates, or chronological facts.`;
 
-  async execute(params: unknown): Promise<string> {
+  execute(params: unknown): Promise<string> {
+    return Promise.resolve(this.calculate(params));
+  }
+
+  /** The skill's answer, worked out here: nothing to wait for. */
+  private calculate(params: unknown): string {
     try {
       const operation = getStringProp(params, "operation");
       const date1 = getStringProp(params, "date1");

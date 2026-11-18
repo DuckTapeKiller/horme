@@ -79,7 +79,7 @@ export class HistoryManager {
    * Schedules a debounced write. Rapid calls during a conversation
    * only result in a single disk write 2 seconds after the last message.
    */
-  async append(convo: SavedConversation): Promise<void> {
+  append(convo: SavedConversation): void {
     this.pending.set(convo.id, convo);
     if (this.writeTimeout !== null) window.clearTimeout(this.writeTimeout);
     this.writeTimeout = window.setTimeout(() => {

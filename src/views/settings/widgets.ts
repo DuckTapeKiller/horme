@@ -89,6 +89,18 @@ export function connectionLabel(plugin: HormePlugin, state: ConnectionState): st
 /* ── Small building blocks ──────────────────────────────────────────────── */
 
 /** A full-width line of explanation or warning inside a group. */
+/** Notes whose text follows the settings, redrawn by refreshLiveText(). */
+const liveText = new Set<() => void>();
+
+/**
+ * Redraws every rendered note whose text is worked out from the settings.
+ * Obsidian redraws only visibility on an ordinary change, so a note naming an
+ * address would otherwise keep showing the address it was drawn with.
+ */
+export function refreshLiveText(): void {
+  liveText.forEach((paint) => paint());
+}
+
 export function noteItem(
   text: string | (() => string),
   kind: "info" | "warning" = "info",
@@ -106,7 +118,13 @@ export function noteItem(
         setting.settingEl.createSpan({ cls: "horme-note-icon" }),
         kind === "warning" ? "alert-triangle" : "info",
       );
-      setting.settingEl.createSpan({ cls: "horme-note-text", text: read() });
+      const textEl = setting.settingEl.createSpan({ cls: "horme-note-text", text: read() });
+      if (typeof text === "string") return;
+      const paint = () => textEl.setText(read());
+      liveText.add(paint);
+      return () => {
+        liveText.delete(paint);
+      };
     },
   };
 }
@@ -161,7 +179,7 @@ export function heroItem(host: SettingsHost, checker: ConnectionChecker): Settin
       const brainChip = chips.createDiv({ cls: "horme-chip" });
       setIcon(brainChip.createSpan({ cls: "horme-chip-icon" }), "brain");
       const blocked =
-        (!keepsNotesPrivate(s, s.aiProvider) && !s.allowCloudRAG) || !plugin.embeddingsAllowed();
+        (!keepsNotesPrivate(s, s.aiProvider) && !s.allowCloudRAG) || plugin.embeddingBlock() !== null;
       if (!s.vaultBrainEnabled) brainChip.createSpan({ text: "Vault Brain off" });
       else if (blocked) {
         brainChip.addClass("is-warn");

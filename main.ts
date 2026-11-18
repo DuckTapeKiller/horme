@@ -64,10 +64,13 @@ import {
   type PhoneChoice,
 } from "./src/utils/mobileOverride";
 import { listModels, providerInfo } from "./src/views/settings/providers";
+import { isPublicHttpUrl } from "./src/utils/urlSafety";
+import { GenericConfirmModal } from "./src/modals/GenericConfirmModal";
 import {
   bearer,
   compatBaseUrl,
-  embeddingSourceAllowed,
+  embeddingBlock,
+  notesDestination,
   initialEmbeddingSource,
   keepsNotesPrivate,
   type LocalServerId,
@@ -83,20 +86,21 @@ interface OllamaTagsModel {
 }
 
 export default class HormePlugin extends Plugin {
-  settings: HormeSettings;
+  // Set in onload(), before anything reads them.
+  settings!: HormeSettings;
   models: string[] = [];
   lastActiveMarkdownLeaf: WorkspaceLeaf | null = null;
 
-  docxService: DocxService;
-  historyManager: HistoryManager;
-  tagService: TagService;
-  embeddingService: EmbeddingService;
-  vaultIndexer: VaultIndexer;
-  tagIndexer: TagIndexer;
-  aiGateway: AiGateway;
-  skillManager: SkillManager;
-  grammarIndexer: GrammarIndexer;
-  diagnosticService: DiagnosticService;
+  docxService!: DocxService;
+  historyManager!: HistoryManager;
+  tagService!: TagService;
+  embeddingService!: EmbeddingService;
+  vaultIndexer!: VaultIndexer;
+  tagIndexer!: TagIndexer;
+  aiGateway!: AiGateway;
+  skillManager!: SkillManager;
+  grammarIndexer!: GrammarIndexer;
+  diagnosticService!: DiagnosticService;
   private settingTab: HormeSettingTab | null = null;
 
   private indexDebounceMap = new Map<string, number>();
@@ -109,7 +113,8 @@ export default class HormePlugin extends Plugin {
   /** The phone's own choice as last written to this device's storage, as JSON. */
   private storedPhoneChoice: string | null = null;
   /** The provider in use at the last save, for the cloud privacy warnings. */
-  private _lastPersistedAiProvider: AiProvider | null = null;
+  /** Where the chat's requests went at the last save (see notesDestination). */
+  private _lastPersistedDestination: string | null = null;
 
   onSettingsChange(cb: () => void): () => void {
     this.settingsChangeListeners.add(cb);
@@ -323,7 +328,7 @@ export default class HormePlugin extends Plugin {
 
     // On a phone or tablet, switch to the mobile provider and model.
     this.updateMobileOverride();
-    this._lastPersistedAiProvider = this.settings.aiProvider;
+    this._lastPersistedDestination = notesDestination(this.settings, this.settings.aiProvider);
 
     // Initialize Services
     this.diagnosticService = new DiagnosticService(this);
@@ -444,9 +449,9 @@ export default class HormePlugin extends Plugin {
     // Obsidian fires "create" for every file while the vault loads; registering
     // after the layout is ready means only notes created afterwards are queued.
     this.app.workspace.onLayoutReady(() => {
-      // Notes deleted or moved while Obsidian was closed leave the index.
+      // Notes deleted, added or changed while Horme was not running.
       void this.vaultIndexer
-        .pruneVanishedNotes()
+        .reconcileWithVault()
         .catch((e: unknown) =>
           this.diagnosticService.report(
             "Vault Brain",
@@ -456,7 +461,7 @@ export default class HormePlugin extends Plugin {
         );
       this.registerEvent(
         this.app.vault.on("create", (file) => {
-          if (file instanceof TFile && file.path.endsWith(".md")) {
+          if (file instanceof TFile && this.vaultIndexer.indexes(file)) {
             void this.vaultIndexer.enqueueIndex(file).catch((e) => this.handleError(e));
           }
         }),
@@ -486,7 +491,9 @@ export default class HormePlugin extends Plugin {
           this.indexDebounceMap.delete(oldPath);
         }
         this.vaultIndexer.forgetNote(oldPath);
-        if (file.path.endsWith(".md")) {
+        // Under its new name, if Vault Brain indexes it there: notes, and PDFs
+        // when PDF indexing is on (a renamed PDF used to leave the index).
+        if (this.vaultIndexer.indexes(file)) {
           void this.vaultIndexer.enqueueIndex(file).catch((e) => this.handleError(e));
         }
       }),
@@ -505,9 +512,11 @@ export default class HormePlugin extends Plugin {
     // Not awaited: a provider that is down or slow must not hold up Obsidian's start.
     void this.fetchModels();
 
-    // Initialize lastActiveMarkdownLeaf if a note is already open
-    const activeLeaf = this.app.workspace.getActiveViewOfType(MarkdownView)?.leaf;
-    this.lastActiveMarkdownLeaf = activeLeaf ?? null;
+    // The note already open counts as the current note, even when the chat
+    // had the focus when Obsidian last closed. The workspace may still be
+    // loading here, so it is looked up again once the layout is ready.
+    this.rememberOpenNote();
+    this.app.workspace.onLayoutReady(() => this.rememberOpenNote());
 
     this.addCommand({
       id: "suggest-frontmatter-tags",
@@ -567,13 +576,9 @@ export default class HormePlugin extends Plugin {
           if (this.settings.connectionsEnabled) {
             const connLeaves = this.app.workspace.getLeavesOfType(CONNECTIONS_VIEW_TYPE);
             if (connLeaves.length > 0) {
-              const connView = connLeaves[0].view as unknown as {
-                updateConnections?: (path: string) => Promise<void> | void;
-              };
-              if (leaf.view.file && typeof connView.updateConnections === "function") {
-                void Promise.resolve(connView.updateConnections(leaf.view.file.path)).catch((e) =>
-                  this.handleError(e),
-                );
+              const connView = connLeaves[0].view;
+              if (leaf.view.file && connView instanceof HormeConnectionsView) {
+                connView.updateConnections(leaf.view.file.path);
               }
             }
           }
@@ -676,14 +681,24 @@ INSTRUCTIONS:
 Reference Tags:
 ${candidates.map((t) => `${t}`).join("\n")}`;
 
+    // A cloud tag provider needs the same consent as any note content sent to the
+    // cloud; without it, the chat provider is used, which asks first when it is
+    // a cloud one, as the chat does for the current note.
+    const tagsProviderAllowed =
+      keepsNotesPrivate(
+        this.settings,
+        this.settings.tagsProvider,
+        this.settings.tagsModel.trim() || undefined,
+      ) || this.settings.allowCloudRAG;
+    const tagsModel = tagsProviderAllowed ? this.settings.tagsModel.trim() : "";
+    if (!tagsModel && !(await this.confirmNoteToCloud())) {
+      new Notice("Horme: No tags suggested. The note was not sent.");
+      return;
+    }
+
     new Notice("Horme: Generating tags…");
     this.setIndexingStatus("Generating tags...");
     try {
-      // A cloud tag provider needs the same consent as any note content sent to the
-      // cloud; without it, fall back to the chat provider path.
-      const tagsProviderAllowed =
-        keepsNotesPrivate(this.settings, this.settings.tagsProvider) || this.settings.allowCloudRAG;
-      const tagsModel = tagsProviderAllowed ? this.settings.tagsModel.trim() : "";
       // Pass the complete 'context' string containing the file title to avoid context starvation
       const response = tagsModel
         ? await this.aiGateway.generateWith(context, prompt, this.settings.tagsProvider, tagsModel)
@@ -905,9 +920,6 @@ RULES:
     const field = this.settings.summaryField || "summary";
     const lang = this.settings.summaryLanguage || "Español";
 
-    new Notice("Horme: Generating summary...");
-    this.setIndexingStatus("Generating summary...");
-
     try {
       const fullContent = await this.app.vault.read(file);
 
@@ -919,6 +931,12 @@ RULES:
         new Notice("Horme: Note is too short to summarise.");
         return;
       }
+      if (!(await this.confirmNoteToCloud())) {
+        new Notice("Horme: No summary written. The note was not sent.");
+        return;
+      }
+      new Notice("Horme: Generating summary...");
+      this.setIndexingStatus("Generating summary...");
 
       const prompt = `Summarise the following note in ${lang}. Write a concise 1-2 sentence summary that captures the core topic and key points. Return ONLY the summary text — no quotes, no formatting, no explanation.`;
       const summary = (
@@ -996,17 +1014,54 @@ RULES:
    * machines: a local server, or the OpenAI-compatible server the user says
    * is theirs. Every privacy check asks this.
    */
+  /** Takes the most recently used note in the main area as the current note, if none is known. */
+  private rememberOpenNote(): void {
+    if (this.lastActiveMarkdownLeaf?.view instanceof MarkdownView) return;
+    const ws = this.app.workspace;
+    const recent = ws.getMostRecentLeaf();
+    this.lastActiveMarkdownLeaf =
+      ws.getActiveViewOfType(MarkdownView)?.leaf ??
+      (recent?.view instanceof MarkdownView ? recent : null) ??
+      ws.getLeavesOfType("markdown")[0] ??
+      null;
+  }
+
+  /**
+   * Asks before a note's full text goes to a cloud chat provider (Tags,
+   * Summary), with the same question and the same remembered answer as the
+   * chat's "Use current note as context": once per cloud provider. True when
+   * the note may be sent.
+   */
+  async confirmNoteToCloud(): Promise<boolean> {
+    if (this.isLocalProviderActive() || this.settings.contextCloudWarningShown) return true;
+    const name = providerInfo(this.settings.aiProvider).name;
+    const yes = await new Promise<boolean>((resolve) => {
+      new GenericConfirmModal(
+        this.app,
+        `Privacy notice: this note's full text will be sent to ${name}, a cloud provider. The content will leave your device. Do you want to continue?`,
+        () => resolve(true),
+        () => resolve(false),
+      ).open();
+    });
+    if (yes) {
+      this.settings.contextCloudWarningShown = true;
+      await this.saveSettings();
+    }
+    return yes;
+  }
+
   isLocalProviderActive(): boolean {
     return keepsNotesPrivate(this.settings, this.settings.aiProvider);
   }
 
   /**
-   * True when the chosen embedding server may be sent notes to index: a local
-   * server, or the OpenAI-compatible server while the user says it is theirs.
-   * It has nothing to do with the chat provider.
+   * Why Vault Brain cannot use its embedding server on this device, or null
+   * when it can: the server may not be sent notes, or (on a phone or tablet)
+   * its address is the device itself. It has nothing to do with the chat
+   * provider.
    */
-  embeddingsAllowed(): boolean {
-    return embeddingSourceAllowed(this.settings);
+  embeddingBlock(): string | null {
+    return embeddingBlock(this.settings, Platform.isMobile);
   }
 
   /* ── Core ── */
@@ -1058,7 +1113,7 @@ RULES:
       this.app.workspace.getActiveViewOfType(MarkdownView) ||
       (this.lastActiveMarkdownLeaf?.view instanceof MarkdownView ? this.lastActiveMarkdownLeaf.view : null);
     if (activeView && activeView.file) {
-      await (leaf.view as HormeConnectionsView).updateConnections(activeView.file.path);
+      (leaf.view as HormeConnectionsView).updateConnections(activeView.file.path);
     }
   }
 
@@ -1434,7 +1489,7 @@ RULES:
       await this.saveData(this.settings);
     }
     // Track the provider last saved to disk so we can apply privacy guards on change.
-    this._lastPersistedAiProvider = this.settings.aiProvider;
+    this._lastPersistedDestination = notesDestination(this.settings, this.settings.aiProvider);
   }
 
   /**
@@ -1446,7 +1501,7 @@ RULES:
     this.mobileOverride = null;
     await this.loadSettings();
     this.updateMobileOverride();
-    this._lastPersistedAiProvider = this.settings.aiProvider;
+    this._lastPersistedDestination = notesDestination(this.settings, this.settings.aiProvider);
     this.settingsChangeListeners.forEach((cb) => cb());
     this.skillManager?.loadCustomSkills();
   }
@@ -1541,12 +1596,31 @@ RULES:
       s.customSkills = [];
       changed = true;
     }
-    if (!s.allowCloudRAG && !keepsNotesPrivate(s, s.tagsProvider)) {
+    // "This server is mine" from before it was tied to an address: there is no
+    // knowing which address it was given for. A server on this computer or the
+    // local network keeps it; an internet address must be confirmed again.
+    if (s.customIsLocal && !s.customTrustedUrl) {
+      const address = compatBaseUrl(s.customUrl);
+      if (address && !isPublicHttpUrl(address)) {
+        s.customTrustedUrl = address;
+      } else {
+        s.customIsLocal = false;
+        new Notice(
+          `Horme: "This server is mine" is now off for the OpenAI-compatible server at ${address || "no address"}. Turn it on again on its page in Models if you run that server.`,
+          15000,
+        );
+      }
+      changed = true;
+    }
+    if (!s.allowCloudRAG && !keepsNotesPrivate(s, s.tagsProvider, s.tagsModel.trim() || undefined)) {
       s.tagsProvider = keepsNotesPrivate(s, s.aiProvider) ? s.aiProvider : "ollama";
       s.tagsModel = "";
       changed = true;
     }
-    if (!s.allowCloudTagTranslation && !keepsNotesPrivate(s, s.tagTranslationProvider)) {
+    if (
+      !s.allowCloudTagTranslation &&
+      !keepsNotesPrivate(s, s.tagTranslationProvider, s.tagTranslationModel.trim() || undefined)
+    ) {
       s.tagTranslationProvider = s.tagTranslationFallbackProvider;
       changed = true;
     }
@@ -1556,14 +1630,16 @@ RULES:
   async saveSettings() {
     this.updateMobileOverride();
 
-    // Privacy guard: privacy warnings are provider-specific. When the provider in
-    // use changes to a different *cloud* provider, the warning flags go back to
-    // false, so the user must acknowledge again before any note or document
-    // content leaves the device.
+    // Privacy guard: the privacy questions are asked once per destination.
+    // When the chat's requests start going to a different cloud destination (a
+    // cloud provider, another address for the OpenAI-compatible server, an
+    // Ollama cloud model), the answers are forgotten, so the user is asked
+    // again before any note or document content leaves the device.
     const provider = this.settings.aiProvider;
+    const destination = notesDestination(this.settings, provider);
     if (
-      this._lastPersistedAiProvider &&
-      provider !== this._lastPersistedAiProvider &&
+      this._lastPersistedDestination &&
+      destination !== this._lastPersistedDestination &&
       this.isCloudProvider(provider)
     ) {
       this.settings.contextCloudWarningShown = false;
@@ -1579,7 +1655,7 @@ RULES:
     await this.saveData(
       o ? settingsForDisk(this.settings, o, (p) => providerInfo(p).modelKey) : this.settings,
     );
-    this._lastPersistedAiProvider = provider;
+    this._lastPersistedDestination = destination;
     this.settingsChangeListeners.forEach((cb) => cb());
     this.skillManager?.loadCustomSkills();
   }

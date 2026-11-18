@@ -76,8 +76,10 @@ export class OllamaProvider implements AiProvider {
   ): ReadableStreamDefaultReader<Uint8Array> {
     const decoder = new TextDecoder();
     let tail = "";
+    // Only the closing line carries the counts; every other line says
+    // "done":false and is left to the reader, not parsed a second time here.
     const inspect = (line: string) => {
-      if (!line.includes('"done"')) return;
+      if (!/"done"\s*:\s*true/.test(line)) return;
       try {
         const data: unknown = JSON.parse(line);
         if (getRecordProp(data, "done") === true)
@@ -158,12 +160,37 @@ export class OllamaProvider implements AiProvider {
    */
   private async modelOptions(model: string): Promise<Record<string, number>> {
     const options: Record<string, number> = { temperature: this.temperature, num_predict: this.maxTokens };
-    const numCtx = ollamaNumCtx(
-      this.contextLength,
-      this.contextLength > 0 ? (await this.facts(model))?.contextLength ?? null : null,
-    );
-    if (numCtx) options.num_ctx = numCtx;
+    if (this.contextLength > 0) {
+      const [facts, loaded] = await Promise.all([this.facts(model), this.loadedContext(model)]);
+      const numCtx = ollamaNumCtx(this.contextLength, facts?.contextLength ?? null, loaded);
+      if (numCtx) options.num_ctx = numCtx;
+    }
     return options;
+  }
+
+  /**
+   * The window the model is loaded with now (/api/ps), or null when it is not
+   * loaded or Ollama would not say. Asked on every request: another app may
+   * have reloaded it since.
+   */
+  private async loadedContext(model: string): Promise<number | null> {
+    try {
+      const res = await requestUrl({
+        url: `${this.baseUrl}/api/ps`,
+        headers: bearer(this.apiKey),
+        throw: false,
+      });
+      if (res.status !== 200) return null;
+      const wanted = model.includes(":") ? model : `${model}:latest`;
+      for (const m of asArray(getRecordProp(res.json as unknown, "models")) ?? []) {
+        const name = getStringProp(m, "name") ?? getStringProp(m, "model");
+        const ctx = getRecordProp(m, "context_length");
+        if (name === wanted && typeof ctx === "number" && ctx > 0) return ctx;
+      }
+    } catch {
+      // Not known: the setting alone decides.
+    }
+    return null;
   }
 
   /**

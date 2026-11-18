@@ -14,6 +14,10 @@ export default defineConfig([
 
   ...obsidianmd.configs.recommended,
 
+  // The review bot also runs typescript-eslint's full type-checked set, so the
+  // same set runs here, on every TypeScript file.
+  ...tseslint.configs.recommendedTypeChecked.map((config) => ({ ...config, files: ["**/*.ts"] })),
+
   {
     // The type-aware rules need the TypeScript program.
     files: ["**/*.ts"],

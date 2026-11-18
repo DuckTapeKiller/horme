@@ -97,8 +97,9 @@ export class GrammarIndexer {
     }
     // Nothing is sent to an embedding server that may not be sent notes; the
     // index in place is kept.
-    if (!this.plugin.embeddingsAllowed()) {
-      new Notice(EmbeddingService.PAUSED_NOTICE, 10000);
+    const block = this.plugin.embeddingBlock();
+    if (block) {
+      new Notice(`Horme: ${block}`, 10000);
       return;
     }
     this.isIndexing = true;
