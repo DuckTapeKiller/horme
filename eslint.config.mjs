@@ -90,6 +90,10 @@ export default defineConfig([
           allowAutoFix: true,
         },
       ],
+      // The review bot's scan reports createElement calls. Obsidian's
+      // recommended set leaves this rule out, so it is turned on here; it
+      // catches document.createElement (the scan also counts activeDocument's).
+      "obsidianmd/prefer-create-el": "error",
     },
   },
 

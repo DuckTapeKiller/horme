@@ -37,6 +37,6 @@
   },
   "dependencies": {
     "docx": "^9.6.1",
-    "minimatch": "^9.0.9"
+    "minimatch": "^11.0.9"
   }
 }

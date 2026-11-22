@@ -148,11 +148,9 @@ export class HormeChatView extends ItemView {
   private connectionPollId: number | null = null;
 
   private pickImage(): void {
-    const fileInput = activeDocument.createElement("input");
-    fileInput.type = "file";
+    const fileInput = activeDocument.body.createEl("input", { type: "file" });
     fileInput.accept = "image/*";
     fileInput.hide();
-    activeDocument.body.appendChild(fileInput);
 
     const cleanup = () => {
       fileInput.remove();
@@ -320,28 +318,20 @@ export class HormeChatView extends ItemView {
     this.containerEl.querySelector(".horme-skill-pill")?.remove();
 
     const inputWrapper = this.inputEl.parentElement!;
-    const pill = activeDocument.createElement("div");
-    pill.className = "horme-skill-pill";
+    const pill = inputWrapper.createDiv({ cls: "horme-skill-pill" });
 
-    const iconEl = activeDocument.createElement("span");
-    iconEl.className = "horme-skill-pill-icon";
+    const iconEl = pill.createSpan({ cls: "horme-skill-pill-icon" });
     setIcon(iconEl, this.getSkillIcon(skillId));
-    pill.appendChild(iconEl);
 
-    const label = activeDocument.createElement("span");
-    label.textContent = skillName;
-    pill.appendChild(label);
+    pill.createSpan({ text: skillName });
 
-    const dismiss = activeDocument.createElement("button");
-    dismiss.className = "horme-skill-pill-dismiss";
-    dismiss.textContent = "×";
+    const dismiss = pill.createEl("button", { cls: "horme-skill-pill-dismiss", text: "×" });
     dismiss.title = "Disarm skill";
     dismiss.addEventListener("click", () => {
       this.forcedSkillId = null;
       this.inputEl.placeholder = "Ask Horme…"; // Revert placeholder text
       pill.remove();
     });
-    pill.appendChild(dismiss);
 
     // Insert before the textarea
     inputWrapper.insertBefore(pill, this.inputEl);
@@ -1074,11 +1064,9 @@ export class HormeChatView extends ItemView {
   }
 
   private pickDocument(): void {
-    const fileInput = activeDocument.createElement("input");
-    fileInput.type = "file";
+    const fileInput = activeDocument.body.createEl("input", { type: "file" });
     fileInput.accept = ".txt,.md";
     fileInput.hide();
-    activeDocument.body.appendChild(fileInput);
 
     const cleanup = () => {
       fileInput.remove();
@@ -2183,10 +2171,9 @@ export class HormeChatView extends ItemView {
             const skillLoading = this.showLoading(displayName);
             const loadingSpan = skillLoading.querySelector("span");
             if (loadingSpan) {
-              const iconEl = activeDocument.createElement("span");
-              iconEl.className = "horme-skill-loading-icon";
+              const iconEl = loadingSpan.createSpan({ cls: "horme-skill-loading-icon" });
               setIcon(iconEl, this.getSkillIcon(skillName));
-              loadingSpan.insertBefore(iconEl, loadingSpan.firstChild);
+              loadingSpan.prepend(iconEl);
             }
             timelineEl = this.ensureAgentTimeline(timelineEl);
             const stepRow = this.addTimelineStep(timelineEl, displayName, call.parameters);

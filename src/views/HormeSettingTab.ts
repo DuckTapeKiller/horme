@@ -282,7 +282,7 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
     if (this.fallbackMode || !requireApiVersion("1.13.0")) {
       // The old renderer redraws everything; only for changes that alter what is
       // shown, so moving between text fields never loses the next one.
-      if (structural || valuesChangedInCode) this.display();
+      if (structural || valuesChangedInCode) this.drawFallback();
       return;
     }
     if (requireApiVersion("1.13.0")) {
@@ -300,6 +300,14 @@ export class HormeSettingTab extends PluginSettingTab implements SettingsHost {
 
   /** Obsidian before 1.13 calls display() and knows nothing of setting definitions. */
   display(): void {
+    this.drawFallback();
+  }
+
+  /**
+   * Draws every setting with Horme's own renderer, for Obsidian before 1.13.
+   * Redraws call this rather than display(), which newer Obsidian deprecates.
+   */
+  private drawFallback(): void {
     this.fallbackMode = true;
     renderFallback(this, this.containerEl, this.getSettingDefinitions());
   }
