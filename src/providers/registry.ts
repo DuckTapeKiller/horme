@@ -13,6 +13,8 @@ export type CloudProviderId = Exclude<AiProvider, LocalProviderId | "custom">;
 export interface ProviderInfo {
   id: AiProvider;
   name: string;
+  /** A shorter name for narrow places (the chat's provider button); the name when unset. */
+  shortName?: string;
   /** Short line shown under the provider's name. */
   blurb: string;
   local: boolean;
@@ -92,6 +94,7 @@ export const PROVIDERS: ProviderInfo[] = [
   {
     id: "claude",
     name: "Anthropic Claude",
+    shortName: "Claude",
     blurb: "Cloud. Needs an API key.",
     local: false,
     modelKey: "claudeModel",
@@ -101,6 +104,7 @@ export const PROVIDERS: ProviderInfo[] = [
   {
     id: "gemini",
     name: "Google Gemini",
+    shortName: "Gemini",
     blurb: "Cloud. Needs an API key.",
     local: false,
     modelKey: "geminiModel",
@@ -143,6 +147,7 @@ export const PROVIDERS: ProviderInfo[] = [
   {
     id: "mistral",
     name: "Mistral AI",
+    shortName: "Mistral",
     blurb: "Cloud. Needs an API key.",
     local: false,
     modelKey: "mistralModel",
@@ -153,6 +158,7 @@ export const PROVIDERS: ProviderInfo[] = [
   {
     id: "custom",
     name: "OpenAI-compatible server",
+    shortName: "OpenAI-compatible",
     blurb: "Any server or router with OpenAI's API: LiteLLM, vLLM, Open WebUI and others.",
     local: false,
     modelKey: "customModel",

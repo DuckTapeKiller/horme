@@ -31,9 +31,12 @@ import {
   TFile,
   TFolder,
   Menu,
+  Platform,
+  setTooltip,
 } from "obsidian";
 import HormePlugin from "../../main";
 import { providerInfo, providerModel } from "../providers/registry";
+import { chatProviderChoices, type ProviderChoice } from "./settings/providers";
 import { VIEW_TYPE } from "../constants";
 import { ChatMessage, SavedConversation } from "../types";
 import { SkillCall } from "../skills/types";
@@ -85,6 +88,7 @@ export class HormeChatView extends ItemView {
   private loadingOverlay!: HTMLElement;
   private inputEl!: HTMLTextAreaElement;
   private sendBtn!: HTMLButtonElement;
+  private providerButton!: HTMLButtonElement;
   private modelButton!: HTMLButtonElement;
   private contextToggle!: HTMLInputElement;
   private contextNoteLabel!: HTMLElement;
@@ -352,64 +356,64 @@ export class HormeChatView extends ItemView {
       this.sessionSystemPromptOverride = null;
       const content = root.createDiv("horme-chat-content");
 
-      /* Header */
+      /* Header: what answers, then the chat's own tools, then what it reads. */
       const header = content.createDiv("horme-header");
+
+      // Row 1: the provider and its model.
       const row0 = header.createDiv("horme-header-row");
       this.connectionDot = row0.createDiv("horme-connection-icon");
       setIcon(this.connectionDot, "cone");
       const selectsWrap = row0.createDiv("horme-header-selects");
 
+      this.providerButton = selectsWrap.createEl("button", { cls: "horme-select horme-provider-select" });
+      this.providerButton.type = "button";
+      this.providerButton.addEventListener("click", () => {
+        if (this.isGenerating) {
+          new Notice("Horme: Cannot change provider while generating.");
+          return;
+        }
+        this.openProviderMenu();
+      });
+
       this.modelButton = selectsWrap.createEl("button", { cls: "horme-select horme-model-select" });
       this.modelButton.type = "button";
-      this.modelButton.addEventListener("click", (evt) => {
+      this.modelButton.addEventListener("click", () => {
         if (this.isGenerating) {
           new Notice("Horme: Cannot change model while generating.");
           return;
         }
-        this.openModelMenu(evt);
+        this.openModelMenu();
       });
 
-      this.presetButton = selectsWrap.createEl("button", { cls: "horme-select horme-preset-select" });
-      this.presetButton.type = "button";
-      this.presetButton.addEventListener("click", (evt) => {
-        if (this.isGenerating) {
-          new Notice("Horme: Cannot change preset while generating.");
-          return;
-        }
-        this.openPresetMenu(evt);
+      const refreshBtn = row0.createEl("button", {
+        cls: "horme-header-btn horme-icon-btn",
+        attr: { "aria-label": "Refresh the model list" },
       });
-      await this.refreshPresets();
-
-      const refreshBtn = row0.createEl("button", { cls: "horme-header-btn" });
-      refreshBtn.classList.add("horme-icon-btn");
       setIcon(refreshBtn, "refresh-cw");
       refreshBtn.addEventListener("click", () => {
         void this.refreshModels().catch((e) => this.plugin.handleError(e, "Models"));
       });
 
+      // Row 2: the chat's own tools.
       const row1 = header.createDiv("horme-header-row horme-header-row-actions");
       const row1Left = row1.createDiv("horme-header-actions-left");
       const row1Right = row1.createDiv("horme-header-actions-right");
 
-      const tagBtn = row1Left.createEl("button", { cls: "horme-header-btn", text: "Tags" });
-      tagBtn.addEventListener("click", () => {
-        void this.plugin.noteActions
-          .suggestTagsForActiveNote()
-          .catch((e) => this.plugin.handleError(e, "Tags"));
+      this.presetButton = row1Left.createEl("button", { cls: "horme-select horme-preset-select" });
+      this.presetButton.type = "button";
+      this.presetButton.addEventListener("click", () => {
+        if (this.isGenerating) {
+          new Notice("Horme: Cannot change preset while generating.");
+          return;
+        }
+        this.openPresetMenu();
       });
-
-      const summaryBtn = row1Left.createEl("button", { cls: "horme-header-btn", text: "Summary" });
-      summaryBtn.addEventListener("click", () => {
-        void this.plugin.noteActions
-          .generateFrontmatterSummary()
-          .catch((e) => this.plugin.handleError(e, "Summary"));
-      });
+      await this.refreshPresets();
 
       // Skills dropdown trigger button
-      const skillsBtn = row1Left.createEl("button", {
-        cls: "horme-header-btn",
-        text: "Skills ▾",
-      });
+      const skillsBtn = row1Left.createEl("button", { cls: "horme-select horme-skills-select" });
+      skillsBtn.type = "button";
+      this.setSelectLabel(skillsBtn, "Skills");
 
       // Build the floating menu attached to the view container (hidden by default)
       this.skillsMenuEl = this.containerEl.createDiv({ cls: "horme-skills-menu horme-skills-menu-hidden" });
@@ -451,7 +455,19 @@ export class HormeChatView extends ItemView {
       };
       activeDocument.addEventListener("click", this.documentClickHandler);
 
-      const historyBtn = row1Right.createEl("button", { cls: "horme-header-btn horme-icon-btn" });
+      const newChatBtn = row1Right.createEl("button", {
+        cls: "horme-header-btn horme-icon-btn",
+        attr: { "aria-label": "New chat" },
+      });
+      setIcon(newChatBtn, "message-square-plus");
+      newChatBtn.addEventListener("click", () => {
+        void this.clearChat().catch((e) => this.plugin.handleError(e));
+      });
+
+      const historyBtn = row1Right.createEl("button", {
+        cls: "horme-header-btn horme-icon-btn",
+        attr: { "aria-label": "Chat history" },
+      });
       setIcon(historyBtn, "history");
       historyBtn.addEventListener("click", () => {
         void this.toggleHistoryPanel().catch((e) => this.plugin.handleError(e));
@@ -466,26 +482,39 @@ export class HormeChatView extends ItemView {
         void this.exportConversation().catch((e) => this.plugin.handleError(e));
       });
 
-      const row2 = header.createDiv("horme-header-row");
+      // Tags and Summary work on the open note, not on the chat.
+      const moreBtn = row1Right.createEl("button", {
+        cls: "horme-header-btn horme-icon-btn",
+        attr: { "aria-label": "More actions" },
+      });
+      setIcon(moreBtn, "more-horizontal");
+      moreBtn.addEventListener("click", () => this.openMoreMenu(moreBtn));
+
+      // Row 3: what the chat reads besides the question.
+      const row2 = header.createDiv("horme-header-row horme-header-row-context");
+      row2.createSpan({ cls: "horme-header-label", text: "Context" });
+
       const label = row2.createEl("label", { cls: "horme-context-toggle" });
+      setTooltip(label, "Send the open note with each message");
       this.contextToggle = label.createEl("input", { type: "checkbox" });
-      label.createSpan({ text: "Use current note as context" });
+      label.createSpan({ text: "Open note" });
 
       const vbLabel = row2.createEl("label", { cls: "horme-context-toggle" });
+      setTooltip(vbLabel, "Look up passages in the whole vault for each question");
       this.vaultBrainToggle = vbLabel.createEl("input", { type: "checkbox" });
       this.vaultBrainToggle.checked = true;
       this.vaultBrainToggle.addEventListener("change", () => {
         this.vaultBrainOffByUser = !this.vaultBrainToggle.checked;
       });
-      vbLabel.createSpan({ text: "Use Vault Brain" });
+      vbLabel.createSpan({ text: "Vault Brain" });
       this.vaultBrainLabel = vbLabel;
       await this.updateVaultBrainToggle();
 
-      this.contextNoteLabel = header.createDiv("horme-context-note-label");
-
-      // Multi-note context
-      const row3 = header.createDiv("horme-header-row");
-      const addNotesBtn = row3.createEl("button", { cls: "horme-header-btn", text: "+ Add notes" });
+      const addNotesBtn = row2.createEl("button", {
+        cls: "horme-header-btn",
+        text: "+ Notes",
+        attr: { "aria-label": "Add up to 5 notes as context" },
+      });
       addNotesBtn.addEventListener("click", () => {
         if (this.context.notes.length >= 5) {
           new Notice("Horme: Maximum 5 context notes.");
@@ -504,7 +533,11 @@ export class HormeChatView extends ItemView {
           this.updateContextNotesLabel();
         }).open();
       });
-      const addFoldersBtn = row3.createEl("button", { cls: "horme-header-btn", text: "+ Add folders" });
+      const addFoldersBtn = row2.createEl("button", {
+        cls: "horme-header-btn",
+        text: "+ Folders",
+        attr: { "aria-label": "Add a folder's notes as context" },
+      });
       addFoldersBtn.addEventListener("click", () => {
         new FolderPickerModal(this.app, (folder: TFolder) => {
           try {
@@ -514,10 +547,8 @@ export class HormeChatView extends ItemView {
           }
         }).open();
       });
-      const clearBtn = row3.createEl("button", { cls: "horme-header-btn", text: "Clear" });
-      clearBtn.addEventListener("click", () => {
-        void this.clearChat().catch((e) => this.plugin.handleError(e));
-      });
+
+      this.contextNoteLabel = header.createDiv("horme-context-note-label");
       this.contextNotesLabel = header.createDiv("horme-context-note-label");
       this.contextToggle.addEventListener("change", () => {
         if (
@@ -762,7 +793,138 @@ export class HormeChatView extends ItemView {
     await this.plugin.saveSettings();
   }
 
-  private openModelMenu(evt: MouseEvent | KeyboardEvent) {
+  /**
+   * Sets a header dropdown's label. The text sits in its own span so a long
+   * one ends in an ellipsis and the arrow stays visible in a narrow sidebar.
+   */
+  private setSelectLabel(button: HTMLButtonElement, text: string, arrow = true) {
+    button.empty();
+    button.createSpan({ cls: "horme-select-text", text });
+    if (arrow) button.createSpan({ cls: "horme-select-arrow", text: "▾" });
+  }
+
+  /** Opens a menu under the button that asked for it. */
+  private showMenuBelow(menu: Menu, button: HTMLElement) {
+    const rect = button.getBoundingClientRect();
+    menu.showAtPosition({ x: rect.left, y: rect.bottom + 4 }, button.ownerDocument);
+  }
+
+  /** The providers, local ones first; one that is not set up yet opens the settings instead. */
+  private openProviderMenu() {
+    const s = this.plugin.settings;
+    const choices = chatProviderChoices(s, (p) => this.plugin.getApiKeyForProvider(p), Platform.isMobile);
+    const menu = new Menu();
+    menu.setUseNativeMenu(false);
+
+    const section = (heading: string, list: ProviderChoice[]) => {
+      if (list.length === 0) return;
+      menu.addItem((item) => {
+        item.setTitle(heading).setIsLabel(true);
+      });
+      for (const c of list) {
+        menu.addItem((item) => {
+          // Greyed, with what it lacks; no icons, so every name lines up.
+          const title = c.missing
+            ? createFragment((f) => {
+                const unready = f.createSpan({ cls: "horme-menu-unready", text: c.name });
+                unready.createSpan({ cls: "horme-menu-note", text: c.missing });
+              })
+            : c.name;
+          item.setTitle(title).setChecked(c.id === s.aiProvider);
+          item.onClick(() => {
+            void this.chooseProvider(c).catch((e) => this.plugin.handleError(e, "Provider"));
+          });
+        });
+      }
+    };
+    section(
+      "Local",
+      choices.filter((c) => c.own),
+    );
+    menu.addSeparator();
+    section(
+      "Cloud",
+      choices.filter((c) => !c.own),
+    );
+    menu.addSeparator();
+    menu.addItem((item) => {
+      item.setTitle("Provider settings").onClick(() => this.openHormeSettings());
+    });
+
+    this.showMenuBelow(menu, this.providerButton);
+  }
+
+  /**
+   * Makes a provider the active one, as the Provider setting under Models does.
+   * Saving tells the chat, which loads that provider's models.
+   */
+  private async chooseProvider(c: ProviderChoice): Promise<void> {
+    if (this.isGenerating) {
+      new Notice("Horme: Cannot change provider while generating.");
+      return;
+    }
+    if (c.missing) {
+      const what = c.missing === "no key" ? "an API key" : "an address";
+      new Notice(`Horme: ${c.name} needs ${what}. Add it on the Models page of Horme's settings.`, 8000);
+      this.openHormeSettings();
+      return;
+    }
+    if (c.id === this.plugin.settings.aiProvider) return;
+    this.plugin.settings.aiProvider = c.id;
+    // The buttons show the new provider and its saved model at once; its list
+    // of models follows when the save reaches the chat.
+    this.availableModels = [];
+    this.showModelLabel();
+    await this.plugin.saveSettings();
+  }
+
+  /** Opens Horme's tab in Obsidian's settings. */
+  private openHormeSettings() {
+    const setting = (this.app as unknown as { setting?: { open(): void; openTabById(id: string): unknown } })
+      .setting;
+    if (!setting) {
+      new Notice("Horme: Open Obsidian's settings and choose Horme.");
+      return;
+    }
+    setting.open();
+    setting.openTabById(this.plugin.manifest.id);
+  }
+
+  /** Actions on the open note, and the settings. */
+  private openMoreMenu(button: HTMLElement) {
+    const menu = new Menu();
+    menu.setUseNativeMenu(false);
+    menu.addItem((item) => {
+      item
+        .setTitle("Suggest frontmatter tags")
+        .setIcon("tags")
+        .onClick(() => {
+          void this.plugin.noteActions
+            .suggestTagsForActiveNote()
+            .catch((e) => this.plugin.handleError(e, "Tags"));
+        });
+    });
+    menu.addItem((item) => {
+      item
+        .setTitle("Generate frontmatter summary")
+        .setIcon("file-text")
+        .onClick(() => {
+          void this.plugin.noteActions
+            .generateFrontmatterSummary()
+            .catch((e) => this.plugin.handleError(e, "Summary"));
+        });
+    });
+    menu.addSeparator();
+    menu.addItem((item) => {
+      item
+        .setTitle("Horme settings")
+        .setIcon("settings")
+        .onClick(() => this.openHormeSettings());
+    });
+    this.showMenuBelow(menu, button);
+  }
+
+  private openModelMenu() {
     const current = this.getCurrentProviderModel().trim();
     const models = this.availableModels.length ? this.availableModels : current ? [current] : [];
 
@@ -770,7 +932,9 @@ export class HormeChatView extends ItemView {
     menu.setUseNativeMenu(false);
 
     if (models.length === 0) {
-      menu.addItem((item) => item.setTitle("No models found").setDisabled(true));
+      menu.addItem((item) => {
+        item.setTitle("No models found").setDisabled(true);
+      });
     } else {
       for (const model of models) {
         menu.addItem((item) => {
@@ -787,15 +951,10 @@ export class HormeChatView extends ItemView {
       }
     }
 
-    if (evt instanceof MouseEvent) {
-      menu.showAtMouseEvent(evt);
-    } else {
-      const rect = this.modelButton.getBoundingClientRect();
-      menu.showAtPosition({ x: rect.left, y: rect.bottom }, this.modelButton.ownerDocument);
-    }
+    this.showMenuBelow(menu, this.modelButton);
   }
 
-  private openPresetMenu(evt: MouseEvent | KeyboardEvent) {
+  private openPresetMenu() {
     const currentPrompt = this.sessionSystemPromptOverride;
     const menu = new Menu();
     menu.setUseNativeMenu(false);
@@ -826,12 +985,7 @@ export class HormeChatView extends ItemView {
       }
     }
 
-    if (evt instanceof MouseEvent) {
-      menu.showAtMouseEvent(evt);
-    } else {
-      const rect = this.presetButton.getBoundingClientRect();
-      menu.showAtPosition({ x: rect.left, y: rect.bottom }, this.presetButton.ownerDocument);
-    }
+    this.showMenuBelow(menu, this.presetButton);
   }
 
   private async refreshModels() {
@@ -848,14 +1002,18 @@ export class HormeChatView extends ItemView {
     await this.updateVaultBrainToggle();
   }
 
-  /** Shows the saved model on the model button. */
+  /** Shows the active provider and its saved model on their buttons. */
   private showModelLabel() {
+    const info = providerInfo(this.plugin.settings.aiProvider);
+    this.setSelectLabel(this.providerButton, info.shortName ?? info.name);
+    this.providerButton.title = `Provider: ${info.name}`;
+
     const savedModel = this.getCurrentProviderModel().trim();
     // The saved model is offered even when the list no longer has it.
     if (savedModel && !this.availableModels.includes(savedModel)) this.availableModels.unshift(savedModel);
 
     if (this.availableModels.length === 0) {
-      this.modelButton.textContent = "No models found";
+      this.setSelectLabel(this.modelButton, "No models found", false);
       this.modelButton.title = "No models found";
       this.modelButton.disabled = true;
       return;
@@ -865,7 +1023,7 @@ export class HormeChatView extends ItemView {
     // but sending then refused: "No model chosen".
     const label =
       savedModel || (this.plugin.settings.aiProvider === "llamacpp" ? "Automatic" : "Choose a model");
-    this.modelButton.textContent = `${label} ▾`;
+    this.setSelectLabel(this.modelButton, label);
     this.modelButton.title = label;
     this.modelButton.disabled = false;
   }
@@ -876,7 +1034,7 @@ export class HormeChatView extends ItemView {
 
     const selectedPrompt = this.sessionSystemPromptOverride;
     if (!selectedPrompt) {
-      this.presetButton.textContent = "Default prompt ▾";
+      this.setSelectLabel(this.presetButton, "Default prompt");
       this.presetButton.title = "Default prompt";
       this.presetButton.disabled = false;
       return;
@@ -884,16 +1042,16 @@ export class HormeChatView extends ItemView {
 
     const match = presets.find((p) => p.prompt === selectedPrompt);
     const label = match?.name || "Custom preset";
-    this.presetButton.textContent = `${label} ▾`;
+    this.setSelectLabel(this.presetButton, label);
     this.presetButton.title = label;
     this.presetButton.disabled = false;
   }
 
   private async updateConnectionStatus() {
     const ok = await this.plugin.checkConnection();
-    const provider = this.plugin.settings.aiProvider;
+    const name = providerInfo(this.plugin.settings.aiProvider).name;
     this.connectionDot.className = `horme-connection-icon ${ok ? "horme-online" : "horme-offline"}`;
-    this.connectionDot.title = `${provider} ${ok ? "connected" : "unreachable"}`;
+    this.connectionDot.title = `${name}: ${ok ? "connected" : "unreachable"}`;
   }
 
   private async stopGeneration() {

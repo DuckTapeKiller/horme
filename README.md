@@ -101,7 +101,7 @@ In Obsidian, open **Settings → Community plugins → Browse**, search for **Ho
 
 ### 6 · Ask
 
-Click the **▵** icon in the left ribbon, or run **Horme: Open chat panel** from the command palette, and ask something about your notes:
+Click the **▵** icon in the left ribbon, or run **Horme: Open chat panel** from the command palette. The top of the chat shows the provider and model answering you; change either there. Then ask something about your notes:
 
 > _I want to write an essay on modern art. Which of my notes can help me?_
 
@@ -115,19 +115,28 @@ or about the vault itself:
 
 ### Chat
 
-| Feature                | What it does                                                                                                        |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| **Streaming replies**  | Answers appear as they are written, rendered as Markdown. Stop a reply at any time; what arrived is kept.           |
-| **Model menu**         | Switch models from the chat header.                                                                                 |
-| **Vault Brain toggle** | Turn note search on or off for the conversation.                                                                    |
-| **Current note**       | Send the note you are reading along with your question.                                                             |
-| **+ Add notes**        | Pick up to five notes as context.                                                                                   |
-| **+ Add folders**      | Send the notes in whole folders, up to a limit you set.                                                             |
-| **Documents**          | Upload a `.txt` or `.md` file for one conversation.                                                                 |
-| **Prompt presets**     | Keep reusable instructions as notes, such as "Constitutional law professor", and switch between them in the header. |
-| **Skills menu**        | Run one skill directly with your message, such as a Wikipedia search.                                               |
-| **History**            | Up to 200 conversations, most recent first. Reopen, export to a note, or delete them.                               |
-| **Regenerate**         | Ask again for the latest reply.                                                                                     |
+The chat header has three rows: what answers you (the provider and its model), the chat's own tools (prompt preset, skills, new chat, history, saving the chat as a note, and **⋯** for the open note's tags and summary), and what the chat reads besides your question (the open note, Vault Brain, and the notes and folders you add). The cone at the left turns green when the provider answers and red when it does not.
+
+<p align="center">
+  <img src="images/chat-header.png" alt="The chat header with the provider menu open: llama.cpp, Ollama, LM Studio and Apple Intelligence under Local, the cloud providers greyed with no key under Cloud" width="60%">
+</p>
+
+| Feature                | What it does                                                                                                                         |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| **Streaming replies**  | Answers appear as they are written, rendered as Markdown. Stop a reply at any time; what arrived is kept.                            |
+| **Provider menu**      | Switch providers from the chat header, local ones first. One that still needs a key or an address is greyed, and opens the settings. |
+| **Model menu**         | Switch models from the chat header.                                                                                                  |
+| **Vault Brain toggle** | Turn note search on or off for the conversation.                                                                                     |
+| **Open note**          | Send the note you are reading along with your question.                                                                              |
+| **+ Notes**            | Pick up to five notes as context.                                                                                                    |
+| **+ Folders**          | Send the notes in whole folders, up to a limit you set.                                                                              |
+| **Documents**          | Upload a `.txt` or `.md` file for one conversation.                                                                                  |
+| **Prompt presets**     | Keep reusable instructions as notes, such as "Constitutional law professor", and switch between them in the header.                  |
+| **Skills menu**        | Run one skill directly with your message, such as a Wikipedia search.                                                                |
+| **New chat**           | Start an empty conversation. Notes, folders and documents you added are cleared; **Open note** stays as you set it.                  |
+| **History**            | Up to 200 conversations, most recent first. Reopen, export to a note, or delete them.                                                |
+| **⋯ menu**             | Suggest tags or write a summary for the open note, or open Horme's settings.                                                         |
+| **Regenerate**         | Ask again for the latest reply.                                                                                                      |
 
 ### Text actions
 
@@ -234,7 +243,7 @@ When you choose a cloud provider:
 
 - **Vault Brain pauses.** Passages from your notes are sent only if you turn on **Let cloud providers read notes**, which asks you to confirm.
 - **Vault Query follows the same rule.** A cloud provider can count, list or read your notes only when **Let cloud providers read notes** is on.
-- **You confirm each kind of content.** The current note, picked notes, folders and uploaded documents each ask once before they are sent, and so do the **Tags** and **Summary** buttons, which send the whole note. Switching to another cloud provider, another address for the OpenAI-compatible server, or another Ollama cloud model asks again.
+- **You confirm each kind of content.** The current note, picked notes, folders and uploaded documents each ask once before they are sent, and so do the tag and summary actions (in the chat's **⋯** menu and the command palette), which send the whole note. Switching to another cloud provider, another address for the OpenAI-compatible server, or another Ollama cloud model asks again.
 - **Ollama's cloud models count as cloud.** A model whose name ends in `-cloud` or `:cloud` runs on Ollama's servers, not on your computer, so Horme asks before sending it notes, as for any cloud provider.
 - **Embeddings stay with you.** The index is built only by a server you run, chosen under Vault Brain; cloud services are never offered, because indexing sends the full text of every note. The OpenAI-compatible server is offered only once it is marked as yours, and Vault Brain pauses (sending nothing anywhere) if that mark is removed. An embedding or chat address on the internet, for a server Horme treats as yours, shows a warning.
 - **API keys stay out of the settings file.** They are kept in Obsidian's keychain.
@@ -258,7 +267,7 @@ When you choose a cloud provider:
 | **Mistral**    | Cloud         | Needs an API key from Mistral.                                           |
 | **OpenAI-compatible server** | Your server, or a cloud service behind it | Any server or router that speaks OpenAI's API: LiteLLM, vLLM, Open WebUI, LocalAI, DeepSeek and others. Enter its base address as its documentation gives it (usually ending in `/v1`), a key if it needs one, and a model. |
 
-With an API key set, the model field lists the provider's own models.
+Switch providers from the provider menu at the top of the chat, or in **Settings → Horme → Models**. With an API key set, the model field lists the provider's own models.
 
 **Apple Intelligence.** On a Mac with Apple silicon and macOS 27 or later, with Apple Intelligence turned on in System Settings, Horme can use Apple's own model. Before the first use, accept Apple's terms for its model tool once, in Terminal:
 

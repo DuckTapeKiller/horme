@@ -47,6 +47,10 @@
 }
 
 body .horme-chat-container .horme-header button.horme-select {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 4px;
   flex: 1 1 0;
   min-width: 0;
   padding: 4px 8px;
@@ -63,14 +67,41 @@ body .horme-chat-container .horme-header button.horme-select {
   text-overflow: ellipsis;
 }
 
+/* A long label ends in an ellipsis; the arrow stays at the right edge. */
+.horme-select-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.horme-select-arrow {
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
 .horme-select:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }
 
-.horme-model-select,
-.horme-preset-select {
+.horme-model-select {
   flex: 1;
+}
+
+/* The provider keeps its (short) name whole, up to 45%; the model takes the rest. */
+body .horme-chat-container .horme-header button.horme-select.horme-provider-select {
+  flex: 0 0 auto;
+  max-width: 45%;
+}
+
+/* Prompt and skills sit beside the icon buttons, as wide as their labels. */
+body .horme-chat-container .horme-header button.horme-select.horme-preset-select {
+  flex: 0 1 auto;
+}
+
+body .horme-chat-container .horme-header button.horme-select.horme-skills-select {
+  flex: 0 0 auto;
 }
 
 .horme-header .horme-header-btn {
@@ -114,8 +145,12 @@ body .horme-chat-container .horme-header button.horme-select {
   stroke-width: 2.5px;
 }
 
-.horme-header-row-actions {
+/* In a narrow sidebar the icon buttons move to a line of their own rather
+   than squeeze the prompt and skills labels. */
+.horme-header-row.horme-header-row-actions {
   justify-content: space-between;
+  flex-wrap: wrap;
+  row-gap: 6px;
 }
 
 .horme-header-actions-left,
@@ -123,6 +158,38 @@ body .horme-chat-container .horme-header button.horme-select {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.horme-header-actions-left {
+  flex: 1 1 150px;
+  min-width: 0;
+}
+
+.horme-header-actions-right {
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+/* Context row: wraps onto a second line in a narrow sidebar. */
+.horme-header-row.horme-header-row-context {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
+.horme-header-label {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+/* A provider not set up yet, in the provider menu: greyed, then what it lacks. */
+.horme-menu-unready {
+  color: var(--text-faint);
+}
+
+.horme-menu-note {
+  margin-left: 8px;
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
 }
 
 .horme-header .horme-header-btn.horme-icon-btn {
